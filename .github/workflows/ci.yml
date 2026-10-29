@@ -1,0 +1,22 @@
+name: viorka-agent-ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Format check
+        run: test -z "$(gofmt -l $(find . -name '*.go' -type f))"
+      - name: Test
+        run: go test ./...
+      - name: Build amd64
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/viorka-agent-amd64 ./cmd/viorka-agent
+      - name: Build arm64
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /tmp/viorka-agent-arm64 ./cmd/viorka-agent
