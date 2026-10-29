@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "message_id": "msg-02",
+  "type": "config.observed",
+  "node_id": "node-demo",
+  "correlation_id": "task-001",
+  "sent_at": "2026-10-29T00:00:20Z",
+  "revision": 12,
+  "payload": {
+    "resource_kind": "proxy_service",
+    "resource_id": "proxy-01",
+    "observed_revision": 12,
+    "config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "health": "healthy"
+  }
+}

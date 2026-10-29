@@ -15,6 +15,7 @@ type Local struct {
 	NodeName string `json:"node_name"`
 	StateDir string `json:"state_dir"`
 	LogLevel string `json:"log_level"`
+	CAFile   string `json:"ca_file,omitempty"`
 }
 
 func LoadFile(path string) (Local, error) {

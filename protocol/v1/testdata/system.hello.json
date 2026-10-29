@@ -1,0 +1,1 @@
+{"version":"1.0","message_id":"hello-1","type":"system.hello","node_id":"node-demo","sent_at":"2026-10-29T08:00:00Z","payload":{"agent_version":"0.1.0-m0","protocol_versions":["1.0"],"capabilities":["node.inspect"],"os":"linux","arch":"amd64"}}

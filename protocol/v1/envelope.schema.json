@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vioira.example/spec/viorka/agent/v1/envelope.schema.json",
+  "title": "Viorka Agent Protocol v1 Envelope (design contract)",
+  "description": "消息包装结构。约定协议目标，M0 期间实现握手和端到端联测。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "message_id",
+    "type",
+    "sent_at",
+    "payload"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "node_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "sent_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "Hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent_version": {
+          "type": "string"
+        },
+        "protocol_versions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32
+        },
+        "os": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_version",
+        "protocol_versions",
+        "capabilities",
+        "os",
+        "arch"
+      ]
+    },
+    "HelloAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol_version": {
+          "type": "string"
+        },
+        "heartbeat_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "protocol_version",
+        "heartbeat_seconds"
+      ]
+    },
+    "Heartbeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "observed_config_revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "observed_config_revision"
+      ]
+    },
+    "TaskDispatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "resource_kind": {
+          "type": "string"
+        },
+        "resource_id": {
+          "type": "string"
+        },
+        "config_sha256": {
+          "type": "string"
+        },
+        "deadline_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "task_id",
+        "operation",
+        "idempotency_key",
+        "resource_kind",
+        "resource_id",
+        "deadline_at"
+      ]
+    },
+    "Inspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "os": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "arch",
+        "hostname"
+      ]
+    },
+    "TaskReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "type": "string"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resource_id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "inspection": {
+          "$ref": "#/$defs/Inspection"
+        },
+        "error_code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "attempt",
+        "resource_id",
+        "state"
+      ]
+    }
+  }
+}

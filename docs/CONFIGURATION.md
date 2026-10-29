@@ -20,7 +20,9 @@ go run ./cmd/viorka-agent config-check --config examples/agent.example.json
 
 当前 `config-check` 只检验 JSON 结构与 HTTPS base URL 等基础字段；**不会连接服务器或启动 Agent**。文件内故意不放持久注册凭证。
 
-## 2. 将来的 Agent 配置分层
+可选 `ca_file` 指向私有 CA PEM，仍验证主机名；`enroll/run` 用法见 [GETTING_STARTED.md](GETTING_STARTED.md)。
+
+## 2. Agent 配置分层
 
 | 层 | 来源 | 内容 |
 |---|---|---|

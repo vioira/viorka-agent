@@ -1,5 +1,6 @@
 # Agent 开发、测试与里程碑
 
+> M0 当前状态：已实现注册、签名会话、WSS、重连/吊销和只读 node.inspect；完整运行说明与未完成验收见 [GETTING_STARTED.md](GETTING_STARTED.md)。
 ## 当前可运行命令
 
 ```bash
@@ -11,7 +12,7 @@ make build
 ./bin/viorka-agent config-check --config examples/agent.example.json
 ```
 
-注意：`run` 命令当前明确返回非零退出码，**不会悄悄驻留并假称已连接 Panel**。服务安装文件暂不提供，详见 `packaging/README.md`。
+`run --config PATH` 使用已注册身份连接 Panel，未注册或配置错误时返回非零退出码。服务安装文件暂不提供，详见 `packaging/README.md`。
 
 ## M0–M3 计划
 

@@ -1,0 +1,18 @@
+{
+  "version": "1.0",
+  "message_id": "msg-01",
+  "type": "task.dispatch",
+  "node_id": "node-demo",
+  "correlation_id": "task-001",
+  "sent_at": "2026-10-29T00:00:00Z",
+  "revision": 12,
+  "payload": {
+    "task_id": "task-001",
+    "operation": "proxy.apply",
+    "idempotency_key": "node-demo:proxy-01:12",
+    "resource_kind": "proxy_service",
+    "resource_id": "proxy-01",
+    "config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "deadline_at": "2026-10-29T00:05:00Z"
+  }
+}

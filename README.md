@@ -1,8 +1,9 @@
 # Viorka Agent
 
+> M0 当前状态：已实现注册、签名会话、WSS、重连/吊销和只读 node.inspect；完整运行说明与未完成验收见 [GETTING_STARTED.md](docs/GETTING_STARTED.md)。
 **Viorka** 的独立节点守护进程项目。负责 VPS/NAT 节点本地资源探测、受控任务执行、代理核心生命周期管理和运行状态汇报。
 
-> 当前状态：**架构脚手架**。已提供 Go 入口、系统信息检测 `doctor`、编排相关接口和文档；尚未实现 Panel 注册/WSS、代理核心安装/启动/配置下发。不可视为生产 Agent。
+> 当前状态：**M0 本机通信闭环已实现**。已提供注册/WSS、心跳/重连/吊销和只读节点检查；代理核心安装/启动/配置下发仍未实现，真实 NAT VPS 验收待完成。
 
 ## 核心约束
 
@@ -23,7 +24,7 @@ go run ./cmd/viorka-agent doctor
 go run ./cmd/viorka-agent config-check --config ./examples/agent.example.json
 ```
 
-`run` 命令会明确退出并指出 M0 尚未实现通信功能，以避免误认为节点已经受控。
+`run --config PATH` 使用已注册身份运行；配置无效、未注册、身份吊销或证书校验失败会明确退出。
 
 ## 目录结构
 

@@ -1,0 +1,1 @@
+{"version":"1.0","message_id":"dispatch-1","type":"task.dispatch","node_id":"node-demo","correlation_id":"task-inspect-1","sent_at":"2026-10-29T08:00:00Z","payload":{"task_id":"task-inspect-1","operation":"node.inspect","idempotency_key":"inspect-once","resource_kind":"node","resource_id":"node-demo","attempt":1,"deadline_at":"2026-10-29T08:05:00Z"}}

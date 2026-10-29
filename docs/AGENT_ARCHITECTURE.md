@@ -1,6 +1,7 @@
 # Viorka Agent 架构（独立仓库）
 
-> Agent 是一个独立产品/仓库，设计目标是 **轻量、可恢复、安全执行、受限 NAT 环境可运行**。目前仍为脚手架，下面的控制循环是实现目标，不是已经部署的功能。
+> M0 当前状态：已实现注册、签名会话、WSS、重连/吊销和只读 node.inspect；完整运行说明与未完成验收见 [GETTING_STARTED.md](GETTING_STARTED.md)。
+> Agent 是一个独立产品/仓库，设计目标是 **轻量、可恢复、安全执行、受限 NAT 环境可运行**。基础连接和只读检查已实现，下面涉及引擎的控制循环仍是目标。
 
 ## 1. 组件
 
@@ -25,13 +26,13 @@ Agent 不转发用户的代理业务流量；由 Xray、sing-box、Realm 承担�
 
 | 模块 | 职责 | 当前脚手架 |
 |---|---|---|
-| `connection` | 证书校验、注册会话、WSS、版本协商、重连与背压 | 仅文档占位 |
+| `connection` | 证书校验、注册会话、WSS、版本协商、重连与背压 | M0 已实现 |
 | `collector` | OS/CPU/内存/磁盘/网络与引擎资产采集 | 基础 GOOS/GOARCH 已实现 |
-| `executor` | 操作白名单、参数验证、重试、幂等、超时 | 仅文档占位 |
+| `executor` | 操作白名单、参数验证、重试、幂等、超时 | 仅 node.inspect 已实现 |
 | `runtime` | 引擎生命周期统一接口 | 接口已定义，适配器未实现 |
 | `config` | 本地启动配置、配置 staging、原子发布和回滚 | 仅本地 JSON 校验已实现 |
 | `supervisor` | systemd/OpenRC/无 init 进程控制 | 仅文档占位 |
-| `state` | 身份与密钥、上次 Revision、本地任务 Journal | 仅文档占位 |
+| `state` | 身份与密钥、上次 Revision、本地任务 Journal | 身份与检查日志已实现，Revision 留待 M2 |
 | `updater` | 带签名/哈希的 Agent 更新、回滚 | 仅文档占位 |
 
 ## 3. 建议执行循环
@@ -80,7 +81,7 @@ Agent 不转发用户的代理业务流量；由 Xray、sing-box、Realm 承担�
 
 - `internal/app` 组装依赖，业务逻辑不要耦合到 `cmd/`。
 - `internal/runtime` 提供 interface，具体适配器负责处理不同版本的启动/校验命令。
-- `protocol/v1` 类型以后从 Panel 版本化 Schema 生成，而非永久手工复制。
+- `protocol/v1` 类型由 Panel Schema 生成，生成文件标注源摘要，发布 tag 尚待固定。
 - `internal/state` 初期可使用文件/受控嵌入数据存储，任务日志有容量限制和原子写入要求。
 
 详见 [RUNTIMES.md](RUNTIMES.md) 和 [ENROLLMENT.md](ENROLLMENT.md)。

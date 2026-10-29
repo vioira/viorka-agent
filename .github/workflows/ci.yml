@@ -15,7 +15,11 @@ jobs:
       - name: Format check
         run: test -z "$(gofmt -l $(find . -name '*.go' -type f))"
       - name: Test
-        run: go test ./...
+        run: go test -race ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Generated protocol check
+        run: python3 scripts/generate_protocol.py --schema protocol/v1/envelope.schema.json --check
       - name: Build amd64
         run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/viorka-agent-amd64 ./cmd/viorka-agent
       - name: Build arm64
