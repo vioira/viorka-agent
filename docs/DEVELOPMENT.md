@@ -3,6 +3,8 @@
 > M0 当前状态：已实现注册、签名会话、WSS、重连/吊销和只读 node.inspect；完整运行说明与未完成验收见 [GETTING_STARTED.md](GETTING_STARTED.md)。
 ## 当前可运行命令
 
+开发和构建需要 Go 1.26 或以上版本；CI 从 `go.mod` 读取 Go 版本。
+
 ```bash
 cd viorka-agent
 go test ./...

@@ -16,6 +16,8 @@
 
 ## 使用当前脚手架
 
+源码构建需要 Go 1.26 或以上版本。
+
 ```bash
 go test ./...
 go run ./cmd/viorka-agent version
