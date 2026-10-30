@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vioira.example/spec/viorka/agent/v1/envelope.schema.json",
   "title": "Viorka Agent Protocol v1 Envelope (design contract)",
-  "description": "消息包装结构。约定协议目标，M0 期间实现握手和端到端联测。",
+  "description": "\u6d88\u606f\u5305\u88c5\u7ed3\u6784\u3002\u7ea6\u5b9a\u534f\u8bae\u76ee\u6807\uff0cM0 \u671f\u95f4\u5b9e\u73b0\u63e1\u624b\u548c\u7aef\u5230\u7aef\u8054\u6d4b\u3002",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -95,6 +95,12 @@
         "heartbeat_seconds": {
           "type": "integer",
           "minimum": 0
+        },
+        "metrics_version": {
+          "type": "integer",
+          "enum": [
+            1
+          ]
         }
       },
       "required": [
@@ -204,6 +210,196 @@
         "attempt",
         "resource_id",
         "state"
+      ]
+    },
+    "CPUMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "usage_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "logical_cpus": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        }
+      },
+      "required": [
+        "logical_cpus"
+      ]
+    },
+    "MemoryMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total_bytes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "available_bytes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "used_bytes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "swap_total_bytes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "swap_used_bytes": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total_bytes",
+        "available_bytes",
+        "used_bytes",
+        "swap_total_bytes",
+        "swap_used_bytes"
+      ]
+    },
+    "LoadMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "one": {
+          "type": "number",
+          "minimum": 0
+        },
+        "five": {
+          "type": "number",
+          "minimum": 0
+        },
+        "fifteen": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "one",
+        "five",
+        "fifteen"
+      ]
+    },
+    "DiskMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total_bytes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "used_bytes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "available_bytes": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total_bytes",
+        "used_bytes",
+        "available_bytes"
+      ]
+    },
+    "InterfaceMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "rx_bytes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tx_bytes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rx_bytes_per_second": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tx_bytes_per_second": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "rx_bytes",
+        "tx_bytes"
+      ]
+    },
+    "NodeMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sampled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "interval_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "cpu": {
+          "$ref": "#/$defs/CPUMetrics"
+        },
+        "memory": {
+          "$ref": "#/$defs/MemoryMetrics"
+        },
+        "load": {
+          "$ref": "#/$defs/LoadMetrics"
+        },
+        "disk": {
+          "$ref": "#/$defs/DiskMetrics"
+        },
+        "uptime_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "interfaces": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/InterfaceMetrics"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "enum": [
+              "cpu_unavailable",
+              "memory_unavailable",
+              "load_unavailable",
+              "disk_unavailable",
+              "uptime_unavailable",
+              "network_unavailable",
+              "unsupported_platform"
+            ]
+          }
+        }
+      },
+      "required": [
+        "sampled_at",
+        "interval_seconds",
+        "errors",
+        "interfaces"
       ]
     }
   }

@@ -59,3 +59,7 @@ Agent 收到旧于当前 Revision 的普通 apply 指令时应拒绝；如果操
 - 文件目录权限需要 0700、敏感文件 0600（根据运行账户调整）。
 - 完整代理配置可能仍包含业务 Secret，必须限定读权限和备份策略。
 - 日志只保留配置 Revision、Hash、操作结果，异常堆栈须脱敏。
+
+## 主机监控周期
+
+可选 `metrics_seconds` 默认 30 秒，允许 10–300 秒，0 使用默认值。该周期独立于心跳；只有 Panel 确认 `node.metrics.v1` 扩展后才发送指标。指标范围、失败状态、资源上限及平台边界见 [MONITORING.md](MONITORING.md)。

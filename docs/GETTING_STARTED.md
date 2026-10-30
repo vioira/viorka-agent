@@ -22,3 +22,5 @@ Token 通过标准输入安全提供（或从 0600 文件重定向），不放�
 规范唯一来源仍为 Panel `api/agent/v1`，生成代码标注 Schema SHA-256；本地同步不代表正式 release tag。生成类型不赋予新操作权限。
 
 本机已进行 Go/race、持久日志重投、身份权限和双进程 TLS 注册/任务/重连/吊销测试。Linux amd64/arm64 交叉构建单独验证；真实 NAT VPS、Debian/Alpine 运行、长期压力和内存占用仍待验收。代理配置/引擎生命周期、升级签名和安装器没有实现。
+
+主机监控已增加 Linux CPU、内存/Swap、负载、根文件系统、运行时长和逐网卡流量采集，通过能力协商发送给支持监控的 Panel。默认 30 秒采样；非 Linux 明确报告不支持。完整语义和验收边界见 [MONITORING.md](MONITORING.md)。

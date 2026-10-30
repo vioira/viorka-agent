@@ -29,6 +29,8 @@ func TestCanonicalExamples(t *testing.T) {
 			}
 			var payload any
 			switch e.Type {
+			case "node.metrics":
+				payload = &NodeMetrics{}
 			case "system.hello":
 				payload = &Hello{}
 			case "task.dispatch":

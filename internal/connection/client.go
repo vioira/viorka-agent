@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/coder/websocket"
+	"github.com/vioira/viorka-agent/internal/collector"
 	"github.com/vioira/viorka-agent/internal/config"
 	"github.com/vioira/viorka-agent/internal/executor"
 	"github.com/vioira/viorka-agent/internal/state"
@@ -214,7 +215,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		defer stop()
 		return conn.Write(c, websocket.MessageText, b)
 	}
-	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: "0.1.0-m0", ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
+	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: "0.1.0-m0", ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
 		return err
 	}
 	hctx, hstop := context.WithTimeout(ctx, 10*time.Second)
@@ -230,6 +231,22 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	var ack v1.HelloAck
 	if envelope.Type != "system.hello_ack" || v1.Decode(envelope.Payload, &ack) != nil || ack.ProtocolVersion != v1.Version || ack.HeartbeatSeconds < 5 || ack.HeartbeatSeconds > 60 {
 		return fmt.Errorf("unsupported hello response")
+	}
+	// A nil channel disables metrics against older Panels. A single writer sends
+	// snapshots directly; ticker coalescing prevents a metrics backlog.
+	var metricsTick <-chan time.Time
+	sample := collector.NewMetrics()
+	sendMetrics := func() error { return send(v1.Message("node.metrics", id.NodeID, ID(), sample.Sample(ctx))) }
+	if ack.MetricsVersion != nil {
+		if *ack.MetricsVersion != 1 {
+			return fmt.Errorf("unsupported metrics version")
+		}
+		timer := time.NewTicker(time.Duration(c.cfg.MetricsIntervalSeconds()) * time.Second)
+		defer timer.Stop()
+		metricsTick = timer.C
+		if err = sendMetrics(); err != nil {
+			return err
+		}
 	}
 	incoming := make(chan v1.Envelope, 8)
 	done := make(chan struct{})
@@ -263,6 +280,10 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-metricsTick:
+			if err = sendMetrics(); err != nil {
+				return err
+			}
 		case <-tick.C:
 			// Ping checks liveness even when no task is pending. Reader handles control frames.
 			pctx, pstop := context.WithTimeout(ctx, 10*time.Second)

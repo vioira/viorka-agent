@@ -11,11 +11,12 @@ import (
 )
 
 type Local struct {
-	PanelURL string `json:"panel_url"`
-	NodeName string `json:"node_name"`
-	StateDir string `json:"state_dir"`
-	LogLevel string `json:"log_level"`
-	CAFile   string `json:"ca_file,omitempty"`
+	MetricsSeconds int    `json:"metrics_seconds,omitempty"`
+	PanelURL       string `json:"panel_url"`
+	NodeName       string `json:"node_name"`
+	StateDir       string `json:"state_dir"`
+	LogLevel       string `json:"log_level"`
+	CAFile         string `json:"ca_file,omitempty"`
 }
 
 func LoadFile(path string) (Local, error) {
@@ -38,6 +39,9 @@ func LoadFile(path string) (Local, error) {
 }
 
 func (c Local) Validate() error {
+	if c.MetricsSeconds != 0 && (c.MetricsSeconds < 10 || c.MetricsSeconds > 300) {
+		return fmt.Errorf("metrics_seconds must be 10–300 (or 0 for default 30)")
+	}
 	u, err := url.Parse(c.PanelURL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
 		return fmt.Errorf("panel_url must be an HTTPS base origin without credentials, query, path or fragment")
@@ -52,4 +56,11 @@ func (c Local) Validate() error {
 		return fmt.Errorf("unsupported log_level")
 	}
 	return nil
+}
+
+func (c Local) MetricsIntervalSeconds() int {
+	if c.MetricsSeconds == 0 {
+		return 30
+	}
+	return c.MetricsSeconds
 }

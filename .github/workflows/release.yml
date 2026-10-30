@@ -1,0 +1,30 @@
+name: viorka-agent-release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: go test ./...
+      - name: Build release assets
+        run: |
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            asset="viorka-agent-linux-$arch"
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "dist/$asset" ./cmd/viorka-agent
+            sha256sum "dist/$asset" | cut -d ' ' -f 1 > "dist/$asset.sha256"
+          done
+      - name: Create draft release for review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --generate-notes

@@ -1,4 +1,4 @@
-// Package collector implements safe local node inventory; metrics arrive in M1.
+// Package collector implements safe local node inventory and bounded Linux host metrics.
 package collector
 
 import "runtime"
