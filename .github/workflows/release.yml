@@ -13,6 +13,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Installer checks
+        run: |
+          sh -n install.sh
+          python3 scripts/test_install.py
       - name: Test
         run: go test ./...
       - name: Build release assets
