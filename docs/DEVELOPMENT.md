@@ -34,6 +34,31 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o dist/viorka-agent-li
 
 静态交叉编译降低发行版 GLIBC 兼容问题；但还应在 Debian 12/13、Alpine 容器和真实低配 NAT VPS 做运行测试。
 
+## 交互式发布
+
+项目版本唯一声明在 `internal/version/version.go` 的 `Version` 常量，CLI 和 WSS 握手共用该版本。
+需要 Git、Python 3.9+、项目要求的 Go 工具链，以及远端推送权限；先提交当前开发改动，保持工作区干净，然后运行：
+
+```bash
+make release
+# 或 python3 scripts/release.py
+```
+
+运行 `python3 scripts/release.py --help` 查看帮助。仅允许在 `main` 分支发布。
+先选择已配置远端（默认 `origin`），脚本获取分支与标签，拒绝本地落后或分叉；远端分支不存在时会提示创建。
+远端必须只有一个 push URL，且与 fetch URL 一致，确保检查的目标就是推送目标。
+随后通过菜单选择补丁、次版本、主版本、自定义、当前版本（默认）、预发布递增或转正式版，也可以选择 `0` 取消。
+预发布递增保留原标识，例如 `0.1.0-bate.1 → 0.1.0-bate.2`；正式版默认生成下一补丁的 `bate.1`，也支持自定义 `alpha`、`beta`、`rc` 等 SemVer 标识。
+脚本拒绝脏工作区、游离 HEAD、非法版本、版本倒退及本地/远端重复标签；所选版本必须高于已有有效版本标签（忽略构建元数据）。
+更新版本后运行 `scripts/validate.sh`，并静态交叉编译 Linux amd64/arm64。最终确认前展示版本变化、发布类型和待推送提交，确认后再次同步远端检查。
+检查通过后，输入完整标签确认才会提交版本变更、创建附注标签，并原子推送当前分支和标签；当前分支尚未推送的提交也会一并推送。
+取消或检查失败会保留版本文件改动，供检查处理。推送失败会保留本地提交和标签，并显示重试命令；不强制推送、不删除标签、不自动回滚。
+
+GitHub Actions 校验标签与代码版本一致，构建二进制及 SHA-256 文件并创建 **Release 草稿**。
+带预发布标识的版本（如 `bate.1`）会标记为 prerelease；需要在 GitHub 审核草稿并正式发布，才会对外提供下载。
+默认安装流程只解析最新正式 Release，安装预发布版本需显式指定 `--version=v0.1.0-bate.1`。
+交叉编译通过不代表已完成目标 Linux 发行版运行验证。
+
 ## PR 约定
 
 - 更新协议必须在 Panel 主仓库先变更 Schema，并包含新旧样例及兼容性测试。

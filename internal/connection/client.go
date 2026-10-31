@@ -17,6 +17,7 @@ import (
 	"github.com/vioira/viorka-agent/internal/config"
 	"github.com/vioira/viorka-agent/internal/executor"
 	"github.com/vioira/viorka-agent/internal/state"
+	"github.com/vioira/viorka-agent/internal/version"
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
 	"io"
 	"log/slog"
@@ -215,7 +216,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		defer stop()
 		return conn.Write(c, websocket.MessageText, b)
 	}
-	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: "0.1.0-m0", ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
+	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
 		return err
 	}
 	hctx, hstop := context.WithTimeout(ctx, 10*time.Second)

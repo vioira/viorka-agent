@@ -1,4 +1,8 @@
-.PHONY: doctor test fmt-check build
+.PHONY: doctor test fmt-check build release
+.DEFAULT_GOAL := doctor
+
+release:
+	python3 scripts/release.py
 
 doctor:
 	go run ./cmd/viorka-agent doctor

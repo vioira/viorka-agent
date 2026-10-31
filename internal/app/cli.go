@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/vioira/viorka-agent/internal/connection"
 	"github.com/vioira/viorka-agent/internal/state"
+	"github.com/vioira/viorka-agent/internal/version"
 	"io"
 	"os"
 	"os/signal"
@@ -17,7 +18,7 @@ import (
 	"github.com/vioira/viorka-agent/internal/config"
 )
 
-const Version = "0.1.0-m0"
+const Version = version.Version
 
 // Main executes the small set of commands that are actually implemented.
 func Main(args []string, out, errOut io.Writer) int {

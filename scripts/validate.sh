@@ -7,6 +7,7 @@ if [ -n "$(gofmt -l $(find . -name '*.go' -type f))" ]; then
 fi
 sh -n install.sh
 python3 scripts/test_install.py
+python3 scripts/test_release.py
 go test ./...
 go vet ./...
 python3 scripts/generate_protocol.py --schema protocol/v1/envelope.schema.json --check

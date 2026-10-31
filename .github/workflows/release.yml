@@ -17,6 +17,13 @@ jobs:
         run: |
           sh -n install.sh
           python3 scripts/test_install.py
+          python3 scripts/test_release.py
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(go run ./cmd/viorka-agent version | awk '{print $2}')
+          test "$RELEASE_TAG" = "v$version"
       - name: Test
         run: go test ./...
       - name: Build release assets
@@ -31,4 +38,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --generate-notes
+        run: |
+          flags=()
+          if [[ "${RELEASE_TAG%%+*}" == *-* ]]; then
+            flags+=(--prerelease --latest=false)
+          fi
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --generate-notes "${flags[@]}"
