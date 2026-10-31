@@ -114,6 +114,10 @@
         },
         "collection_settings": {
           "$ref": "#/$defs/NodeSettings"
+        },
+        "host_metrics_version": {
+          "type": "integer",
+          "const": 1
         }
       },
       "required": [
@@ -406,6 +410,9 @@
               "unsupported_platform"
             ]
           }
+        },
+        "host": {
+          "$ref": "#/$defs/HostMetrics"
         }
       },
       "required": [
@@ -558,6 +565,83 @@
       },
       "required": [
         "samples"
+      ]
+    },
+    "DiskIOMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "device": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "read_bytes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "write_bytes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "read_bytes_per_second": {
+          "type": "number",
+          "minimum": 0
+        },
+        "write_bytes_per_second": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "device",
+        "read_bytes",
+        "write_bytes"
+      ]
+    },
+    "HostMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "disk_io": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/DiskIOMetrics"
+          }
+        },
+        "tcp_sockets": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "udp_sockets": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "processes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "errors": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "disk_io_unavailable",
+              "sockets_unavailable",
+              "processes_unavailable"
+            ]
+          }
+        }
+      },
+      "required": [
+        "disk_io",
+        "errors"
       ]
     }
   }

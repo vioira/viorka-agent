@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -24,7 +25,7 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 	for _, tc := range []struct {
 		name                     string
 		version, collect, report uint64
-	}{{"disabled", 0, 0, 0}, {"v1", 1, 1, 2}, {"default-zero", 2, 0, 2}, {"batch", 2, 1, 5}, {"reuse", 2, 10, 1}} {
+	}{{"disabled", 0, 0, 0}, {"v1", 1, 1, 2}, {"default-zero", 2, 0, 2}, {"batch", 2, 1, 5}, {"reuse", 2, 10, 1}, {"host", 2, 0, 1}} {
 		enabled := tc.version > 0
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -63,6 +64,9 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 						n := uint64(1)
 						ack.MetricsVersion = &tc.version
 						ack.InventoryVersion = &n
+						if tc.name == "host" {
+							ack.HostMetricsVersion = &n
+						}
 						ack.CollectionSettings = &v1.NodeSettings{Revision: 2, CollectionSeconds: tc.collect, ReportSeconds: 60, ConnectionMode: "wss", WssReportSeconds: tc.report}
 					}
 					if e = send(v1.Message("system.hello_ack", "node", "ack", ack)); e != nil {
@@ -95,6 +99,9 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 						first, _, e := readMetric()
 						if e != nil || first.SampledAt.IsZero() {
 							return fmt.Errorf("first sample: %v", e)
+						}
+						if (first.Host != nil) != (tc.name == "host" && runtime.GOOS == "linux") {
+							return fmt.Errorf("host metrics negotiation mismatch")
 						}
 						newer, count, e := readMetric()
 						if e != nil {

@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "message_id": "metrics-example",
+  "type": "node.metrics",
+  "node_id": "node-example",
+  "sent_at": "2026-10-30T00:00:00Z",
+  "payload": {
+    "sampled_at": "2026-10-30T00:00:00Z",
+    "interval_seconds": 30,
+    "cpu": {
+      "logical_cpus": 2,
+      "usage_percent": 25
+    },
+    "memory": {
+      "total_bytes": 1073741824,
+      "available_bytes": 805306368,
+      "used_bytes": 268435456,
+      "swap_total_bytes": 0,
+      "swap_used_bytes": 0
+    },
+    "load": {
+      "one": 0.2,
+      "five": 0.3,
+      "fifteen": 0.1
+    },
+    "disk": {
+      "total_bytes": 10737418240,
+      "used_bytes": 2147483648,
+      "available_bytes": 8053063680
+    },
+    "uptime_seconds": 3600,
+    "interfaces": [
+      {
+        "name": "eth0",
+        "rx_bytes": 1048576,
+        "tx_bytes": 524288,
+        "rx_bytes_per_second": 1024,
+        "tx_bytes_per_second": 512
+      }
+    ],
+    "errors": [],
+    "host": {
+      "disk_io": [
+        {
+          "device": "252:0:vda",
+          "read_bytes": 5120,
+          "write_bytes": 10240,
+          "read_bytes_per_second": 512,
+          "write_bytes_per_second": 1024
+        }
+      ],
+      "tcp_sockets": 12,
+      "udp_sockets": 3,
+      "processes": 42,
+      "errors": []
+    }
+  }
+}

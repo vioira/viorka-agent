@@ -72,3 +72,27 @@ GitHub Actions 校验标签与代码版本一致，构建 Linux amd64/arm64 静�
 
 - `go.mod` module path 暂按 `github.com/vioira/viorka-agent` 编写；请按实际 GitHub Owner 调整。
 - 独立 Release、安装文档、卸载流程应在 M0 收口，不要把 Agent 代码塞回 Panel 仓库。
+
+## 主机计数扩展
+
+已增加 Linux `node.host_metrics.v1` 只读采集，并由 Panel 的
+`host_metrics_version: 1` 确认后在指标快照的 `host` 中上报。旧 Panel
+不确认时不发送新字段；旧 Agent 对新 Panel 仍可上报原有指标。
+
+- `disk_io`：`/proc/diskstats` 每设备累计读写 bytes 和 bytes/s，设备标识为
+  `major:minor:name`。内核扇区固定换算为 512 bytes；首次、回退、失败恢复、
+  超过 600 秒的采样间隔不计算速率。分区和堆叠设备分别报告，不能直接求和。
+- `tcp_sockets` / `udp_sockets`：`/proc/net/sockstat{,6}` 的 IPv4+IPv6 `inuse`
+  合计。包含监听套接字，TCP 不包含 TIME_WAIT；UDP 是套接字数而非会话数。
+  无 IPv6 内核缺少 sockstat6 时使用 IPv4 数据。
+- `processes`：分批枚举 `/proc` 顶层数字名称，统计当前 PID 命名空间可见进程，
+  不把线程数或累计 fork 数当进程数。进程创建/退出期间为近似瞬时值，hidepid
+  等权限设置可能限制可见范围。
+
+每文件最多 256 KiB、最多 64 个磁盘设备、最多枚举 65536 个 proc 项；超限、
+读取失败或取消时对应组报告 unavailable，不能把部分结果当完整值。
+无需 root 或外部命令。VPS/cgroup/用户级最大进程限制尚未采集，不能把
+`pid_max` 或 Agent 自身的 ulimit 当成整台 VPS 的进程配额。
+
+Panel 已支持接收、校验和通过实时指标 API 返回此扩展；新增指标尚未接入
+前端展示和历史聚合。需分别发布匹配的 Panel/Agent 后才能启用上报。

@@ -217,7 +217,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		defer stop()
 		return conn.Write(c, websocket.MessageText, b)
 	}
-	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1", "node.inventory.v1", "node.settings.v2", "node.metrics.v2"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
+	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1", "node.inventory.v1", "node.settings.v2", "node.metrics.v2", "node.host_metrics.v1"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
 		return err
 	}
 	hctx, hstop := context.WithTimeout(ctx, 10*time.Second)
@@ -269,6 +269,9 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	var pending []*v1.NodeMetrics
 	collect := func() {
 		latest = sample.Sample(ctx)
+		if ack.HostMetricsVersion == nil || *ack.HostMetricsVersion != 1 {
+			latest.Host = nil
+		}
 		copy := latest
 		pending = append(pending, &copy)
 		if len(pending) > 10 {

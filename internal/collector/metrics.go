@@ -16,7 +16,7 @@ import (
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
 )
 
-// Metrics reads bounded kernel counters, never shells out or scans a filesystem.
+// Metrics reads bounded kernel counters and proc directory entries; it never shells out.
 // One owner calls Sample; failed/reset counters discard their rate baseline.
 type Metrics struct {
 	root     string
@@ -25,6 +25,7 @@ type Metrics struct {
 	previous time.Time
 	cpu      []uint64
 	network  map[string][2]uint64
+	diskIO   map[string][2]uint64
 }
 
 func NewMetrics() *Metrics { return &Metrics{root: "/proc", disk: rootDisk, now: time.Now} }
@@ -159,6 +160,7 @@ func (m *Metrics) Sample(ctx context.Context) v1.NodeMetrics {
 		}
 		m.network = counters
 	}
+	result.Host = m.sampleHost(ctx, elapsed, validInterval)
 	m.previous = now
 	return result
 }

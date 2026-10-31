@@ -115,6 +115,9 @@ func TestLiveLinuxMetrics(t *testing.T) {
 	}
 	time.Sleep(20 * time.Millisecond)
 	v = m.Sample(context.Background())
+	if v.Host == nil || v.Host.Processes == nil || *v.Host.Processes == 0 || v.Host.TcpSockets == nil || v.Host.UdpSockets == nil {
+		t.Fatalf("missing live host metrics: %+v", v.Host)
+	}
 	if v.CPU.UsagePercent == nil {
 		t.Fatal("missing real CPU delta")
 	}
