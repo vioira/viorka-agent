@@ -17,7 +17,8 @@ jobs:
       - name: Real OpenRC service lifecycle (disposable Alpine container)
         run: |
           docker run --rm -v "$PWD:/src:ro" -w /src alpine:3.22 sh -ec '
-            apk add --no-cache openrc
+            # The minimal Alpine image needs BusyBox service scripts for syslog.
+            apk add --no-cache openrc busybox-openrc
             mkdir -p /run/openrc
             touch /run/openrc/softlevel
             sed -i "s/^#rc_sys=.*/rc_sys=\"docker\"/" /etc/rc.conf
