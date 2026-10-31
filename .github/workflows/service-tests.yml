@@ -1,0 +1,26 @@
+name: viorka-agent-service-tests
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  service-systemd:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Real systemd service lifecycle (disposable runner)
+        run: sudo env VIORKA_DISPOSABLE_SERVICE_TEST=yes sh scripts/test_services_linux.sh
+  service-openrc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Real OpenRC service lifecycle (disposable Alpine container)
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -w /src alpine:3.22 sh -ec '
+            apk add --no-cache openrc
+            mkdir -p /run/openrc
+            touch /run/openrc/softlevel
+            sed -i "s/^#rc_sys=.*/rc_sys=\"docker\"/" /etc/rc.conf
+            rc-service syslog start
+            VIORKA_DISPOSABLE_SERVICE_TEST=yes sh scripts/test_services_linux.sh
+          '

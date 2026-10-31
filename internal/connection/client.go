@@ -249,6 +249,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			return err
 		}
 	}
+	slog.Info("Panel connected; session established", "protocol_version", ack.ProtocolVersion, "heartbeat_seconds", ack.HeartbeatSeconds)
 	incoming := make(chan v1.Envelope, 8)
 	done := make(chan struct{})
 	go func() {

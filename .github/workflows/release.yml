@@ -1,15 +1,18 @@
 name: viorka-agent-release
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
 permissions:
   contents: write
 jobs:
+  services:
+    uses: ./.github/workflows/service-tests.yml
   release:
+    needs: services
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -17,6 +20,7 @@ jobs:
         run: |
           sh -n install.sh
           python3 scripts/test_install.py
+          python3 scripts/test_services.py
           python3 scripts/test_release.py
       - name: Verify release version
         env:
@@ -34,7 +38,7 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "dist/$asset" ./cmd/viorka-agent
             sha256sum "dist/$asset" | cut -d ' ' -f 1 > "dist/$asset.sha256"
           done
-      - name: Create draft release for review
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
@@ -43,4 +47,4 @@ jobs:
           if [[ "${RELEASE_TAG%%+*}" == *-* ]]; then
             flags+=(--prerelease --latest=false)
           fi
-          gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --generate-notes "${flags[@]}"
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes "${flags[@]}"

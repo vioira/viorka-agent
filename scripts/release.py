@@ -232,7 +232,7 @@ def main():
                               "warning" if prerelease else "success"))
     print(f"  目标  {style(remote + '/' + branch)}")
     print(f"  标签  {version_label(version)}")
-    print(style("  推送后由 GitHub Actions 构建并创建 Release 草稿。", "muted"))
+    print(style("  推送后由 GitHub Actions 构建 Linux amd64/arm64 二进制并自动公开发布 Release。", "muted"))
     print("\n  待推送提交：")
     commits = git('--no-pager', 'log', '--format=%h %s',
                   f'{remote_ref}..HEAD' if remote_ref else 'HEAD')
@@ -267,11 +267,11 @@ def main():
         print(shlex.join(push), file=sys.stderr)
         raise
     print(style("\n✓ 已推送 ", "success") + version_label(version))
-    print("  请在 GitHub Actions 查看构建结果，审核 Release 草稿后发布。")
+    print("  请在 GitHub Actions 查看构建结果；成功后 Release 将自动公开发布。")
 
 
 if __name__ == "__main__":
-    argparse.ArgumentParser(description="交互选择版本、验证、提交并推送 main 和标签，触发 Release 草稿构建。",
+    argparse.ArgumentParser(description="交互选择版本、验证、提交并推送 main 和标签，触发多架构构建并自动公开发布 Release。",
                             epilog="请先提交开发改动。支持补丁/次版本/主版本、自定义、预发布递增及转正式版。").parse_args()
     try:
         main()

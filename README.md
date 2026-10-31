@@ -24,7 +24,7 @@
 curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- install --url='https://panel.example.com' --token='面板生成的一次性令牌'
 ```
 
-需要入口脚本和正式 Release 已发布。当前前台运行，保持终端打开；详细参数、私有 CA、失败恢复与发布前提见 [安装说明](packaging/README.md)。
+需要入口脚本和正式 Release 已发布。默认以 root 安装 systemd/OpenRC 后台服务并设置开机自启；无服务管理器时使用 `--foreground` 前台运行。详细参数、私有 CA、失败恢复与发布前提见 [安装说明](packaging/README.md)。
 
 ## 使用当前脚手架
 

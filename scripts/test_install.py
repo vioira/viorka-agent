@@ -53,6 +53,12 @@ import hashlib, os, pathlib, sys
 args=sys.argv[1:]; url=args[-1]
 if os.environ['FAILURE']=='download': sys.exit(22)
 if url.endswith('/latest'):
+    if os.environ['FAILURE']=='no_release':
+        print('https://github.com/vioira/viorka-agent/releases', end='')
+        sys.exit(0)
+    if os.environ['FAILURE']=='invalid_release':
+        print('https://github.com/vioira/viorka-agent/releases/tag/invalid', end='')
+        sys.exit(0)
     print('https://github.com/vioira/viorka-agent/releases/tag/v0.1.0', end='')
 else:
     assert '/v0.1.0/viorka-agent-linux-' in url, url
@@ -69,7 +75,7 @@ else:
             if failure == "existing":
                 install.mkdir(parents=True)
                 (install / "identity").write_text("preserve")
-            args = ["sh", str(ROOT / "install.sh"), "install", "--url=https://localhost:8143", *extra]
+            args = ["sh", str(ROOT / "install.sh"), "install", "--foreground", "--url=https://localhost:8143", *extra]
             if pinned:
                 args.append("--version=v0.1.0")
             if token_arg:
@@ -138,6 +144,11 @@ else:
                 self.assertNotIn("run", calls)
                 if failure not in ("config", "enroll"):
                     self.assertEqual(calls, [])
+                if failure in ("no_release", "invalid_release", "download"):
+                    self.assertFalse(install.exists(), "release lookup must not leave an installation directory")
+                if failure == "no_release":
+                    self.assertIn('草稿不可下载'.encode(), output)
+                    self.assertIn(b'--version=', output)
                 if failure == "config":
                     self.assertEqual(calls, ["config-check"])
                 if failure == "enroll":
@@ -158,7 +169,7 @@ else:
         self.run_install(token_arg=True, failure="enroll")
 
     def test_failures(self):
-        for failure in ("existing", "download", "checksum", "manifest", "config", "enroll"):
+        for failure in ("existing", "no_release", "invalid_release", "download", "checksum", "manifest", "config", "enroll"):
             with self.subTest(failure=failure):
                 self.run_install(failure=failure)
         self.run_install(arch="riscv64")
