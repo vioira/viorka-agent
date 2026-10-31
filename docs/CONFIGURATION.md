@@ -72,8 +72,6 @@ Agent 与 Panel 协商 `node.inventory.v1` 后，上线及每 5 分钟发送一�
 
 Panel 将最新快照保存在 `nodes.inventory_json`，断线后保留，页面显示采集时间。此扩展需升级双方；旧 Panel 不确认扩展时 Agent 不发资产消息，新 Panel 对旧 Agent 不添加 ACK 字段。未部署的新二进制不会改变现有节点上报。
 
-## 每节点采集设置（node.settings.v1）
+## 每节点采集设置（node.settings.v2）
 
-支持此能力的 Panel 在 WSS 握手下发该节点设置，并覆盖本会话的本地 metrics_seconds：采集间隔 `collection_seconds` 10–300 秒；资产上报 `report_seconds` 60–3600 秒；指标上报 `wss_report_seconds` 不小于采集间隔且最多 300 秒。默认分别为 30/300/30 秒，连接模式仅 WSS，心跳独立为 30 秒。采样和发送分别计时，只保存最新指标；公网探测缓存跟随资产周期，探测期间最多有约 8 秒延迟。
-
-设置持久化在 Panel 节点表。保存触发管理会话重连，握手采用新配置，不停止代理进程。旧 Agent 不接收新增字段；新 Agent 连接旧 Panel 时仍用本地采集周期及 300 秒资产周期。设置验证失败会明确拒绝该握手，不接受任意网络模式或越界周期。
+握手 collection_settings 覆盖本会话配置：采集 0–10 秒默认 0（随 WSS 上报采集），历史入库 30–180 秒默认 60，WSS 发送 1–5 秒默认 2。资产刷新独立 300 秒，心跳 30 秒。快采集通过有界样本批次发送，慢采集重复快照保持原采样时间。新 Agent 不宣告旧 node.settings.v1；旧 Panel 下使用本地 metrics_seconds，不将旧资产周期解释成历史周期。详见 [MONITORING.md](MONITORING.md)。

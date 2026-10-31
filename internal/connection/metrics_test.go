@@ -21,8 +21,12 @@ import (
 )
 
 func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
-		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		version, collect, report uint64
+	}{{"disabled", 0, 0, 0}, {"v1", 1, 1, 2}, {"default-zero", 2, 0, 2}, {"batch", 2, 1, 5}, {"reuse", 2, 10, 1}} {
+		enabled := tc.version > 0
+		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 			defer cancel()
 			done := make(chan error, 1)
@@ -57,9 +61,9 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 					ack := v1.HelloAck{ProtocolVersion: v1.Version, HeartbeatSeconds: 30}
 					if enabled {
 						n := uint64(1)
-						ack.MetricsVersion = &n
+						ack.MetricsVersion = &tc.version
 						ack.InventoryVersion = &n
-						ack.NodeSettings = &v1.NodeSettings{Revision: 2, CollectionSeconds: 10, ReportSeconds: 120, ConnectionMode: "wss", WssReportSeconds: 20}
+						ack.CollectionSettings = &v1.NodeSettings{Revision: 2, CollectionSeconds: tc.collect, ReportSeconds: 60, ConnectionMode: "wss", WssReportSeconds: tc.report}
 					}
 					if e = send(v1.Message("system.hello_ack", "node", "ack", ack)); e != nil {
 						return e
@@ -69,22 +73,44 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 						if e != nil || inventory.Type != "node.inventory" {
 							return fmt.Errorf("inventory: %s %v", inventory.Type, e)
 						}
-						metric, e := read()
-						if e != nil || metric.Type != "node.metrics" {
-							return fmt.Errorf("metrics: %v", e)
+						readMetric := func() (v1.NodeMetrics, int, error) {
+							msg, e := read()
+							if e != nil {
+								return v1.NodeMetrics{}, 0, e
+							}
+							if tc.version == 2 {
+								var batch v1.NodeMetricsBatch
+								if msg.Type != "node.metrics_batch" {
+									return v1.NodeMetrics{}, 0, fmt.Errorf("expected batch got %s", msg.Type)
+								}
+								if e = v1.Decode(msg.Payload, &batch); e != nil || len(batch.Samples) == 0 {
+									return v1.NodeMetrics{}, 0, fmt.Errorf("invalid batch: %v", e)
+								}
+								return *batch.Samples[len(batch.Samples)-1], len(batch.Samples), nil
+							}
+							var m v1.NodeMetrics
+							e = v1.Decode(msg.Payload, &m)
+							return m, 1, e
 						}
-						var m v1.NodeMetrics
-						if e = v1.Decode(metric.Payload, &m); e != nil || m.SampledAt.IsZero() {
-							return fmt.Errorf("metrics payload: %v", e)
+						first, _, e := readMetric()
+						if e != nil || first.SampledAt.IsZero() {
+							return fmt.Errorf("first sample: %v", e)
 						}
-						next, e := read()
-						if e != nil || next.Type != "node.metrics" {
-							return fmt.Errorf("periodic metrics: %s %v", next.Type, e)
+						newer, count, e := readMetric()
+						if e != nil {
+							return e
 						}
-						var newer v1.NodeMetrics
-						if v1.Decode(next.Payload, &newer) != nil || !newer.SampledAt.After(m.SampledAt) || newer.IntervalSeconds < 5 || newer.IntervalSeconds > 15 {
-							return fmt.Errorf("sampling did not run independently: %+v", newer)
+						if tc.collect > tc.report {
+							if !newer.SampledAt.Equal(first.SampledAt) {
+								return fmt.Errorf("repeated snapshot lost sampling time")
+							}
+						} else if !newer.SampledAt.After(first.SampledAt) {
+							return fmt.Errorf("new sample missing")
 						}
+						if tc.name == "batch" && count < 3 {
+							return fmt.Errorf("intermediate samples lost: %d", count)
+						}
+
 					}
 					attempt := uint64(1)
 					dispatch := v1.Message("task.dispatch", "node", "dispatch", v1.TaskDispatch{TaskID: "task", Operation: "node.inspect", IdempotencyKey: "inspect", ResourceKind: "node", ResourceID: "node", DeadlineAt: time.Now().Add(time.Minute), Attempt: &attempt})

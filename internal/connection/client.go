@@ -217,7 +217,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		defer stop()
 		return conn.Write(c, websocket.MessageText, b)
 	}
-	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1", "node.inventory.v1", "node.settings.v1"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
+	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1", "node.inventory.v1", "node.settings.v2", "node.metrics.v2"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
 		return err
 	}
 	hctx, hstop := context.WithTimeout(ctx, 10*time.Second)
@@ -237,13 +237,12 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	collectionInterval := time.Duration(c.cfg.MetricsIntervalSeconds()) * time.Second
 	metricsInterval := collectionInterval
 	inventoryInterval := 5 * time.Minute
-	if ack.NodeSettings != nil {
-		if ack.NodeSettings.Validate() != nil {
+	if ack.CollectionSettings != nil {
+		if ack.CollectionSettings.Validate() != nil {
 			return fmt.Errorf("invalid node settings from Panel")
 		}
-		collectionInterval = time.Duration(ack.NodeSettings.CollectionSeconds) * time.Second
-		metricsInterval = time.Duration(ack.NodeSettings.WssReportSeconds) * time.Second
-		inventoryInterval = time.Duration(ack.NodeSettings.ReportSeconds) * time.Second
+		collectionInterval = time.Duration(ack.CollectionSettings.CollectionSeconds) * time.Second
+		metricsInterval = time.Duration(ack.CollectionSettings.WssReportSeconds) * time.Second
 	}
 	var inventoryTick <-chan time.Time
 	var inventoryTimer *time.Ticker
@@ -267,18 +266,61 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	var metricsTick <-chan time.Time
 	sample := collector.NewMetrics()
 	var latest v1.NodeMetrics
+	var pending []*v1.NodeMetrics
+	collect := func() {
+		latest = sample.Sample(ctx)
+		copy := latest
+		pending = append(pending, &copy)
+		if len(pending) > 10 {
+			pending = pending[len(pending)-10:]
+		}
+	}
 	var collectionTick <-chan time.Time
 	sendMetrics := func() error {
+		if ack.MetricsVersion != nil && *ack.MetricsVersion == 2 {
+			samples := pending
+			if len(samples) == 0 {
+				samples = []*v1.NodeMetrics{&latest}
+			}
+			// Keep each frame within the existing 64 KiB bound, including large interface lists.
+			for len(samples) > 0 {
+				n := len(samples)
+				var msg v1.Envelope
+				for {
+					msg = v1.Message("node.metrics_batch", id.NodeID, ID(), v1.NodeMetricsBatch{Samples: samples[:n]})
+					b, e := json.Marshal(msg)
+					if e != nil {
+						return e
+					}
+					if len(b) <= 65536 {
+						break
+					}
+					if n == 1 {
+						return fmt.Errorf("metric sample exceeds frame limit")
+					}
+					n--
+				}
+				if err := send(msg); err != nil {
+					return err
+				}
+				samples = samples[n:]
+			}
+			pending = nil
+			return nil
+		}
+		pending = nil
 		return send(v1.Message("node.metrics", id.NodeID, ID(), latest))
 	}
 	if ack.MetricsVersion != nil {
-		if *ack.MetricsVersion != 1 {
+		if *ack.MetricsVersion != 1 && *ack.MetricsVersion != 2 {
 			return fmt.Errorf("unsupported metrics version")
 		}
-		latest = sample.Sample(ctx)
-		collectionTimer := time.NewTicker(collectionInterval)
-		defer collectionTimer.Stop()
-		collectionTick = collectionTimer.C
+		collect()
+		if collectionInterval > 0 {
+			collectionTimer := time.NewTicker(collectionInterval)
+			defer collectionTimer.Stop()
+			collectionTick = collectionTimer.C
+		}
 		timer := time.NewTicker(metricsInterval)
 		defer timer.Stop()
 		metricsTick = timer.C
@@ -325,12 +367,15 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			}
 			inventoryTimer.Reset(inventoryInterval)
 		case <-collectionTick:
-			latest = sample.Sample(ctx)
+			collect()
 		case <-metricsTick:
+			if collectionInterval == 0 {
+				collect()
+			}
 			// If both clocks fired, collect before reporting instead of sending the old snapshot.
 			select {
 			case <-collectionTick:
-				latest = sample.Sample(ctx)
+				collect()
 			default:
 			}
 			if err = sendMetrics(); err != nil {
