@@ -101,6 +101,15 @@
           "enum": [
             1
           ]
+        },
+        "inventory_version": {
+          "type": "integer",
+          "enum": [
+            1
+          ]
+        },
+        "node_settings": {
+          "$ref": "#/$defs/NodeSettings"
         }
       },
       "required": [
@@ -400,6 +409,96 @@
         "interval_seconds",
         "errors",
         "interfaces"
+      ]
+    },
+    "NodeInventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sampled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "os_id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "os_name": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "os_version": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "public_ipv4": {
+          "type": "string",
+          "maxLength": 45
+        },
+        "public_ipv6": {
+          "type": "string",
+          "maxLength": 45
+        },
+        "errors": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "os_release_unavailable",
+              "public_ipv4_unavailable",
+              "public_ipv6_unavailable"
+            ]
+          }
+        }
+      },
+      "required": [
+        "sampled_at",
+        "os_id",
+        "os_name",
+        "os_version",
+        "public_ipv4",
+        "public_ipv6",
+        "errors"
+      ]
+    },
+    "NodeSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "collection_seconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 300
+        },
+        "report_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        },
+        "connection_mode": {
+          "type": "string",
+          "enum": [
+            "wss"
+          ]
+        },
+        "wss_report_seconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 300
+        }
+      },
+      "required": [
+        "revision",
+        "collection_seconds",
+        "report_seconds",
+        "connection_mode",
+        "wss_report_seconds"
       ]
     }
   }

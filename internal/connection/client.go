@@ -32,9 +32,10 @@ import (
 var ErrIdentityRejected = errors.New("agent identity rejected; contact administrator")
 
 type Client struct {
-	cfg   config.Local
-	http  *http.Client
-	store *state.Store
+	cfg       config.Local
+	http      *http.Client
+	store     *state.Store
+	inventory func(context.Context, time.Duration) v1.NodeInventory
 }
 
 func New(cfg config.Local, s *state.Store) (*Client, error) {
@@ -58,7 +59,7 @@ func New(cfg config.Local, s *state.Store) (*Client, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsConfig
-	return &Client{cfg, &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, s}, nil
+	return &Client{cfg, &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, s, collector.NewInventory().SampleEvery}, nil
 }
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 func (c *Client) post(ctx context.Context, path string, v, out any) error {
@@ -216,7 +217,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		defer stop()
 		return conn.Write(c, websocket.MessageText, b)
 	}
-	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
+	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1", "node.inventory.v1", "node.settings.v1"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
 		return err
 	}
 	hctx, hstop := context.WithTimeout(ctx, 10*time.Second)
@@ -233,16 +234,52 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	if envelope.Type != "system.hello_ack" || v1.Decode(envelope.Payload, &ack) != nil || ack.ProtocolVersion != v1.Version || ack.HeartbeatSeconds < 5 || ack.HeartbeatSeconds > 60 {
 		return fmt.Errorf("unsupported hello response")
 	}
+	collectionInterval := time.Duration(c.cfg.MetricsIntervalSeconds()) * time.Second
+	metricsInterval := collectionInterval
+	inventoryInterval := 5 * time.Minute
+	if ack.NodeSettings != nil {
+		if ack.NodeSettings.Validate() != nil {
+			return fmt.Errorf("invalid node settings from Panel")
+		}
+		collectionInterval = time.Duration(ack.NodeSettings.CollectionSeconds) * time.Second
+		metricsInterval = time.Duration(ack.NodeSettings.WssReportSeconds) * time.Second
+		inventoryInterval = time.Duration(ack.NodeSettings.ReportSeconds) * time.Second
+	}
+	var inventoryTick <-chan time.Time
+	var inventoryTimer *time.Ticker
+	sendInventory := func() error {
+		return send(v1.Message("node.inventory", id.NodeID, ID(), c.inventory(ctx, inventoryInterval)))
+	}
+	if ack.InventoryVersion != nil {
+		if *ack.InventoryVersion != 1 {
+			return fmt.Errorf("unsupported inventory version")
+		}
+		inventoryTimer = time.NewTicker(inventoryInterval)
+		defer inventoryTimer.Stop()
+		inventoryTick = inventoryTimer.C
+		if err = sendInventory(); err != nil {
+			return err
+		}
+		inventoryTimer.Reset(inventoryInterval)
+	}
 	// A nil channel disables metrics against older Panels. A single writer sends
 	// snapshots directly; ticker coalescing prevents a metrics backlog.
 	var metricsTick <-chan time.Time
 	sample := collector.NewMetrics()
-	sendMetrics := func() error { return send(v1.Message("node.metrics", id.NodeID, ID(), sample.Sample(ctx))) }
+	var latest v1.NodeMetrics
+	var collectionTick <-chan time.Time
+	sendMetrics := func() error {
+		return send(v1.Message("node.metrics", id.NodeID, ID(), latest))
+	}
 	if ack.MetricsVersion != nil {
 		if *ack.MetricsVersion != 1 {
 			return fmt.Errorf("unsupported metrics version")
 		}
-		timer := time.NewTicker(time.Duration(c.cfg.MetricsIntervalSeconds()) * time.Second)
+		latest = sample.Sample(ctx)
+		collectionTimer := time.NewTicker(collectionInterval)
+		defer collectionTimer.Stop()
+		collectionTick = collectionTimer.C
+		timer := time.NewTicker(metricsInterval)
 		defer timer.Stop()
 		metricsTick = timer.C
 		if err = sendMetrics(); err != nil {
@@ -282,7 +319,20 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-inventoryTick:
+			if err = sendInventory(); err != nil {
+				return err
+			}
+			inventoryTimer.Reset(inventoryInterval)
+		case <-collectionTick:
+			latest = sample.Sample(ctx)
 		case <-metricsTick:
+			// If both clocks fired, collect before reporting instead of sending the old snapshot.
+			select {
+			case <-collectionTick:
+				latest = sample.Sample(ctx)
+			default:
+			}
 			if err = sendMetrics(); err != nil {
 				return err
 			}

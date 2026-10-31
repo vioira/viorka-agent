@@ -56,14 +56,15 @@ func number(s string) (float64, error) {
 func (m *Metrics) Sample(ctx context.Context) v1.NodeMetrics {
 	now := m.now()
 	result := v1.NodeMetrics{SampledAt: now.UTC(), Errors: []string{}, Interfaces: []*v1.InterfaceMetrics{}}
-	if runtime.GOOS != "linux" && m.root == "/proc" {
-		result.Errors = append(result.Errors, "unsupported_platform")
-		return result
-	}
 	elapsed := now.Sub(m.previous).Seconds()
 	validInterval := !m.previous.IsZero() && elapsed > 0 && elapsed <= 600
 	if validInterval {
 		result.IntervalSeconds = elapsed
+	}
+	if runtime.GOOS != "linux" && m.root == "/proc" {
+		m.previous = now
+		result.Errors = append(result.Errors, "unsupported_platform")
+		return result
 	}
 	fail := func(s string) { result.Errors = append(result.Errors, s+"_unavailable") }
 	stat, err := m.read(ctx, "stat")

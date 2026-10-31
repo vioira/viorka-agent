@@ -23,7 +23,7 @@ import (
 func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 			defer cancel()
 			done := make(chan error, 1)
 			var origin string
@@ -58,11 +58,17 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 					if enabled {
 						n := uint64(1)
 						ack.MetricsVersion = &n
+						ack.InventoryVersion = &n
+						ack.NodeSettings = &v1.NodeSettings{Revision: 2, CollectionSeconds: 10, ReportSeconds: 120, ConnectionMode: "wss", WssReportSeconds: 20}
 					}
 					if e = send(v1.Message("system.hello_ack", "node", "ack", ack)); e != nil {
 						return e
 					}
 					if enabled {
+						inventory, e := read()
+						if e != nil || inventory.Type != "node.inventory" {
+							return fmt.Errorf("inventory: %s %v", inventory.Type, e)
+						}
 						metric, e := read()
 						if e != nil || metric.Type != "node.metrics" {
 							return fmt.Errorf("metrics: %v", e)
@@ -70,6 +76,14 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 						var m v1.NodeMetrics
 						if e = v1.Decode(metric.Payload, &m); e != nil || m.SampledAt.IsZero() {
 							return fmt.Errorf("metrics payload: %v", e)
+						}
+						next, e := read()
+						if e != nil || next.Type != "node.metrics" {
+							return fmt.Errorf("periodic metrics: %s %v", next.Type, e)
+						}
+						var newer v1.NodeMetrics
+						if v1.Decode(next.Payload, &newer) != nil || !newer.SampledAt.After(m.SampledAt) || newer.IntervalSeconds < 5 || newer.IntervalSeconds > 15 {
+							return fmt.Errorf("sampling did not run independently: %+v", newer)
 						}
 					}
 					attempt := uint64(1)
@@ -110,6 +124,9 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer client.Close()
+			client.inventory = func(context.Context, time.Duration) v1.NodeInventory {
+				return v1.NodeInventory{SampledAt: time.Now().UTC(), OSName: "Ubuntu 24.04", Errors: []string{"public_ipv4_unavailable", "public_ipv6_unavailable"}}
+			}
 			_, key, e := ed25519.GenerateKey(rand.Reader)
 			if e != nil {
 				t.Fatal(e)

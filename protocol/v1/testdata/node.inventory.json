@@ -1,0 +1,18 @@
+{
+  "version": "1.0",
+  "message_id": "inventory-1",
+  "type": "node.inventory",
+  "node_id": "node-demo",
+  "sent_at": "2026-10-31T08:00:00Z",
+  "payload": {
+    "sampled_at": "2026-10-31T08:00:00Z",
+    "os_id": "debian",
+    "os_name": "Debian GNU/Linux 12 (bookworm)",
+    "os_version": "12",
+    "public_ipv4": "8.8.8.8",
+    "public_ipv6": "",
+    "errors": [
+      "public_ipv6_unavailable"
+    ]
+  }
+}

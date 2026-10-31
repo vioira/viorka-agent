@@ -63,3 +63,17 @@ Agent 收到旧于当前 Revision 的普通 apply 指令时应拒绝；如果操
 ## 主机监控周期
 
 可选 `metrics_seconds` 默认 30 秒，允许 10–300 秒，0 使用默认值。该周期独立于心跳；只有 Panel 确认 `node.metrics.v1` 扩展后才发送指标。指标范围、失败状态、资源上限及平台边界见 [MONITORING.md](MONITORING.md)。
+
+## 发行版与公网地址资产
+
+Agent 与 Panel 协商 `node.inventory.v1` 后，上线及每 5 分钟发送一次 `node.inventory`。Linux 读取 `/etc/os-release`，不存在时回退 `/usr/lib/os-release`，上报 ID、PRETTY_NAME 和 VERSION_ID；非 Linux 或读取失败保留基础 OS，并报告发行版未知。
+
+公网 IPv4/IPv6 使用 [ipify 官方 API](https://www.ipify.org/) 的 `https://api.ipify.org` 与 `https://api6.ipify.org`。分别强制 TCP4/TCP6、直接出站，不使用 HTTP 代理、不携带 Panel 凭证、不跟随重定向，正常验证 TLS。每请求最长 4 秒、响应上限 64 字节；重连复用 5 分钟缓存。每族只记录该探测路径的一个公网出口地址，不表示全部网卡地址、入站可达性或 NAT 提供商端口映射。探测失败上报空值和对应 unavailable 错误，不声称没有该网络能力。
+
+Panel 将最新快照保存在 `nodes.inventory_json`，断线后保留，页面显示采集时间。此扩展需升级双方；旧 Panel 不确认扩展时 Agent 不发资产消息，新 Panel 对旧 Agent 不添加 ACK 字段。未部署的新二进制不会改变现有节点上报。
+
+## 每节点采集设置（node.settings.v1）
+
+支持此能力的 Panel 在 WSS 握手下发该节点设置，并覆盖本会话的本地 metrics_seconds：采集间隔 `collection_seconds` 10–300 秒；资产上报 `report_seconds` 60–3600 秒；指标上报 `wss_report_seconds` 不小于采集间隔且最多 300 秒。默认分别为 30/300/30 秒，连接模式仅 WSS，心跳独立为 30 秒。采样和发送分别计时，只保存最新指标；公网探测缓存跟随资产周期，探测期间最多有约 8 秒延迟。
+
+设置持久化在 Panel 节点表。保存触发管理会话重连，握手采用新配置，不停止代理进程。旧 Agent 不接收新增字段；新 Agent 连接旧 Panel 时仍用本地采集周期及 300 秒资产周期。设置验证失败会明确拒绝该握手，不接受任意网络模式或越界周期。
