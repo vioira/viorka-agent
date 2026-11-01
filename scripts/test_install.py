@@ -22,7 +22,7 @@ TOKEN = "a" * 64
 
 
 class InstallerTests(unittest.TestCase):
-    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure=""):
+    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False):
         with tempfile.TemporaryDirectory(prefix="viorka-install-") as tmp:
             home = pathlib.Path(tmp) / 'home "quote" \\ slash'
             home.mkdir()
@@ -185,10 +185,10 @@ else:
                     retry_script = pathlib.Path(tmp) / "install.sh"
                     retry_script.write_text((ROOT / "install.sh").read_text().replace('/proc/', str(pathlib.Path(tmp) / 'proc') + '/'))
                 old_binary = (install / "viorka-agent").read_bytes() if (install / "viorka-agent").exists() else None
-                result = subprocess.run(["sh", str(retry_script), "install", "--foreground", "--url=https://localhost:8143", "--version=v0.1.0", *([] if before else ["--token=" + TOKEN])], env=env, capture_output=True, start_new_session=True, timeout=15)
+                result = subprocess.run(["sh", str(retry_script), "install", "--foreground", "--url=https://localhost:8143", "--version=v0.1.0", *((["--token=" + TOKEN, "--reenroll-node=node-1"] if reenroll else []) if before else ["--token=" + TOKEN])], env=env, capture_output=True, start_new_session=True, timeout=15)
                 self.assertEqual(result.returncode == 0, not retry_failure, result.stderr.decode())
                 after_calls = (install / "calls").read_text().splitlines()[len(calls):]
-                expected = ["config-check"] if running else (["config-check", "run"] if before else ["config-check", "enroll", "run"])
+                expected = ["config-check"] if running else (["config-check", "run"] if before and not reenroll else ["config-check", "enroll", "run"])
                 if retry_failure:
                     expected = ["config-check"] if retry_failure == "config" else []
                     self.assertEqual((install / "viorka-agent").read_bytes(), old_binary)
@@ -198,6 +198,9 @@ else:
                 if config:
                     self.assertEqual((install / "agent.json").read_bytes(), config)
                 self.assertFalse(list(install.glob(".install-*")))
+
+    def test_explicit_reenrollment_preserves_config(self):
+        self.run_install(token_arg=True, retry=True, reenroll=True)
 
     def test_running_agent_does_not_start_duplicate(self):
         self.run_install(token_arg=True, retry=True, running=True)

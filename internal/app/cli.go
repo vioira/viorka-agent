@@ -69,7 +69,7 @@ func Main(args []string, out, errOut io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: viorka-agent [version|doctor|config-check --config PATH|enroll --config PATH --token-stdin|run --config PATH|help]")
+	fmt.Fprintln(w, "Usage: viorka-agent [version|doctor|config-check --config PATH|enroll --config PATH --token-stdin [--replace-node ID]|run --config PATH|help]")
 	fmt.Fprintln(w, "M0 supports enrollment, WSS and read-only node.inspect tasks.")
 }
 
@@ -77,11 +77,12 @@ func connect(args []string, out, errOut io.Writer) int {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(errOut)
 	path := flags.String("config", "examples/agent.example.json", "local config file")
+	replaceNode := flags.String("replace-node", "", "explicitly replace identity for this node; preserves local state")
 	tokenStdin := flags.Bool("token-stdin", false, "read enrollment token from standard input")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
-	if flags.NArg() != 0 {
+	if flags.NArg() != 0 || (args[0] != "enroll" && *replaceNode != "") {
 		return 2
 	}
 	cfg, err := config.LoadFile(*path)
@@ -115,7 +116,11 @@ func connect(args []string, out, errOut io.Writer) int {
 			if len(token) != 64 {
 				err = fmt.Errorf("invalid enrollment token length")
 			} else {
-				err = client.Enroll(ctx, token)
+				if *replaceNode != "" {
+					err = client.Reenroll(ctx, token, *replaceNode)
+				} else {
+					err = client.Enroll(ctx, token)
+				}
 			}
 		}
 	} else {
