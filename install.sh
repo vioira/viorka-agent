@@ -291,7 +291,9 @@ RC
     checksum=$(cat "$staging/viorka-agent.sha256")
     [ "${#checksum}" -eq 64 ] || fail '安装包校验文件无效。'
     case "$checksum" in *[!a-fA-F0-9]*) fail '安装包校验文件无效。' ;; esac
-    actual=$(sha256sum "$staging/viorka-agent")
+    # GNU sha256sum escapes filenames containing backslashes and prefixes the
+    # digest with a backslash. Hash stdin so path spelling cannot affect parsing.
+    actual=$(sha256sum < "$staging/viorka-agent")
     actual=${actual%% *}
     checksum=$(printf '%s' "$checksum" | tr 'A-F' 'a-f')
     [ "$actual" = "$checksum" ] || fail '安装包 SHA-256 校验失败。'
