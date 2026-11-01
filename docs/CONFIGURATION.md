@@ -75,3 +75,11 @@ Panel 将最新快照保存在 `nodes.inventory_json`，断线后保留，页面
 ## 每节点采集设置（node.settings.v2）
 
 握手 collection_settings 覆盖本会话配置：采集 0–10 秒默认 0（随 WSS 上报采集），历史入库 30–180 秒默认 60，WSS 发送 1–5 秒默认 2。资产刷新独立 300 秒，心跳 30 秒。快采集通过有界样本批次发送，慢采集重复快照保持原采样时间。新 Agent 不宣告旧 node.settings.v1；旧 Panel 下使用本地 metrics_seconds，不将旧资产周期解释成历史周期。详见 [MONITORING.md](MONITORING.md)。
+
+## 最后生效的节点采集设置
+
+新版 Panel 通过已协商的 `node.settings.live.v1` 在线下发采集设置，Agent 先校验、
+写入 `state_dir/node-settings.json`，再应用并回报 Revision。文件绑定 Panel/Node 身份，
+使用状态目录的权限与原子写入规则；不修改本地 `agent.json`。启动时恢复此设置并独立采集，
+断线只保留最新内存快照，不保存指标历史。旧 Panel 未下发设置时使用 metrics_seconds 回退值。
+旧版本兼容、错误码和确认语义见 [MONITORING.md](MONITORING.md)。

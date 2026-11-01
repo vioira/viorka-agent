@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "message_id": "node.settings-example",
+  "type": "node.settings",
+  "node_id": "node-example",
+  "sent_at": "2026-01-01T00:00:00Z",
+  "payload": {
+    "revision": 2,
+    "collection_seconds": 1,
+    "report_seconds": 60,
+    "connection_mode": "wss",
+    "wss_report_seconds": 2
+  }
+}

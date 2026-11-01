@@ -8,3 +8,19 @@ func (s NodeSettings) Validate() error {
 	}
 	return nil
 }
+
+func (r NodeSettingsResult) Validate() error {
+	if r.Revision == 0 {
+		return errors.New("invalid settings result revision")
+	}
+	if r.State == "applied" && r.AppliedRevision == r.Revision && r.ErrorCode == "" {
+		return nil
+	}
+	if r.State == "failed" {
+		switch r.ErrorCode {
+		case "invalid_settings", "stale_revision", "revision_conflict", "persist_failed":
+			return nil
+		}
+	}
+	return errors.New("invalid settings result")
+}

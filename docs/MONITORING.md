@@ -18,7 +18,7 @@ CPU 首次采样或计数器倒退也只报告 CPU 数，等待下一次有效�
 
 旧 Panel 不下发 v2 设置时，Agent 使用本地 `metrics_seconds`（默认 30，范围 10–300，0 使用默认）。每个内核文件最多读 256 KiB、最多 64 个非回环网卡。采集不需要 root，权限不足时报告未知。
 
-连接循环拥有采集与发送，保持单 reader/writer、64 KiB 帧、5 秒写超时。内存样本最多 10 条，按帧大小拆分；ticker 合并过期 tick，不追赶历史采集。断线丢弃未发送数据，不做磁盘补传。资产探测及系统调用可能延迟该循环，周期是调度目标，并非实时保证。任务回执沿用既有持久化机制。
+指标与资产由独立、有界的采集任务生成，WSS 单 writer 负责发送。指标仅保留有界内存窗口，不做磁盘缓存或断线补传。节点设置在线同步和生命周期详见下节。
 
 ## Panel 与界面
 
@@ -47,3 +47,37 @@ SQLite 单表保留 7 天，按配置周期批量写入，不同步阻塞 WSS �
 ## 验证边界
 
 单元和集成测试覆盖周期边界、零周期、批量、重复与乱序、旧版兼容、TLS/WSS、任务共存、权限、SQLite 重启恢复与重试、过期清理及缺失图表数据。macOS 不执行真实 Linux procfs 采集；Debian/Ubuntu/Alpine 与低配 NAT VPS 的资源开销、长时间运行仍需实机验收。当前没有告警、流量计费、任意挂载点监控、容器配额或离线补传。
+
+## 节点设置在线同步（node.settings.live.v1）
+
+本扩展保持外层协议 1.0。Agent 宣告 `node.settings.live.v1` 后，Panel 才在
+`system.hello_ack` 中返回 `settings_version: 1`，并可发送 `node.settings`
+（payload 为已有 `NodeSettings`）。未协商的 Agent 不会收到新字段或消息。
+初次设置仍通过 `collection_settings` 下发；两种下发方式均须回报
+`node.settings_result`，`correlation_id` 等于对应下发消息的 `message_id`。
+结果包含请求的 `revision`、本机实际 `applied_revision`、`state`（applied/failed）
+及失败时的固定 `error_code`。applied 只代表采集设置已持久保存并应用，不代表代理部署成功。
+
+Agent 将校验后的设置保存到 `state_dir/node-settings.json`（0600，目录 0700），
+绑定 Panel Origin 与 Node ID，原子替换并同步文件和目录后应用。Bootstrap `agent.json`
+和身份文件不被远程设置修改。启动时恢复最后生效设置；文件损坏、权限不安全、身份不匹配
+会明确报错退出。低 Revision 拒绝；同 Revision 同内容允许重试，同 Revision 不同内容拒绝。
+失败保留内存中的原设置，错误码为 invalid_settings/stale_revision/revision_conflict/persist_failed。
+
+Panel 保存 Desired 后通过容量为 1 的通知唤醒 WSS 单 writer，合并多次修改并读取最新设置。
+记录当前 Revision 的回执；旧回执不覆盖新 Desired，失败不倒退已确认成功状态。
+30 秒未收到匹配回执会关闭管理连接，由 Agent 重连再次对账。失败回执不触发紧密重试，
+可修复节点后重连或保存新版本。GET `/api/v1/nodes/{id}/settings/status` 返回 pending/applied/failed，
+状态随 SQLite 保存并通过 node_settings_result SSE 事件通知界面。
+“已生效”表示该版本最后一次获得节点确认，不是实时健康或在线保证。
+
+旧 Agent 仍采用保存后重连握手的行为，没有明确回执时显示待同步或未确认。
+新 Agent 连接旧 Panel 时只发送原有消息；有效的握手设置仍保存到本地，不发送新回执。
+兼容扩展需要双方分别发布；工作区实现不代表已发布。
+
+指标采集由 Agent 进程持有，不随 WSS 重连重建；collection_seconds=0 时使用
+wss_report_seconds 作为独立采集周期。启动后按已保存设置采集，没有保存设置时使用本地
+metrics_seconds。只有 Panel 协商指标能力才发送。在线最多缓存 10 条，离线仅保留最新快照，
+重连丢弃离线积压；指标不落盘、不补传。独立时钟在边界可能复用上一快照，保留原 sampled_at。
+资产探测首次协商后由进程级独立任务每 5 分钟执行，单次 15 秒超时，快照通知合并到容量 1；
+慢探测不阻塞心跳和设置处理。退出时取消并等待采集任务，不停止代理进程。

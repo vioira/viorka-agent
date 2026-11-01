@@ -30,10 +30,36 @@ first=$(cat "$agent_dir/fixture.pid")
 kill -0 "$first"
 # An existing service must never be overwritten or enrolled again.
 if sh install.sh service; then echo 'existing service unexpectedly accepted' >&2; exit 1; fi
+# Repeat install through real supervisors with a local, checksummed release fixture.
+fixture_dir=$(mktemp -d)
+cp "$agent_dir/viorka-agent" "$fixture_dir/payload"
+cat > "$fixture_dir/curl" <<'CURL'
+#!/bin/sh
+set -eu
+while [ "$1" != --output ]; do shift; done
+output=$2
+shift 2
+case "$1" in
+    *.sha256) sha256sum "$VIORKA_TEST_PAYLOAD" | cut -d ' ' -f 1 > "$output" ;;
+    *) cp "$VIORKA_TEST_PAYLOAD" "$output" ;;
+esac
+CURL
+chmod 700 "$fixture_dir/curl"
+export VIORKA_TEST_PAYLOAD="$fixture_dir/payload"
+for attempt in 1 2; do
+    PATH="$fixture_dir:$PATH" sh install.sh install --url=https://localhost --version=v0.1.0-test
+    sleep 2
+    next=$(cat "$agent_dir/fixture.pid")
+    [ "$next" != "$first" ]
+    kill -0 "$next"
+    first=$next
+done
+rm -rf "$fixture_dir"
+starts_before=$(wc -l < "$agent_dir/starts")
 kill -KILL "$first"
 # Verify actual supervisor recovery, not just the invocation of its CLI.
 i=0
-while [ "$(wc -l < "$agent_dir/starts")" -lt 2 ]; do
+while [ "$(wc -l < "$agent_dir/starts")" -le "$starts_before" ]; do
     i=$((i + 1)); [ "$i" -lt 20 ]; sleep 1
 done
 kill -0 "$(cat "$agent_dir/fixture.pid")"
@@ -47,4 +73,4 @@ fi
 sleep 2
 if kill -0 "$(cat "$agent_dir/fixture.pid")" 2>/dev/null; then exit 1; fi
 test "$(cat "$agent_dir/state/identity.json")" = 'preserved identity'
-echo 'Service start, respawn, stop and identity preservation passed'
+echo 'Service start, repeated update, respawn, stop and identity preservation passed'

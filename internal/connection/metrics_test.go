@@ -25,7 +25,7 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 	for _, tc := range []struct {
 		name                     string
 		version, collect, report uint64
-	}{{"disabled", 0, 0, 0}, {"v1", 1, 1, 2}, {"default-zero", 2, 0, 2}, {"batch", 2, 1, 5}, {"reuse", 2, 10, 1}, {"host", 2, 0, 1}} {
+	}{{"disabled", 0, 0, 0}, {"v1", 1, 1, 2}, {"default-zero", 2, 0, 2}, {"batch", 2, 1, 5}, {"reuse", 2, 10, 1}, {"host", 2, 0, 1}, {"live", 2, 1, 1}} {
 		enabled := tc.version > 0
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -69,13 +69,26 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 						}
 						ack.CollectionSettings = &v1.NodeSettings{Revision: 2, CollectionSeconds: tc.collect, ReportSeconds: 60, ConnectionMode: "wss", WssReportSeconds: tc.report}
 					}
+					if tc.name == "live" {
+						v := uint64(1)
+						ack.SettingsVersion = &v
+					}
 					if e = send(v1.Message("system.hello_ack", "node", "ack", ack)); e != nil {
 						return e
 					}
+					if tc.name == "live" {
+						receipt, err := read()
+						var result v1.NodeSettingsResult
+						if err != nil || receipt.Type != "node.settings_result" || receipt.CorrelationID != "ack" || v1.Decode(receipt.Payload, &result) != nil || result.State != "applied" || result.AppliedRevision != 2 {
+							return fmt.Errorf("initial settings receipt: %+v %v", receipt, err)
+						}
+					}
 					if enabled {
-						inventory, e := read()
-						if e != nil || inventory.Type != "node.inventory" {
-							return fmt.Errorf("inventory: %s %v", inventory.Type, e)
+						if tc.name != "live" {
+							inventory, e := read()
+							if e != nil || inventory.Type != "node.inventory" {
+								return fmt.Errorf("inventory: %s %v", inventory.Type, e)
+							}
 						}
 						readMetric := func() (v1.NodeMetrics, int, error) {
 							msg, e := read()
@@ -111,13 +124,49 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 							if !newer.SampledAt.Equal(first.SampledAt) {
 								return fmt.Errorf("repeated snapshot lost sampling time")
 							}
-						} else if !newer.SampledAt.After(first.SampledAt) {
-							return fmt.Errorf("new sample missing")
+						} else {
+							// Independent timers may report the same snapshot at a cadence boundary.
+							for tries := 0; !newer.SampledAt.After(first.SampledAt) && tries < 2; tries++ {
+								newer, count, e = readMetric()
+								if e != nil {
+									return e
+								}
+							}
+							if !newer.SampledAt.After(first.SampledAt) {
+								return fmt.Errorf("independent collector stopped")
+							}
 						}
 						if tc.name == "batch" && count < 3 {
 							return fmt.Errorf("intermediate samples lost: %d", count)
 						}
 
+					}
+					if tc.name == "live" {
+						for _, test := range []struct {
+							rev, collect, report uint64
+							state, code          string
+						}{
+							{3, 2, 1, "applied", ""}, {2, 1, 1, "failed", "stale_revision"}, {3, 4, 1, "failed", "revision_conflict"}, {4, 1, 9, "failed", "invalid_settings"}, {3, 2, 1, "applied", ""},
+						} {
+							next := v1.NodeSettings{Revision: test.rev, CollectionSeconds: test.collect, ReportSeconds: 60, ConnectionMode: "wss", WssReportSeconds: test.report}
+							if err := send(v1.Message("node.settings", "node", "update", next)); err != nil {
+								return err
+							}
+							for {
+								receipt, err := read()
+								if err != nil {
+									return err
+								}
+								if receipt.Type == "node.metrics_batch" {
+									continue
+								}
+								var result v1.NodeSettingsResult
+								if receipt.Type != "node.settings_result" || receipt.CorrelationID != "update" || v1.Decode(receipt.Payload, &result) != nil || result.State != test.state || result.ErrorCode != test.code || result.AppliedRevision != 3 {
+									return fmt.Errorf("hot settings: %+v %v", result, err)
+								}
+								break
+							}
+						}
 					}
 					attempt := uint64(1)
 					dispatch := v1.Message("task.dispatch", "node", "dispatch", v1.TaskDispatch{TaskID: "task", Operation: "node.inspect", IdempotencyKey: "inspect", ResourceKind: "node", ResourceID: "node", DeadlineAt: time.Now().Add(time.Minute), Attempt: &attempt})
@@ -157,7 +206,10 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer client.Close()
-			client.inventory = func(context.Context, time.Duration) v1.NodeInventory {
+			client.inventory = func(ctx context.Context, _ time.Duration) v1.NodeInventory {
+				if tc.name == "live" {
+					<-ctx.Done()
+				}
 				return v1.NodeInventory{SampledAt: time.Now().UTC(), OSName: "Ubuntu 24.04", Errors: []string{"public_ipv4_unavailable", "public_ipv6_unavailable"}}
 			}
 			_, key, e := ed25519.GenerateKey(rand.Reader)
@@ -165,6 +217,12 @@ func TestMetricsNegotiationAndTaskCoexistence(t *testing.T) {
 				t.Fatal(e)
 			}
 			_ = client.connect(ctx, state.Identity{PanelURL: origin, NodeID: "node", PrivateKey: key}, exec)
+			if tc.name == "live" {
+				var saved savedSettings
+				if err := store.Read("node-settings.json", &saved); err != nil || saved.Settings.Revision != 3 || saved.Settings.CollectionSeconds != 2 {
+					t.Fatalf("durable settings: %+v %v", saved, err)
+				}
+			}
 			select {
 			case e := <-done:
 				if e != nil {

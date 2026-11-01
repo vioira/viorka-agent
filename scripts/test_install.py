@@ -22,7 +22,7 @@ TOKEN = "a" * 64
 
 
 class InstallerTests(unittest.TestCase):
-    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False):
+    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure=""):
         with tempfile.TemporaryDirectory(prefix="viorka-install-") as tmp:
             home = pathlib.Path(tmp) / 'home "quote" \\ slash'
             home.mkdir()
@@ -33,6 +33,11 @@ class InstallerTests(unittest.TestCase):
                 path.write_text(contents)
                 path.chmod(0o700)
             executable("uname", f'#!/bin/sh\ncase "$1" in -s) echo Linux;; *) echo {arch};; esac\n')
+            executable("stat", f'''#!{sys.executable}
+import os, sys
+s=os.stat(sys.argv[-1])
+print(s.st_uid if sys.argv[2]=='%u' else format(s.st_mode & 0o777, 'o'))
+''')
             fixture = b'''#!/bin/sh
 set -eu
 printf '%s\\n' "$1" >> calls
@@ -75,6 +80,15 @@ else:
             if failure == "existing":
                 install.mkdir(parents=True)
                 (install / "identity").write_text("preserve")
+            if failure in ("symlink", "locked", "missing_config"):
+                install.mkdir(parents=True)
+                if failure == "symlink":
+                    (install / "viorka-agent").symlink_to(payload)
+                elif failure == "locked":
+                    (install / ".install-lock").mkdir()
+                else:
+                    (install / "state").mkdir()
+                    (install / "state/identity.json").write_text("preserve")
             args = ["sh", str(ROOT / "install.sh"), "install", "--foreground", "--url=https://localhost:8143", *extra]
             if pinned:
                 args.append("--version=v0.1.0")
@@ -130,13 +144,13 @@ else:
                     self.assertNotIn(TOKEN.encode(), path.read_bytes(), f"token persisted in {path.name}")
             code = os.waitstatus_to_exitcode(status)
             calls = (install / "calls").read_text().splitlines() if (install / "calls").exists() else []
-            if not failure and not extra and arch != "riscv64":
+            if failure in ("", "existing") and not extra and arch != "riscv64":
                 self.assertEqual(code, 0, output.decode())
                 self.assertEqual(calls, ["config-check", "enroll", "run"])
                 config = json.loads((install / "agent.json").read_text())
                 self.assertEqual(config["state_dir"], str(install.resolve() / "state"))
                 self.assertEqual(config["panel_url"], "https://localhost:8143")
-                self.assertEqual(install.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(install.stat().st_mode & 0o777, 0o755 if failure == "existing" else 0o700)
                 self.assertEqual((install / "agent.json").stat().st_mode & 0o777, 0o600)
                 self.assertEqual((install / "state").stat().st_mode & 0o777, 0o700)
             else:
@@ -144,7 +158,7 @@ else:
                 self.assertNotIn("run", calls)
                 if failure not in ("config", "enroll"):
                     self.assertEqual(calls, [])
-                if failure in ("no_release", "invalid_release", "download"):
+                if failure in ("no_release", "invalid_release") or (failure == "download" and not pinned):
                     self.assertFalse(install.exists(), "release lookup must not leave an installation directory")
                 if failure == "no_release":
                     self.assertIn('草稿不可下载'.encode(), output)
@@ -154,10 +168,52 @@ else:
                 if failure == "enroll":
                     self.assertEqual(calls, ["config-check", "enroll"])
                 if failure in ("checksum", "manifest"):
-                    self.assertTrue((install / "viorka-agent.download").exists())
+                    self.assertFalse(list(install.glob(".install-*")))
                     self.assertFalse((install / "viorka-agent").exists())
                 if failure == "existing":
                     self.assertEqual((install / "identity").read_text(), "preserve")
+
+            if retry:
+                before = (install / "state/identity.json").read_bytes() if (install / "state/identity.json").exists() else None
+                config = (install / "agent.json").read_bytes() if (install / "agent.json").exists() else None
+                env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}", FAILURE=retry_failure, PAYLOAD=str(payload))
+                retry_script = ROOT / "install.sh"
+                if running:
+                    proc = pathlib.Path(tmp) / "proc/123"
+                    proc.mkdir(parents=True)
+                    (proc / "exe").symlink_to(install.resolve() / "viorka-agent")
+                    retry_script = pathlib.Path(tmp) / "install.sh"
+                    retry_script.write_text((ROOT / "install.sh").read_text().replace('/proc/', str(pathlib.Path(tmp) / 'proc') + '/'))
+                old_binary = (install / "viorka-agent").read_bytes() if (install / "viorka-agent").exists() else None
+                result = subprocess.run(["sh", str(retry_script), "install", "--foreground", "--url=https://localhost:8143", "--version=v0.1.0", *([] if before else ["--token=" + TOKEN])], env=env, capture_output=True, start_new_session=True, timeout=15)
+                self.assertEqual(result.returncode == 0, not retry_failure, result.stderr.decode())
+                after_calls = (install / "calls").read_text().splitlines()[len(calls):]
+                expected = ["config-check"] if running else (["config-check", "run"] if before else ["config-check", "enroll", "run"])
+                if retry_failure:
+                    expected = ["config-check"] if retry_failure == "config" else []
+                    self.assertEqual((install / "viorka-agent").read_bytes(), old_binary)
+                self.assertEqual(after_calls, expected)
+                if before:
+                    self.assertEqual((install / "state/identity.json").read_bytes(), before)
+                if config:
+                    self.assertEqual((install / "agent.json").read_bytes(), config)
+                self.assertFalse(list(install.glob(".install-*")))
+
+    def test_running_agent_does_not_start_duplicate(self):
+        self.run_install(token_arg=True, retry=True, running=True)
+
+    def test_failed_update_preserves_install(self):
+        for failure in ("download", "checksum", "manifest", "config"):
+            with self.subTest(failure=failure):
+                self.run_install(token_arg=True, retry=True, retry_failure=failure)
+
+    def test_pinned_download_retry(self):
+        self.run_install(failure="download", pinned=True, token_arg=True, retry=True)
+
+    def test_retry_and_update(self):
+        for failure in ("", "existing", "download", "checksum", "config", "enroll"):
+            with self.subTest(failure=failure):
+                self.run_install(failure=failure, token_arg=True, retry=True)
 
     def test_install_and_permissions(self):
         for arch in ("x86_64", "aarch64"):
@@ -169,7 +225,7 @@ else:
         self.run_install(token_arg=True, failure="enroll")
 
     def test_failures(self):
-        for failure in ("existing", "no_release", "invalid_release", "download", "checksum", "manifest", "config", "enroll"):
+        for failure in ("existing", "symlink", "locked", "missing_config", "no_release", "invalid_release", "download", "checksum", "manifest", "config", "enroll"):
             with self.subTest(failure=failure):
                 self.run_install(failure=failure)
         self.run_install(arch="riscv64")

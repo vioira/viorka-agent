@@ -29,6 +29,10 @@ func TestCanonicalExamples(t *testing.T) {
 			}
 			var payload any
 			switch e.Type {
+			case "node.settings":
+				payload = &NodeSettings{}
+			case "node.settings_result":
+				payload = &NodeSettingsResult{}
 			case "node.metrics":
 				payload = &NodeMetrics{}
 			case "system.hello":

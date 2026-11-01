@@ -4,6 +4,7 @@
 The separate Linux smoke test exercises real service managers.
 """
 import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -31,18 +32,26 @@ class Services(unittest.TestCase):
                 p = bin_dir / name
                 p.write_text('#!/bin/sh\n' + text)
                 p.chmod(0o700)
-            executable('uname', 'echo Linux\n')
+            executable('uname', 'case "$1" in -s) echo Linux;; *) echo x86_64;; esac\n')
             executable('id', 'echo ' + ('1000' if failure == 'nonroot' else '0') + '\n')
             # macOS stat differs; the Linux integration uses the actual GNU/BusyBox stat.
             executable('stat', 'case "$2" in %u) echo 0;; %a) echo 700;; esac\n')
             executable('timeout', 'shift\nexec "$@"\n')
             executable('systemctl', '''printf '%s\n' "$*" >> "$CALLS"
-if [ "$1" = show ]; then echo not-found; fi
+if [ "$1" = show ]; then
+ case "$4" in
+ LoadState) echo not-found;;
+ FragmentPath) echo "$SERVICE";;
+ DropInPaths) :;;
+ esac
+fi
+if [ "$FAILURE" = upgrade ] && [ "$1" = restart ] && [ ! -e "$MARKER" ]; then touch "$MARKER"; exit 1; fi
 if [ "$FAILURE" = start ] && [ "$1" = enable ]; then exit 1; fi
 if [ "$FAILURE" = status ] && [ "$1" = is-active ]; then exit 1; fi
 exit 0
 ''')
             executable('rc-service', '''printf '%s\n' "$*" >> "$CALLS"
+if [ "$FAILURE" = upgrade ] && [ "$2" = restart ] && [ ! -e "$MARKER" ]; then touch "$MARKER"; exit 1; fi
 if [ "$FAILURE" = start ] && [ "$2" = start ]; then exit 1; fi
 if [ "$FAILURE" = status ] && [ "$2" = status ]; then exit 1; fi
 exit 0
@@ -68,7 +77,7 @@ exit 0
             local = root / 'install.sh'
             local.write_text(script)
             calls = root / 'calls'
-            env = dict(os.environ, HOME=str(home), PATH=f'{bin_dir}:' + os.environ['PATH'], CALLS=str(calls), FAILURE=failure)
+            env = dict(os.environ, HOME=str(home), PATH=f'{bin_dir}:' + os.environ['PATH'], CALLS=str(calls), FAILURE=failure, SERVICE=str(service), MARKER=str(root / "restart-failed"))
             result = subprocess.run(['sh', str(local), 'service'], env=env, capture_output=True, timeout=10)
             self.assertEqual((install / 'state/identity.json').read_text(), 'preserve identity')
             if failure:
@@ -91,6 +100,32 @@ exit 0
                     subprocess.run(['sh', '-n', str(service)], check=True)
                 else:
                     self.assertIn('enable --now viorka-agent.service', calls.read_text())
+
+                curl = bin_dir / 'curl'
+                curl.write_text(f'''#!{sys.executable}
+import hashlib, os, pathlib, sys
+args=sys.argv[1:]
+if os.environ['FAILURE']=='download': sys.exit(22)
+data=b'#!/bin/sh\\n# new release\\nexit 0\\n'
+if args[-1].endswith('.sha256'): data=(hashlib.sha256(data).hexdigest()+'\\n').encode()
+pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
+''')
+                curl.chmod(0o700)
+                initial_service = service.read_bytes()
+                initial_config = (install / 'agent.json').read_bytes()
+                command = ['sh', str(local), 'install', '--url=https://localhost', '--version=v0.1.0']
+                for upgrade_failure in ('download', 'upgrade', '', ''):
+                    old_binary = agent.read_bytes()
+                    result = subprocess.run(command, env=dict(env, FAILURE=upgrade_failure), capture_output=True, timeout=15)
+                    self.assertEqual(result.returncode == 0, not upgrade_failure, result.stderr.decode())
+                    self.assertEqual(service.read_bytes(), initial_service)
+                    self.assertEqual((install / 'agent.json').read_bytes(), initial_config)
+                    self.assertEqual((install / 'state/identity.json').read_text(), 'preserve identity')
+                    self.assertFalse(list(install.glob('.install-*')))
+                    if upgrade_failure:
+                        self.assertEqual(agent.read_bytes(), old_binary)
+                    else:
+                        self.assertIn(b'new release', agent.read_bytes())
 
     def test_service_modes(self):
         for manager in ('systemd', 'openrc'):

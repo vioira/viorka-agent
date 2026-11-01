@@ -118,6 +118,10 @@
         "host_metrics_version": {
           "type": "integer",
           "const": 1
+        },
+        "settings_version": {
+          "type": "integer",
+          "const": 1
         }
       },
       "required": [
@@ -643,6 +647,41 @@
         "disk_io",
         "errors"
       ]
+    },
+    "NodeSettingsResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "applied_revision",
+        "state"
+      ],
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "applied_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "applied",
+            "failed"
+          ]
+        },
+        "error_code": {
+          "type": "string",
+          "enum": [
+            "invalid_settings",
+            "stale_revision",
+            "revision_conflict",
+            "persist_failed"
+          ]
+        }
+      }
     }
   }
 }
