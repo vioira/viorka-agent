@@ -4,10 +4,10 @@ set -eu
 [ "${VIORKA_DISPOSABLE_SERVICE_TEST:-}" = yes ] || { echo 'Disposable CI environment required' >&2; exit 1; }
 [ "$(id -u)" = 0 ]
 export HOME=/root
-agent_dir=/root/.local/share/viorka-agent
+agent_dir=/root/.viorka-agent
 [ ! -e "$agent_dir" ]
 mkdir -p "$agent_dir/state"
-chmod 700 /root /root/.local /root/.local/share "$agent_dir" "$agent_dir/state"
+chmod 700 /root "$agent_dir" "$agent_dir/state"
 printf '{}\n' > "$agent_dir/agent.json"
 printf 'preserved identity\n' > "$agent_dir/state/identity.json"
 cat > "$agent_dir/viorka-agent" <<'AGENT'
@@ -16,8 +16,8 @@ set -eu
 case "$1" in
 config-check) exit 0 ;;
 run)
-    echo $$ > /root/.local/share/viorka-agent/fixture.pid
-    echo started >> /root/.local/share/viorka-agent/starts
+    echo $$ > /root/.viorka-agent/fixture.pid
+    echo started >> /root/.viorka-agent/starts
     trap 'exit 0' TERM INT
     while :; do sleep 1 & wait $!; done ;;
 *) exit 1 ;;

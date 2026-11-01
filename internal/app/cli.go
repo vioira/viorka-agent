@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -46,11 +47,11 @@ func Main(args []string, out, errOut io.Writer) int {
 	case "config-check":
 		flags := flag.NewFlagSet("config-check", flag.ContinueOnError)
 		flags.SetOutput(errOut)
-		path := flags.String("config", "examples/agent.example.json", "path to local JSON config")
+		path := flags.String("config", "", "local JSON config (default ~/.viorka-agent/agent.json)")
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		if _, err := config.LoadFile(*path); err != nil {
+		if _, err := loadConfig(*path); err != nil {
 			fmt.Fprintf(errOut, "invalid configuration: %v\n", err)
 			return 2
 		}
@@ -76,7 +77,7 @@ func usage(w io.Writer) {
 func connect(args []string, out, errOut io.Writer) int {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(errOut)
-	path := flags.String("config", "examples/agent.example.json", "local config file")
+	path := flags.String("config", "", "local JSON config (default ~/.viorka-agent/agent.json)")
 	replaceNode := flags.String("replace-node", "", "explicitly replace identity for this node; preserves local state")
 	tokenStdin := flags.Bool("token-stdin", false, "read enrollment token from standard input")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -85,7 +86,7 @@ func connect(args []string, out, errOut io.Writer) int {
 	if flags.NArg() != 0 || (args[0] != "enroll" && *replaceNode != "") {
 		return 2
 	}
-	cfg, err := config.LoadFile(*path)
+	cfg, err := loadConfig(*path)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 2
@@ -134,4 +135,16 @@ func connect(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(out, "identity enrolled and saved")
 	}
 	return 0
+}
+
+// loadConfig resolves the default only when no explicit config path was supplied.
+func loadConfig(path string) (config.Local, error) {
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return config.Local{}, fmt.Errorf("resolve config home: %w", err)
+		}
+		path = filepath.Join(home, ".viorka-agent", "agent.json")
+	}
+	return config.LoadFile(path)
 }

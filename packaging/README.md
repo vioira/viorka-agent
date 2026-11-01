@@ -19,7 +19,9 @@ curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubuserconten
 
 入口脚本来自 GitHub main，通过 HTTPS 获取；运行前可先下载并审阅，或将 URL 中 main 替换为审核过且包含安装器的提交/tag。SHA-256 验证的是发行二进制，不是入口脚本的独立签名。必须先将 `install.sh` 发布到对应 Git 引用，并发布正式 Release 资产；本地有文件不代表线上命令已经可用。
 
-安装到当前用户 `$HOME/.local/share/viorka-agent`，新目录 0700，配置 0600。可重复执行同一条安装命令：
+旧版 `$HOME/.local/share/viorka-agent` 不会自动迁移。迁移前先停止 Agent 管理进程并备份原目录，将完整目录（包括 `state` 身份）迁到 `$HOME/.viorka-agent`，更新 `agent.json` 的 `state_dir` 为新目录的绝对路径。原 systemd/OpenRC 服务仍引用旧路径；确认归本安装器所有后移除旧 Agent 服务文件，再用 `sh install.sh service` 创建新服务。保留备份，不要重新注册或停止代理引擎。
+
+安装到当前用户 `$HOME/.viorka-agent`，新目录 0700，配置 0600。可重复执行同一条安装命令：
 
 - 通过 Linux `/proc/PID/exe` 检查本安装路径的 Agent 进程；空目录或下载残留不再视为安装成功，下载 404 后修正 `--version` 即可重试，无需删除目录。
 - 已存在 `state/identity.json` 时保留身份和配置，跳过注册，不需要令牌；本次 URL、CA 和令牌不会改动已有节点。已注册但停止的 Agent 同样复用身份。身份存在但配置缺失时拒绝重新注册，需恢复原配置。
@@ -29,7 +31,7 @@ curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubuserconten
 
 每次更新仍按 `--version` 精确下载指定 Release，省略时使用最新正式 Release；这不是定时自动更新。`v0.1.0-beta2` 与 `v0.1.0-beta.2` 是两个不同标签，不自动纠正版本。404 提示检查标签及对应架构资产是否已发布。
 
-安装器使用 `.install-lock` 目录排斥并发安装。常规退出会释放；SIGKILL/断电可能残留锁，确认无安装进程后可用 `rmdir "$HOME/.local/share/viorka-agent/.install-lock"` 解除。旧二进制备份和身份会保留，但断电后的自动事务恢复尚未实现。隐藏输入模式会恢复终端回显，两种令牌输入模式均通过标准输入传给 Agent。
+安装器使用 `.install-lock` 目录排斥并发安装。常规退出会释放；SIGKILL/断电可能残留锁，确认无安装进程后可用 `rmdir "$HOME/.viorka-agent/.install-lock"` 解除。旧二进制备份和身份会保留，但断电后的自动事务恢复尚未实现。隐藏输入模式会恢复终端回显，两种令牌输入模式均通过标准输入传给 Agent。
 
 默认安装注册完成后创建并启动 `viorka-agent` 服务、设置开机自启，然后返回命令行。systemd 服务文件为 `/etc/systemd/system/viorka-agent.service`，OpenRC 为 `/etc/init.d/viorka-agent`，使用 supervise-daemon。后台进程启动不等于 Panel 已在线；成功完成协议握手后记录 `Panel connected; session established`，重连成功也会记录。Agent 断开后自行重连；进程异常退出由服务管理器进行有界频率重启。没有服务管理器会在注册前拒绝默认安装，不静默退回前台。
 
@@ -57,7 +59,7 @@ tail -f /var/log/messages
 前台模式（`install --foreground`）或已有安装手动运行：
 
 ```sh
-"$HOME/.local/share/viorka-agent/viorka-agent" run --config "$HOME/.local/share/viorka-agent/agent.json"
+"$HOME/.viorka-agent/viorka-agent" run --config "$HOME/.viorka-agent/agent.json"
 ```
 
 停止/移除 Agent 服务不删除身份或代理配置。卸载时先停止并禁用 Agent 服务（systemd：`systemctl disable --now viorka-agent`；OpenRC：`rc-service viorka-agent stop`、`rc-update del viorka-agent default`），然后仅移除确认由此安装器创建的 Agent 服务文件；systemd 需 `systemctl daemon-reload`。保留数据目录与代理服务，任何数据删除单独决定。

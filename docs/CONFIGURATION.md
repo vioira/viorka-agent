@@ -7,13 +7,15 @@ cd viorka-agent
 go run ./cmd/viorka-agent config-check --config examples/agent.example.json
 ```
 
-初始配置 JSON：
+`config-check`、`enroll` 和 `run` 默认读取当前用户的 `~/.viorka-agent/agent.json`；可用 `--config PATH` 覆盖。安装器同时将二进制放在该目录，状态保存于 `~/.viorka-agent/state`。JSON 中的路径必须写成实际路径，`~` 不会自动展开。
+
+初始配置 JSON（以下为 root 安装示例）：
 
 ```json
 {
   "panel_url": "https://panel.example.com",
   "node_name": "nat-tokyo-01",
-  "state_dir": "/var/lib/viorka-agent",
+  "state_dir": "/root/.viorka-agent/state",
   "log_level": "info"
 }
 ```

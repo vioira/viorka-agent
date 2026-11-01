@@ -18,7 +18,7 @@ class Services(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             home = root / 'root'
-            install = home / '.local/share/viorka-agent'
+            install = home / '.viorka-agent'
             install.mkdir(parents=True)
             (install / 'state').mkdir()
             (install / 'state/identity.json').write_text('preserve identity')

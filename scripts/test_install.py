@@ -76,7 +76,11 @@ else:
         output.write_text(digest+'\\n')
     else: output.write_bytes(data)
 ''')
-            install = home / ".local/share/viorka-agent"
+            install = home / ".viorka-agent"
+            if failure == "legacy":
+                legacy = home / ".local/share/viorka-agent"
+                legacy.mkdir(parents=True)
+                (legacy / "agent.json").write_text("preserve")
             if failure == "existing":
                 install.mkdir(parents=True)
                 (install / "identity").write_text("preserve")
@@ -160,6 +164,9 @@ else:
                     self.assertEqual(calls, [])
                 if failure in ("no_release", "invalid_release") or (failure == "download" and not pinned):
                     self.assertFalse(install.exists(), "release lookup must not leave an installation directory")
+                if failure == "legacy":
+                    self.assertFalse(install.exists())
+                    self.assertEqual((legacy / "agent.json").read_text(), "preserve")
                 if failure == "no_release":
                     self.assertIn('草稿不可下载'.encode(), output)
                     self.assertIn(b'--version=', output)
@@ -228,7 +235,7 @@ else:
         self.run_install(token_arg=True, failure="enroll")
 
     def test_failures(self):
-        for failure in ("existing", "symlink", "locked", "missing_config", "no_release", "invalid_release", "download", "checksum", "manifest", "config", "enroll"):
+        for failure in ("legacy", "existing", "symlink", "locked", "missing_config", "no_release", "invalid_release", "download", "checksum", "manifest", "config", "enroll"):
             with self.subTest(failure=failure):
                 self.run_install(failure=failure)
         self.run_install(arch="riscv64")

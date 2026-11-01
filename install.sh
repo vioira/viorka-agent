@@ -35,9 +35,9 @@ StartLimitBurst=5
 
 [Service]
 Type=exec
-WorkingDirectory=/root/.local/share/viorka-agent
-ExecStartPre=/root/.local/share/viorka-agent/viorka-agent config-check --config /root/.local/share/viorka-agent/agent.json
-ExecStart=/root/.local/share/viorka-agent/viorka-agent run --config /root/.local/share/viorka-agent/agent.json
+WorkingDirectory=/root/.viorka-agent
+ExecStartPre=/root/.viorka-agent/viorka-agent config-check --config /root/.viorka-agent/agent.json
+ExecStart=/root/.viorka-agent/viorka-agent run --config /root/.viorka-agent/agent.json
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=30
@@ -54,9 +54,9 @@ UNIT
 #!/sbin/openrc-run
 name="Viorka Agent"
 supervisor=supervise-daemon
-command=/root/.local/share/viorka-agent/viorka-agent
-command_args="run --config /root/.local/share/viorka-agent/agent.json"
-directory=/root/.local/share/viorka-agent
+command=/root/.viorka-agent/viorka-agent
+command_args="run --config /root/.viorka-agent/agent.json"
+directory=/root/.viorka-agent
 pidfile=/run/viorka-agent.pid
 umask=0077
 respawn_delay=5
@@ -69,7 +69,7 @@ depend() {
     use net logger
 }
 start_pre() {
-    "$command" config-check --config /root/.local/share/viorka-agent/agent.json
+    "$command" config-check --config /root/.viorka-agent/agent.json
 }
 RC
         fi
@@ -80,7 +80,7 @@ RC
         [ "$(id -u)" -eq 0 ] || fail '后台服务安装需要 root；无 root 请使用 install --foreground。'
         # Fixed root-owned location avoids privileged execution from user-controlled paths.
         [ "$HOME" = /root ] || fail '后台服务要求 HOME=/root；其他目录请使用 --foreground。'
-        for part in /root /root/.local /root/.local/share /root/.local/share/viorka-agent; do
+        for part in /root /root/.viorka-agent; do
             [ ! -L "$part" ] || fail '后台服务路径不能包含符号链接。'
             if [ -e "$part" ]; then
                 [ "$(stat -c %u "$part")" = 0 ] || fail '后台服务路径必须归 root 所有。'
@@ -177,7 +177,7 @@ RC
     if [ "$action" = service ]; then
         [ -z "$panel_url$release_tag$ca_file$enrollment_token$reenroll_node" ] && [ "$token_supplied" -eq 0 ] && [ "$foreground" -eq 0 ] || fail 'service 不接受安装参数。'
         service_preflight
-        cd /root/.local/share/viorka-agent
+        cd /root/.viorka-agent
         for path in viorka-agent agent.json state state/identity.json; do
             [ -e "$path" ] && [ ! -L "$path" ] || fail '已有安装不完整或包含符号链接。'
             [ "$(stat -c %u "$path")" = 0 ] || fail '已有安装必须归 root 所有。'
@@ -215,10 +215,13 @@ RC
         case "$ca_file" in /*) ;; *) fail '--ca-file 必须为绝对路径。' ;; esac
         [ -r "$ca_file" ] || fail '无法读取 CA 文件。'
     fi
+    install_dir="$HOME/.viorka-agent"
+    if [ ! -e "$install_dir" ] && { [ -e "$HOME/.local/share/viorka-agent" ] || [ -L "$HOME/.local/share/viorka-agent" ]; }; then
+        fail '检测到旧目录 ~/.local/share/viorka-agent；请先按 packaging/README.md 迁移配置与身份到 ~/.viorka-agent，勿重复注册。'
+    fi
     if [ "$foreground" -eq 0 ]; then service_preflight; fi
-    install_dir="$HOME/.local/share/viorka-agent"
     # Validate even foreground paths before writing or executing anything there.
-    for path in "$HOME" "$HOME/.local" "$HOME/.local/share" "$install_dir" "$install_dir/state"; do
+    for path in "$HOME" "$install_dir" "$install_dir/state"; do
         [ ! -L "$path" ] || fail '安装路径不能包含符号链接。'
         if [ -e "$path" ]; then
             [ -d "$path" ] || fail '安装路径不是目录。'
