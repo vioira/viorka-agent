@@ -232,7 +232,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		defer stop()
 		return conn.Write(c, websocket.MessageText, b)
 	}
-	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1", "node.inventory.v1", "node.settings.v2", "node.settings.live.v1", "node.metrics.v2", "node.host_metrics.v1"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
+	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1", "node.inventory.v1", "node.settings.v2", "node.settings.live.v1", "node.metrics.v2", "node.host_metrics.v1", "node.filesystems.v1"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
 		return err
 	}
 	hctx, hstop := context.WithTimeout(ctx, 10*time.Second)
@@ -315,6 +315,9 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		// Strip unnegotiated groups on copies; the collector retains its baseline.
 		for i, m := range samples {
 			copy := *m
+			if ack.FilesystemsVersion == nil || *ack.FilesystemsVersion != 1 {
+				copy.Filesystems = nil
+			}
 			if ack.HostMetricsVersion == nil || *ack.HostMetricsVersion != 1 {
 				copy.Host = nil
 			}

@@ -122,6 +122,10 @@
         "settings_version": {
           "type": "integer",
           "const": 1
+        },
+        "filesystems_version": {
+          "type": "integer",
+          "const": 1
         }
       },
       "required": [
@@ -417,6 +421,9 @@
         },
         "host": {
           "$ref": "#/$defs/HostMetrics"
+        },
+        "filesystems": {
+          "$ref": "#/$defs/FilesystemMetrics"
         }
       },
       "required": [
@@ -682,6 +689,57 @@
           ]
         }
       }
+    },
+    "FilesystemMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mounts": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/FilesystemUsage"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "filesystems_unavailable"
+            ]
+          }
+        }
+      },
+      "required": [
+        "mounts",
+        "errors"
+      ]
+    },
+    "FilesystemUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mount_point": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "filesystem_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "usage": {
+          "$ref": "#/$defs/DiskMetrics"
+        }
+      },
+      "required": [
+        "mount_point",
+        "filesystem_type",
+        "usage"
+      ]
     }
   }
 }

@@ -46,8 +46,11 @@ case "$1" in
  enroll)
    token=$(cat)
    test "${#token}" -eq 64
-   test "$FAILURE" != enroll
-   printf registered > state/identity.json ;;
+   if [ "$FAILURE" = enroll ]; then
+     printf '{"node_id":"","private_key":"retained-key"}' > state/identity.json
+     exit 1
+   fi
+   printf '{"node_id":"node-1","private_key":"retained-key"}' > state/identity.json ;;
  run) test -f state/identity.json ;;
 esac
 '''
@@ -192,15 +195,18 @@ else:
                     retry_script = pathlib.Path(tmp) / "install.sh"
                     retry_script.write_text((ROOT / "install.sh").read_text().replace('/proc/', str(pathlib.Path(tmp) / 'proc') + '/'))
                 old_binary = (install / "viorka-agent").read_bytes() if (install / "viorka-agent").exists() else None
-                result = subprocess.run(["sh", str(retry_script), "install", "--foreground", "--url=https://localhost:8143", "--version=v0.1.0", *((["--token=" + TOKEN, "--reenroll-node=node-1"] if reenroll else []) if before else ["--token=" + TOKEN])], env=env, capture_output=True, start_new_session=True, timeout=15)
+                result = subprocess.run(["sh", str(retry_script), "install", "--foreground", "--url=https://localhost:8143", "--version=v0.1.0", *((["--token=" + TOKEN, "--reenroll-node=node-1"] if reenroll else []) if before and failure != "enroll" else ["--token=" + TOKEN])], env=env, capture_output=True, start_new_session=True, timeout=15)
                 self.assertEqual(result.returncode == 0, not retry_failure, result.stderr.decode())
                 after_calls = (install / "calls").read_text().splitlines()[len(calls):]
-                expected = ["config-check"] if running else (["config-check", "run"] if before and not reenroll else ["config-check", "enroll", "run"])
+                expected = ["config-check"] if running else (["config-check", "run"] if before and failure != "enroll" and not reenroll else ["config-check", "enroll", "run"])
                 if retry_failure:
                     expected = ["config-check"] if retry_failure == "config" else []
                     self.assertEqual((install / "viorka-agent").read_bytes(), old_binary)
                 self.assertEqual(after_calls, expected)
-                if before:
+                if before and failure == "enroll":
+                    self.assertIn("检测到未完成注册".encode(), result.stdout)
+                    self.assertEqual(json.loads((install / "state/identity.json").read_bytes())["private_key"], json.loads(before)["private_key"])
+                if before and failure != "enroll":
                     self.assertEqual((install / "state/identity.json").read_bytes(), before)
                 if config:
                     self.assertEqual((install / "agent.json").read_bytes(), config)

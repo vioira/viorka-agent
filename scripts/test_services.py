@@ -21,7 +21,8 @@ class Services(unittest.TestCase):
             install = home / '.viorka-agent'
             install.mkdir(parents=True)
             (install / 'state').mkdir()
-            (install / 'state/identity.json').write_text('preserve identity')
+            identity = '{"node_id":""}' if failure == 'pending' else 'preserve identity'
+            (install / 'state/identity.json').write_text(identity)
             (install / 'agent.json').write_text('{}')
             agent = install / 'viorka-agent'
             agent.write_text('#!/bin/sh\nexit 0\n')
@@ -79,7 +80,7 @@ exit 0
             calls = root / 'calls'
             env = dict(os.environ, HOME=str(home), PATH=f'{bin_dir}:' + os.environ['PATH'], CALLS=str(calls), FAILURE=failure, SERVICE=str(service), MARKER=str(root / "restart-failed"))
             result = subprocess.run(['sh', str(local), 'service'], env=env, capture_output=True, timeout=10)
-            self.assertEqual((install / 'state/identity.json').read_text(), 'preserve identity')
+            self.assertEqual((install / 'state/identity.json').read_text(), identity)
             if failure:
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertNotIn('后台服务已启动'.encode(), result.stdout)
@@ -88,7 +89,7 @@ exit 0
                 if failure == 'symlink':
                     self.assertTrue(service.is_symlink())
                     self.assertFalse((root / 'missing').exists())
-                if failure == 'nonroot':
+                if failure in ('nonroot', 'pending'):
                     self.assertFalse(service.exists())
             else:
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
@@ -120,7 +121,7 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                     self.assertEqual(result.returncode == 0, not upgrade_failure, result.stderr.decode())
                     self.assertEqual(service.read_bytes(), initial_service)
                     self.assertEqual((install / 'agent.json').read_bytes(), initial_config)
-                    self.assertEqual((install / 'state/identity.json').read_text(), 'preserve identity')
+                    self.assertEqual((install / 'state/identity.json').read_text(), identity)
                     self.assertFalse(list(install.glob('.install-*')))
                     if upgrade_failure:
                         self.assertEqual(agent.read_bytes(), old_binary)
@@ -129,7 +130,7 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
 
     def test_service_modes(self):
         for manager in ('systemd', 'openrc'):
-            for failure in ('', 'nonroot', 'existing', 'symlink', 'start', 'status'):
+            for failure in ('', 'nonroot', 'existing', 'symlink', 'start', 'status', 'pending'):
                 with self.subTest(manager=manager, failure=failure):
                     self.exercise(manager, failure)
 

@@ -81,3 +81,26 @@ metrics_seconds。只有 Panel 协商指标能力才发送。在线最多缓存 
 重连丢弃离线积压；指标不落盘、不补传。独立时钟在边界可能复用上一快照，保留原 sampled_at。
 资产探测首次协商后由进程级独立任务每 5 分钟执行，单次 15 秒超时，快照通知合并到容量 1；
 慢探测不阻塞心跳和设置处理。退出时取消并等待采集任务，不停止代理进程。
+
+## 本地文件系统容量（node.filesystems.v1）
+
+新增 `filesystems` 扩展，保留原 `disk` 和历史序列的根文件系统语义。
+Agent 宣告 `node.filesystems.v1`，仅在 Panel 确认 `filesystems_version: 1` 后发送。
+权威 Schema 为 Panel `api/agent/v1/envelope.schema.json`；需双方分别发布，
+新 Agent 对旧 Panel 省略此字段，旧 Agent 对新 Panel 仍只显示根文件系统。
+
+读取最多 256 KiB/4096 行 `/proc/self/mountinfo`，候选挂载最多 128 个，输出最多
+32 个文件系统，路径最多 512 字节。采集 ext2/3/4、XFS、Btrfs、F2FS、JFS、
+ReiserFS、NILFS2、bcachefs、VFAT、exFAT、NTFS3；容器允许根 overlay。
+排除 tmpfs/devtmpfs、网络/FUSE/autofs、嵌套 overlay 及单文件挂载。
+按设备号及 statfs 文件系统 ID 去重，Btrfs 另按挂载源去重子卷，优先根目录和
+最短路径；不表示物理磁盘容量，不包括未挂载磁盘或未支持文件系统（如 ZFS 池）。
+不递归扫描、不执行 Shell、不改变挂载。每次系统调用前后检查取消；本地内核 I/O
+异常仍可能延迟 statfs，未声称提供可强制中断内核调用的硬超时。
+
+挂载表无效、超限或任一候选读取失败时，整个扩展返回空 mounts 和
+`filesystems_unavailable`，不显示误导性的部分汇总；根分区旧指标独立保留。
+目录遍历期间发生挂载变化不是原子快照，下一次采样重读挂载表。
+已用为 `(blocks-bfree)*bsize`，可用为 `bavail*bsize`；保留空间不算已用。
+新列表/概览使用率按 `ceil(100*used/(used+available))` 与 df 对齐。
+原根文件系统趋势保留 used/total 口径与历史值，不混入 /data。

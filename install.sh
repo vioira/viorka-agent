@@ -184,6 +184,9 @@ RC
             mode=$(stat -c %a "$path")
             case "$mode" in *[2367][0-7]|*[0-7][2367]) fail '已有安装不能允许组或其他用户写入。' ;; esac
         done
+        if grep -Eq '"node_id"[[:space:]]*:[[:space:]]*""' state/identity.json; then
+            fail '注册尚未完成，请先使用原配置和密钥完成 enroll，再安装服务。'
+        fi
         ./viorka-agent config-check --config agent.json
         install_service
         return
@@ -278,7 +281,14 @@ RC
     if [ -f "$install_dir/state/identity.json" ]; then
         [ -f "$install_dir/agent.json" ] || fail '身份存在但配置缺失，请恢复原配置，勿重复注册。'
         registered=1
-        if [ -z "$reenroll_node" ]; then
+        # Identity is persisted before the enrollment request. An empty node_id
+        # in the Agent-written JSON is a pending key, not a registered node.
+        # This is only a retry hint: enroll validates the full identity under
+        # the state lock and refuses to overwrite an already registered node.
+        if [ -z "$reenroll_node" ] && grep -Eq '"node_id"[[:space:]]*:[[:space:]]*""' state/identity.json; then
+            registered=0
+            printf '检测到未完成注册，将保留原配置和密钥，使用本次令牌继续注册（忽略本次 URL 和 CA）。\n'
+        elif [ -z "$reenroll_node" ]; then
             unset enrollment_token
             printf '检测到已有身份，将保留配置和身份，忽略本次 URL、CA 和令牌，更新 Agent。\n'
         else

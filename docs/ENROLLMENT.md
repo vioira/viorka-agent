@@ -23,6 +23,12 @@ Agent ------challenge signature-----> Panel
 Agent <===== WSS/TLS session =======> Panel
 ```
 
+### 首次注册失败后的恢复
+
+首次注册请求前会保存密钥；`identity.json` 存在不代表注册完成。HTTP 502 等失败可能留下 `node_id` 为空的待注册身份。安装器重试会保留原配置和密钥，使用提供的令牌继续注册；已有非空 Node ID 的身份仍走更新流程，不自动重新注册。此修复只涉及安装脚本，可配合原有 `enroll --token-stdin` 二进制使用。
+
+如旧安装器已创建服务并反复报 `enrollment incomplete`，先停止 Agent 服务以释放状态目录锁（不会停止代理服务），在原目录执行 `./viorka-agent enroll --config agent.json --token-stdin`，通过标准输入提供有效令牌，成功后启动 Agent 服务。不要删除身份文件或使用 `--reenroll-node` 来修复首次注册。502 的根因需结合 Panel 和反向代理日志排查；若原令牌已失效或被消费，应先在 Panel 核对注册结果，再按其恢复流程处理。
+
 ## 2. 不允许的做法
 
 - 所有节点共用一个长期 `AGENT_SECRET`；不得只凭 node_id 接入。

@@ -160,6 +160,7 @@ func (m *Metrics) Sample(ctx context.Context) v1.NodeMetrics {
 		}
 		m.network = counters
 	}
+	result.Filesystems = m.sampleFilesystems(ctx)
 	result.Host = m.sampleHost(ctx, elapsed, validInterval)
 	m.previous = now
 	return result

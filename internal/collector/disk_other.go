@@ -8,3 +8,7 @@ import (
 )
 
 func rootDisk() (*v1.DiskMetrics, error) { return nil, fmt.Errorf("unsupported platform") }
+
+func statFilesystem(path string) (string, *v1.DiskMetrics, error) {
+	return "", nil, fmt.Errorf("unsupported platform")
+}
