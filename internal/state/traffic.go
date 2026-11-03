@@ -19,24 +19,29 @@ type TrafficInterface struct {
 	TX      uint64 `json:"tx_bytes"`
 }
 type TrafficSnapshot struct {
-	FormatVersion  uint64             `json:"format_version"`
-	PanelURL       string             `json:"panel_url"`
-	NodeID         string             `json:"node_id"`
-	MonthStart     time.Time          `json:"month_start"`
-	BootID         string             `json:"boot_id"`
-	FilterRevision string             `json:"filter_revision"`
-	Interfaces     []TrafficInterface `json:"interfaces"`
-	RX             uint64             `json:"rx_bytes"`
-	TX             uint64             `json:"tx_bytes"`
-	SampledAt      time.Time          `json:"sampled_at"`
-	SavedAt        time.Time          `json:"saved_at"`
-	Quality        []string           `json:"quality"`
+	CalibrationBefore map[string]v1.TrafficCalibration `json:"calibration_before,omitempty"`
+	Cycle             *v1.TelemetryTrafficSettings     `json:"cycle,omitempty"`
+	PeriodEnd         string                           `json:"period_end,omitempty"`
+	Calibrations      map[string]v1.TrafficCalibration `json:"calibrations,omitempty"`
+	FormatVersion     uint64                           `json:"format_version"`
+	PanelURL          string                           `json:"panel_url"`
+	NodeID            string                           `json:"node_id"`
+	MonthStart        time.Time                        `json:"month_start"`
+	BootID            string                           `json:"boot_id"`
+	FilterRevision    string                           `json:"filter_revision"`
+	Interfaces        []TrafficInterface               `json:"interfaces"`
+	RX                uint64                           `json:"rx_bytes"`
+	TX                uint64                           `json:"tx_bytes"`
+	SampledAt         time.Time                        `json:"sampled_at"`
+	SavedAt           time.Time                        `json:"saved_at"`
+	Quality           []string                         `json:"quality"`
 }
 
 // TrafficLedger owns only month accounting, not instantaneous rate baselines.
 // Observations serialize under a short lock. Persistence copies one coherent
 // snapshot and performs filesystem I/O outside the sampling lock.
 type TrafficLedger struct {
+	settings      v1.TelemetryTrafficSettings
 	mu            sync.Mutex
 	saveMu        sync.Mutex
 	store         *Store
@@ -55,7 +60,7 @@ func NewTrafficLedger(panel, node string) (*TrafficLedger, error) {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || node == "" || len(node) > 128 {
 		return nil, fmt.Errorf("invalid traffic identity")
 	}
-	return &TrafficLedger{panel: panel, node: node}, nil
+	return &TrafficLedger{panel: panel, node: node, settings: v1.DefaultTrafficSettings()}, nil
 }
 func trafficMonth(at time.Time) time.Time {
 	at = at.UTC()
@@ -111,8 +116,17 @@ func validateTrafficInterfaces(interfaces []TrafficInterface) error {
 	return nil
 }
 func validateTrafficSnapshot(s TrafficSnapshot, panel, node string) error {
-	if s.FormatVersion != 1 || s.PanelURL != panel || s.NodeID != node || s.SampledAt.IsZero() || s.SavedAt.IsZero() || s.SavedAt.Before(s.SampledAt) || !s.MonthStart.Equal(trafficMonth(s.SampledAt)) || !validTrafficBoot(s.BootID) || !validTrafficHex(s.FilterRevision, 64) || s.RX > math.MaxInt64 || s.TX > math.MaxInt64 {
+	if s.FormatVersion != 1 || s.PanelURL != panel || s.NodeID != node || s.SampledAt.IsZero() || s.SavedAt.IsZero() || s.SavedAt.Before(s.SampledAt) || !validTrafficPeriod(s) || !validTrafficBoot(s.BootID) || !validTrafficHex(s.FilterRevision, 64) || s.RX > math.MaxInt64 || s.TX > math.MaxInt64 {
 		return fmt.Errorf("invalid traffic snapshot identity")
+	}
+	if len(s.Calibrations) > 64 || len(s.CalibrationBefore) != len(s.Calibrations) {
+		return fmt.Errorf("invalid calibration receipts")
+	}
+	for key, c := range s.Calibrations {
+		before, ok := s.CalibrationBefore[key]
+		if key == "" || len(key) > 128 || c.Validate() != nil || !c.PeriodStart.Equal(s.MonthStart) || !ok || before.Validate() != nil || !before.PeriodStart.Equal(c.PeriodStart) {
+			return fmt.Errorf("invalid calibration receipt")
+		}
 	}
 	if err := validateTrafficInterfaces(s.Interfaces); err != nil {
 		return err
@@ -132,6 +146,24 @@ func validateTrafficSnapshot(s TrafficSnapshot, panel, node string) error {
 	return nil
 }
 func cloneTraffic(s TrafficSnapshot) TrafficSnapshot {
+	if s.Cycle != nil {
+		v := *s.Cycle
+		s.Cycle = &v
+	}
+	if s.CalibrationBefore != nil {
+		m := map[string]v1.TrafficCalibration{}
+		for k, v := range s.CalibrationBefore {
+			m[k] = v
+		}
+		s.CalibrationBefore = m
+	}
+	if s.Calibrations != nil {
+		m := map[string]v1.TrafficCalibration{}
+		for k, v := range s.Calibrations {
+			m[k] = v
+		}
+		s.Calibrations = m
+	}
 	s.Interfaces = append([]TrafficInterface{}, s.Interfaces...)
 	s.Quality = append([]string{}, s.Quality...)
 	return s
@@ -159,7 +191,7 @@ func (l *TrafficLedger) Snapshot() (TrafficSnapshot, bool) {
 	return cloneTraffic(*l.snapshot), true
 }
 func (l *TrafficLedger) unknown(at time.Time, filter string) *v1.TelemetryTraffic {
-	return &v1.TelemetryTraffic{MonthStart: trafficMonth(at), FilterRevision: filter, Quality: []string{"unknown"}}
+	return &v1.TelemetryTraffic{MonthStart: l.period(at).start, FilterRevision: filter, Quality: []string{"unknown"}}
 }
 
 // Observe accepts complete, identity-validated interface counters. A failed
@@ -176,7 +208,8 @@ func (l *TrafficLedger) Observe(at time.Time, boot, filter string, interfaces []
 	if err := validateTrafficInterfaces(interfaces); err != nil {
 		return l.unknown(at, filter), err
 	}
-	next := TrafficSnapshot{FormatVersion: 1, PanelURL: l.panel, NodeID: l.node, MonthStart: trafficMonth(at), BootID: boot, FilterRevision: filter, Interfaces: append([]TrafficInterface{}, interfaces...), SampledAt: at.UTC(), SavedAt: at.UTC(), Quality: []string{}}
+	period := l.period(at)
+	next := TrafficSnapshot{Cycle: &period.cycle, PeriodEnd: period.end.Format(time.RFC3339), FormatVersion: 1, PanelURL: l.panel, NodeID: l.node, MonthStart: period.start, BootID: boot, FilterRevision: filter, Interfaces: append([]TrafficInterface{}, interfaces...), SampledAt: at.UTC(), SavedAt: at.UTC(), Quality: []string{}}
 	quality := func(q string) {
 		if !slices.Contains(next.Quality, q) {
 			next.Quality = append(next.Quality, q)
@@ -189,11 +222,21 @@ func (l *TrafficLedger) Observe(at time.Time, boot, filter string, interfaces []
 		if !at.After(previous.SampledAt) {
 			return l.unknown(at, filter), fmt.Errorf("traffic observation time did not advance")
 		}
-		months := (next.MonthStart.Year()-previous.MonthStart.Year())*12 + int(next.MonthStart.Month()-previous.MonthStart.Month())
+		months := 0
+		if next.MonthStart.Before(previous.MonthStart) {
+			months = -1
+		} else if next.MonthStart.After(previous.MonthStart) {
+			months = 1
+			if at.Sub(previous.SampledAt) > 32*24*time.Hour {
+				months = 2
+			}
+		}
 		if months < 0 {
 			return l.unknown(at, filter), fmt.Errorf("traffic month moved backward")
 		}
 		if months == 0 {
+			next.Calibrations = previous.Calibrations
+			next.CalibrationBefore = previous.CalibrationBefore
 			next.RX = previous.RX
 			next.TX = previous.TX
 			next.Quality = append([]string{}, previous.Quality...)
@@ -217,7 +260,7 @@ func (l *TrafficLedger) Observe(at time.Time, boot, filter string, interfaces []
 		for _, i := range interfaces {
 			last, exists := old[i.Name]
 			delete(old, i.Name)
-			if months > 1 || boot != previous.BootID {
+			if months > 0 || boot != previous.BootID || previous.FilterRevision != filter {
 				continue
 			}
 			if !exists || last.Ifindex != i.Ifindex {
@@ -247,5 +290,5 @@ func (l *TrafficLedger) Observe(at time.Time, boot, filter string, interfaces []
 		q = append(q, "persist_failed")
 	}
 	rx, tx := next.RX, next.TX
-	return &v1.TelemetryTraffic{MonthStart: next.MonthStart, FilterRevision: filter, RXBytes: &rx, TXBytes: &tx, Quality: q}, nil
+	return &v1.TelemetryTraffic{MonthStart: next.MonthStart, PeriodEnd: period.end, FilterRevision: filter, RXBytes: &rx, TXBytes: &tx, Quality: q}, nil
 }

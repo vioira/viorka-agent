@@ -2,6 +2,7 @@ package connection
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -196,5 +197,20 @@ func TestTelemetryRealtimeCadenceIgnoresCollectionInterval(t *testing.T) {
 		if fast != 180/int(interval)+1 || wss != fast || full != 4 {
 			t.Fatalf("W=%d fast=%d wss=%d full=%d", interval, fast, wss, full)
 		}
+	}
+}
+
+func TestTrafficValidationDoesNotReplaceDurableSettings(t *testing.T) {
+	writes := 0
+	current := v1.DefaultTelemetrySettings()
+	settings := &telemetrySettings{current: &current, write: func(string, any) error { writes++; return nil }, validate: func(v1.TelemetryTrafficSettings) error { return fmt.Errorf("interface missing") }}
+	next := current
+	next.Revision++
+	traffic := v1.DefaultTrafficSettings()
+	traffic.Interfaces = "missing"
+	next.Traffic = &traffic
+	result := settings.apply(next)
+	if result.State != "failed" || result.ErrorCode != "invalid_settings" || writes != 0 || settings.current.Revision != current.Revision {
+		t.Fatal(result, writes)
 	}
 }

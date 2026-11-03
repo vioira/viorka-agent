@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ type interfaceBaseline struct {
 // TelemetryNetwork has a single sampling owner. Mode and period changes do not
 // rebuild this object: every rate uses the actual interval between observations.
 type TelemetryNetwork struct {
+	selected       string
 	source         *Metrics
 	interfaces     func() ([]net.Interface, error)
 	filter         config.NetworkFilter
@@ -97,7 +99,7 @@ func (t *TelemetryNetwork) Sample(ctx context.Context, at time.Time) (result Net
 	indices := map[string]int{}
 	seen := map[int]bool{}
 	for _, i := range interfaces {
-		if !t.filter.Includes(i.Name) {
+		if !t.includes(i.Name) {
 			continue
 		}
 		if i.Index <= 0 || uint64(i.Index) > math.MaxUint32 || indices[i.Name] != 0 || seen[i.Index] {
@@ -109,9 +111,16 @@ func (t *TelemetryNetwork) Sample(ctx context.Context, at time.Time) (result Net
 			return result, fmt.Errorf("selected interface counters missing")
 		}
 	}
+	if t.selected != "" {
+		for _, name := range strings.Split(t.selected, ",") {
+			if indices[name] == 0 {
+				return result, fmt.Errorf("configured interface %s missing", name)
+			}
+		}
+	}
 	names := []string{}
 	for name := range counters {
-		if t.filter.Includes(name) {
+		if t.includes(name) {
 			names = append(names, name)
 		}
 	}
@@ -158,4 +167,11 @@ func (t *TelemetryNetwork) Sample(ctx context.Context, at time.Time) (result Net
 	t.previous = at
 	t.boot = boot
 	return result, nil
+}
+
+func (t *TelemetryNetwork) includes(name string) bool {
+	if t.selected != "" {
+		return slices.Contains(strings.Split(t.selected, ","), name)
+	}
+	return t.filter.Includes(name)
 }

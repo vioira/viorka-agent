@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/vioira/viorka-agent/internal/state"
@@ -20,6 +21,8 @@ type savedTelemetrySettings struct {
 // telemetrySettings is owned by the scheduler. Persistence is independent of
 // legacy settings and live lease state; a restart never restores a live lease.
 type telemetrySettings struct {
+	validate    func(v1.TelemetryTrafficSettings) error
+	configure   func(v1.TelemetryTrafficSettings) error
 	logger      *slog.Logger
 	setLogLevel func(string)
 	panel, node string
@@ -53,12 +56,24 @@ func (s *telemetrySettings) apply(next v1.TelemetrySettings) v1.TelemetrySetting
 		result.ErrorCode = "invalid_settings"
 	case s.current != nil && next.Revision < s.current.Revision:
 		result.ErrorCode = "stale_revision"
-	case s.current != nil && next.Revision == s.current.Revision && next != *s.current:
+	case s.current != nil && next.Revision == s.current.Revision && !reflect.DeepEqual(next, *s.current):
 		result.ErrorCode = "revision_conflict"
 	default:
+		if s.validate != nil {
+			if err := s.validate(next.TrafficSettings()); err != nil {
+				result.ErrorCode = "invalid_settings"
+				return result
+			}
+		}
 		if err := s.write("node-telemetry-settings.json", savedTelemetrySettings{s.panel, s.node, next}); err != nil {
 			result.ErrorCode = "persist_failed"
 			return result
+		}
+		if s.configure != nil {
+			if err := s.configure(next.TrafficSettings()); err != nil {
+				result.ErrorCode = "invalid_settings"
+				return result
+			}
 		}
 		s.current = &next
 		if s.setLogLevel != nil {
@@ -92,7 +107,7 @@ func (c *telemetryCadence) change(next v1.TelemetrySettings, now time.Time) erro
 		return err
 	}
 	old := c.settings
-	if next.Revision < old.Revision || (next.Revision == old.Revision && next != old) {
+	if next.Revision < old.Revision || (next.Revision == old.Revision && !reflect.DeepEqual(next, old)) {
 		return fmt.Errorf("stale or conflicting cadence revision")
 	}
 	if next.HttpReportSeconds != old.HttpReportSeconds {

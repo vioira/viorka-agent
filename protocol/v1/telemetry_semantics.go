@@ -132,8 +132,7 @@ func validFast(f *TelemetryFast) bool {
 		return false
 	}
 	sample := f.SampledAt.UTC()
-	month := time.Date(sample.Year(), sample.Month(), 1, 0, 0, 0, 0, time.UTC)
-	if !t.MonthStart.Equal(month) || t.FilterRevision != f.FilterRevision {
+	if t.MonthStart.IsZero() || t.MonthStart.After(sample) || sample.Sub(t.MonthStart) > 63*24*time.Hour || t.FilterRevision != f.FilterRevision {
 		return false
 	}
 	unknown := slices.Contains(t.Quality, "unknown")

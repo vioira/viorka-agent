@@ -33,6 +33,7 @@ import (
 var ErrIdentityRejected = errors.New("agent identity rejected; contact administrator")
 
 type Client struct {
+	trafficCalibrate func(context.Context, string, v1.TrafficCalibration, time.Time) (*v1.TrafficCalibration, error)
 	logger           *slog.Logger
 	logLevel         *slog.LevelVar
 	telemetrySource  func() (telemetrySources, error)
@@ -258,6 +259,9 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	}
 	capabilities := []string{"node.inspect", "node.inventory.v1"}
 	if c.telemetryEnabled {
+		capabilities = append(capabilities, v1.TrafficCapability)
+	}
+	if c.telemetryEnabled {
 		capabilities = append(capabilities, v1.TelemetryCapability)
 	}
 	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: capabilities, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
@@ -438,6 +442,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			if e.Type != "task.dispatch" || e.Revision != nil || v1.Decode(e.Payload, &d) != nil || e.CorrelationID != d.TaskID {
 				return fmt.Errorf("invalid dispatch")
 			}
+			exec.Calibrate = c.trafficCalibrate
 			result, err := exec.Execute(d)
 			if err != nil {
 				return err

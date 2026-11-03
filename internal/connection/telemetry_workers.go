@@ -9,6 +9,7 @@ import (
 	"github.com/vioira/viorka-agent/internal/collector"
 	"github.com/vioira/viorka-agent/internal/config"
 	"github.com/vioira/viorka-agent/internal/state"
+	v1 "github.com/vioira/viorka-agent/protocol/v1"
 )
 
 type telemetryWorkResult struct {
@@ -17,6 +18,9 @@ type telemetryWorkResult struct {
 	err   error
 }
 type telemetrySources struct {
+	validate       func(v1.TelemetryTrafficSettings) error
+	configure      func(v1.TelemetryTrafficSettings) error
+	calibrate      func(context.Context, string, v1.TrafficCalibration, time.Time) (*v1.TrafficCalibration, error)
 	trafficError   error // startup diagnostic; a blocked ledger does not disable other groups
 	fast, full, ip func(context.Context, time.Time) (any, error)
 	save           func(context.Context, time.Time, bool) error
@@ -39,6 +43,9 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 	full, ip := collector.NewTelemetryFull(), collector.NewTelemetryPublicIP()
 	return telemetrySources{
 		trafficError: ledgerErr,
+		configure:    fast.ApplyTraffic,
+		validate:     fast.ValidateTraffic,
+		calibrate:    ledger.CalibrateWithReceipt,
 		fast:         func(ctx context.Context, at time.Time) (any, error) { v, _, err := fast.Sample(ctx, at); return v, err },
 		full:         func(ctx context.Context, at time.Time) (any, error) { return full.Sample(ctx, at) },
 		ip:           func(ctx context.Context, at time.Time) (any, error) { return ip.Sample(ctx, at) },

@@ -25,6 +25,9 @@ func DefaultTelemetrySettings() TelemetrySettings {
 	return TelemetrySettings{LogLevel: "warn", Revision: 1, CollectionSeconds: 30, HttpReportSeconds: 60, WssReportSeconds: 2, ConnectionMode: "auto_http_wss"}
 }
 func (s TelemetrySettings) Validate() error {
+	if err := s.TrafficSettings().Validate(); err != nil {
+		return err
+	}
 	if s.LogLevel != "" && s.LogLevel != "debug" && s.LogLevel != "info" && s.LogLevel != "warn" && s.LogLevel != "error" {
 		return errors.New("invalid log level")
 	}

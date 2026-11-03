@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vioira/viorka-agent/internal/config"
@@ -17,6 +18,7 @@ import (
 // TelemetryFast owns CPU/network baselines for one Agent run. A single sampling
 // owner retains it across mode/settings changes. It performs no full-group I/O.
 type TelemetryFast struct {
+	mu           sync.Mutex
 	traffic      *state.TrafficLedger
 	trafficError error
 	source       *Metrics
@@ -35,6 +37,8 @@ func NewTelemetryFast(filter config.NetworkFilter) (*TelemetryFast, error) {
 	return &TelemetryFast{source: network.source, network: network}, nil
 }
 func (t *TelemetryFast) Sample(ctx context.Context, at time.Time) (*v1.TelemetryFast, NetworkObservation, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, NetworkObservation{}, err
 	}
@@ -169,3 +173,59 @@ func (t *TelemetryFast) SetTrafficLedger(ledger *state.TrafficLedger) { t.traffi
 // TrafficError exposes diagnostics to the sampling owner without failing other
 // metrics. The traffic observation already carries unknown when accounting fails.
 func (t *TelemetryFast) TrafficError() error { return t.trafficError }
+
+// ApplyTraffic serializes interface selection with the sampling owner.
+func (t *TelemetryFast) ApplyTraffic(settings v1.TelemetryTrafficSettings) error {
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if settings.Interfaces != t.network.selected {
+		t.network.selected = settings.Interfaces
+		filter := config.NetworkFilter{}
+		if settings.Interfaces != "" {
+			filter.Include = strings.Split(settings.Interfaces, ",")
+			filter.Exclude = []string{"*"}
+		}
+		revision, err := filter.Revision()
+		if err != nil {
+			return err
+		}
+		t.network.filter = config.NetworkFilter{}
+		t.network.revision = revision
+		t.network.baseline = nil
+		t.network.previous = time.Time{}
+	}
+	if t.traffic != nil {
+		return t.traffic.Configure(settings)
+	}
+	return nil
+}
+
+// ValidateTraffic checks explicitly selected interfaces before replacing the
+// durable desired settings. Missing interfaces never fall back to all devices.
+func (t *TelemetryFast) ValidateTraffic(settings v1.TelemetryTrafficSettings) error {
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	if settings.Interfaces == "" {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	interfaces, err := t.network.interfaces()
+	if err != nil {
+		return err
+	}
+	names := map[string]bool{}
+	for _, i := range interfaces {
+		names[i.Name] = true
+	}
+	for _, name := range strings.Split(settings.Interfaces, ",") {
+		if !names[name] {
+			return fmt.Errorf("configured interface %s missing", name)
+		}
+	}
+	return nil
+}

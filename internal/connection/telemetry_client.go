@@ -141,10 +141,6 @@ func (t *telemetryClientSession) start(ready v1.TelemetryReady, send func(v1.Env
 	}
 	settings.setLogLevel = c.applyLogLevel
 	settings.logger = c.logger
-	result := settings.apply(*ready.Settings)
-	if result.State != "applied" {
-		return t.control(telemetryControl{generation: t.generation, correlation: t.readyID, settings: &result}, send)
-	}
 	var sources telemetrySources
 	if c.telemetrySource != nil {
 		sources, err = c.telemetrySource()
@@ -154,6 +150,13 @@ func (t *telemetryClientSession) start(ready v1.TelemetryReady, send func(v1.Env
 	if err != nil {
 		return err
 	}
+	settings.validate = sources.validate
+	settings.configure = sources.configure
+	result := settings.apply(*ready.Settings)
+	if result.State != "applied" {
+		return t.control(telemetryControl{generation: t.generation, correlation: t.readyID, settings: &result}, send)
+	}
+	c.trafficCalibrate = sources.calibrate
 	var run [16]byte
 	if _, err = rand.Read(run[:]); err != nil {
 		return fmt.Errorf("telemetry run identity: %w", err)

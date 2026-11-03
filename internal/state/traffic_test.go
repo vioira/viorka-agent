@@ -82,7 +82,7 @@ func TestTrafficMonthBoundaryAndLongGap(t *testing.T) {
 			t.Fatal(err)
 		}
 		if months == 1 {
-			if *v.RXBytes != 100 || !slices.Contains(v.Quality, "boundary_estimated") {
+			if *v.RXBytes != 0 || !slices.Contains(v.Quality, "boundary_estimated") {
 				t.Fatal(v)
 			}
 		} else if *v.RXBytes != 0 || !slices.Contains(v.Quality, "period_gap") {
@@ -103,7 +103,7 @@ func TestTrafficFilterTransitionAndOverflow(t *testing.T) {
 	}
 	interfaces := append(trafficTestInterface(110, 220), TrafficInterface{Name: "wg0", Ifindex: 3, RX: 100000, TX: 200000})
 	v, err := l.Observe(at.Add(time.Second), boot, b, interfaces)
-	if err != nil || *v.RXBytes != 10 || !slices.Contains(v.Quality, "mixed_filter") {
+	if err != nil || *v.RXBytes != 0 || !slices.Contains(v.Quality, "mixed_filter") {
 		t.Fatal("new interface charged history", v, err)
 	}
 	saved, _ := l.Snapshot()

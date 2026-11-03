@@ -106,7 +106,7 @@ func TestTelemetrySemanticCompleteGroups(t *testing.T) {
 		name   string
 		change func(*TelemetryBatch)
 	}{
-		{"wrong month", func(b *TelemetryBatch) { b.Fast[0].Traffic.MonthStart = now }},
+		{"future period", func(b *TelemetryBatch) { b.Fast[0].Traffic.MonthStart = now.Add(time.Hour) }},
 		{"different filter", func(b *TelemetryBatch) {
 			b.Fast[0].Traffic.FilterRevision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		}},
