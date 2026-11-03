@@ -1,5 +1,5 @@
 // Package runtime defines the capability-aware proxy engine lifecycle interface.
-// Implementations for sing-box, Xray, Realm are not yet included.
+// Managed implements the typed Linux/systemd lifecycle for sing-box, Xray and Realm.
 package runtime
 
 import "context"

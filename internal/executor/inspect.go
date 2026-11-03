@@ -37,6 +37,9 @@ func New(s *state.Store, node string) (*Executor, error) {
 	return e, nil
 }
 func (e *Executor) Execute(d v1.TaskDispatch) (v1.TaskReply, error) {
+	if d.Engine != nil {
+		return v1.TaskReply{}, fmt.Errorf("unexpected engine payload")
+	}
 	if (d.Operation != "node.inspect" && d.Operation != "traffic.calibrate") || d.ResourceKind != "node" || d.ResourceID != e.node || d.Attempt == nil || *d.Attempt == 0 || len(d.TaskID) < 1 || len(d.TaskID) > 128 || len(d.IdempotencyKey) < 1 || len(d.IdempotencyKey) > 128 || d.ConfigSHA256 != "" || d.DeadlineAt.IsZero() || d.DeadlineAt.After(time.Now().Add(10*time.Minute)) {
 		return v1.TaskReply{}, fmt.Errorf("unsupported or invalid task")
 	}

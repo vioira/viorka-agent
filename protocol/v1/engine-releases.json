@@ -1,0 +1,44 @@
+[
+  {
+    "name": "sing-box",
+    "version": "1.14.4",
+    "arch": "amd64",
+    "url": "https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-amd64.tar.gz",
+    "sha256": "699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968"
+  },
+  {
+    "name": "sing-box",
+    "version": "1.14.4",
+    "arch": "arm64",
+    "url": "https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-arm64.tar.gz",
+    "sha256": "436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26"
+  },
+  {
+    "name": "xray",
+    "version": "26.10.31",
+    "arch": "amd64",
+    "url": "https://github.com/XTLS/Xray-core/releases/download/v26.10.31/Xray-linux-64.zip",
+    "sha256": "e4bd9119f50ae7c41658b1abd0679ae06f98bd864a2907ff33f2f2cf7081b214"
+  },
+  {
+    "name": "xray",
+    "version": "26.10.31",
+    "arch": "arm64",
+    "url": "https://github.com/XTLS/Xray-core/releases/download/v26.10.31/Xray-linux-arm64-v8a.zip",
+    "sha256": "1811c8f1da0c3b6dc707ebaf1c8390e987ba39859a8f0a7aadd8526157f2ec8d"
+  },
+  {
+    "name": "realm",
+    "version": "2.9.6",
+    "arch": "amd64",
+    "url": "https://github.com/zhboner/realm/releases/download/v2.9.6/realm-x86_64-unknown-linux-musl.tar.gz",
+    "sha256": "b1cc335547bea8bb2a88178bef12ec7f2363e36200e7ea1d4e1e67627929bf65"
+  },
+  {
+    "name": "realm",
+    "version": "2.9.6",
+    "arch": "arm64",
+    "url": "https://github.com/zhboner/realm/releases/download/v2.9.6/realm-aarch64-unknown-linux-musl.tar.gz",
+    "sha256": "f4c0318dd86854da483dcb7645b4f39cae2cc3f91c688fef969d53220b949488"
+  }
+]

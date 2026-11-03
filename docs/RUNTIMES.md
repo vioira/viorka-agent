@@ -1,63 +1,23 @@
-# Runtime Manager 与代理核心适配器
+# 托管引擎运行时
 
-> 这里定义目标接口。当前仓库仅有 `internal/runtime/engine.go` 统一接口，**没有任何实际 sing-box/Xray/Realm 适配器实现**。
+## 当前实现
 
-## 1. 总体目标
+`internal/runtime/managed.go` 实现类型化任务运行时，`render.go` 生成 sing-box/Xray 的 VLESS REALITY 配置和 Realm TCP 配置，`download.go` 下载校验固定发行资源，`preflight.go` 进行端口和目标预检。旧 `Engine` 接口仅为接口定义，实际任务通过 `Managed.Execute` 路径执行。
 
-- Viorka 不重新实现任何代理核心，而是管理二进制、进程、配置、健康与指标。
-- Runtime 适配器在运行时进行 `version` 和 `capability` 检测，避免新旧版本命令/配置误用。
-- 每种引擎每节点默认一个由 Viorka 管理的实例；同一进程可包含多个服务/入站。
-- 发现用户已有第三方安装时，默认 `observed` 只读，明确授权才 `managed`。
+支持范围为 Linux + systemd + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v1`。运行目录 `/var/lib/viorka-engines/<name>`，独立 unit 为 `viorka-engine-<name>.service`。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
 
-## 2. 核心接口
+安装不启动。配置以结构化任务为输入，不接受任意 Shell、URL 或原生配置。sing-box 执行 `check -c`，Xray 执行 `run -test -c`；Realm 2.9.6 没有原生配置检查命令，使用严格结构化渲染校验和启动后的本地检查。修改运行配置可能重启整个引擎。停止意愿会 disable/stop，停止时应用配置不启动。
 
-```go
-type Engine interface {
-    Name() string
-    Detect(context.Context) (Info, error)
-    Validate(context.Context, []byte) error
-    Apply(context.Context, []byte) error
-    Start(context.Context) error
-    Stop(context.Context) error
-    Restart(context.Context) error
-    Status(context.Context) (Status, error)
-    Stats(context.Context) (Stats, error)
-}
-```
+预检包含绑定端口、目标 DNS/TCP 和 REALITY TLS 校验。Realm 的明确允许目标暂不可达仅豁免网络失败，不能绕过自循环和格式检查。失败尝试有界恢复，回滚失败返回 degraded。进程/本地监听正常不代表外部客户端可用。
 
-`Capabilities` 表示能否校验、热加载、采集引擎统计和多实例。实际函数实现可以再细化 staging/commit/rollback 接口；当前只是初始协作边界。
+## 任务与文件安全
 
-## 3. 引擎预期
+先持久化执行意图再执行副作用。终态重投返回本地结果；中断记录返回 unknown，禁止自动重复执行。任务 journal 有数量限制，长期运行到上限需要受控维护，目前不自动删除执行凭据。
 
-| 引擎 | 主要用途 | 最初实现 |
-|---|---|---|
-| sing-box | Shadowsocks、Trojan、VLESS 等代理与路由服务 | Detect、Validate、Install/Start/Stop、Config apply、Health |
-| Xray | VLESS、XTLS/REALITY 等代理服务 | Detect、Validate、Install/Start/Stop、Config apply、Health |
-| Realm | TCP/UDP 流量中转 | Detect、Config apply、状态检查；M3 加入链路拓扑 |
+发行清单同步自 Panel 的 `api/agent/v1/engine-releases.json`，固定 HTTPS 官方资源、版本、架构及 SHA-256。归档限制大小并拒绝链接和重复可执行条目。systemctl 采用固定参数，不经过 Shell；命令和回滚有超时。机密配置和状态保存在私有目录，不输出完整配置和进程输出。
 
-### 命令校验（实现时需要按版本测试）
+## 验收边界
 
-示意使用：
+本地 Go、race、vet、协议和 Linux 双架构编译检查覆盖实现。运行时测试采用临时文件、本地监听及模拟 supervisor；没有在真实 Linux/systemd 和外部客户端上执行安装、VLESS REALITY、Realm、升级、故障回滚及重启恢复。因此清单为开发适配清单，不能宣称生产兼容。
 
-```bash
-sing-box check -c /path/to/config.json
-xray run -test -c /path/to/config.json
-```
-
-实际生产需依据探测出的二进制版本和参数能力执行，不应在未找到可执行文件时盲目调用或下载不可信来源。
-
-## 4. 启动与运行状态
-
-- systemd/OpenRC/foreground 三种方式统一映射到 Supervisor，不硬编码 `systemctl`。
-- 对主机资源权限不够的 NAT 小鸡，允许只读观测；提示用户为什么无法安装/启动。
-- 每种引擎拥有自己的工作目录、配置、日志和二进制版本，避免覆盖系统现有服务。
-- 进程存活不等于业务可用；健康检查需包括配置预检、绑定端口、可选外部连通测试。
-- 部署失败最多做有界重试，不能死循环反复重启导致可用服务被反复中断。
-
-## 5. 更新安全
-
-下载必须固定发行源、版本、哈希/签名，匹配 linux/amd64 或 linux/arm64。对任何可执行二进制进行校验后再切换，失败恢复旧版。不要依赖第三方网页里复制的随机 curl|sh 安装脚本。
-
-## 6. Agent 与 Panel 权责
-
-Panel 负责最终期望配置、用户审批、资源依赖和权限；Agent 负责现场兼容性检查与实际执行。Agent 能根据本地系统状态拒绝无法执行的请求，Panel 不应因用户在前端点击了“保存”就显示部署成功。
+当前只有每种引擎一个固定版本；升级路径存在但尚无第二个可选版本及真实升级证据。受控运行日志查看、被动第三方实例发现仍未实现。用户确认本次记录实机验收缺口，不以模拟测试替代实机验收。

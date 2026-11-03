@@ -17,6 +17,7 @@ import (
 	"github.com/vioira/viorka-agent/internal/collector"
 	"github.com/vioira/viorka-agent/internal/config"
 	"github.com/vioira/viorka-agent/internal/executor"
+	managed "github.com/vioira/viorka-agent/internal/runtime"
 	"github.com/vioira/viorka-agent/internal/state"
 	"github.com/vioira/viorka-agent/internal/version"
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
@@ -258,6 +259,9 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		return conn.Write(c, websocket.MessageText, b)
 	}
 	capabilities := []string{"node.inspect", "node.inventory.v1"}
+	if managed.Supported() {
+		capabilities = append(capabilities, v1.EngineCapability)
+	}
 	if c.telemetryEnabled {
 		capabilities = append(capabilities, v1.TrafficCapability)
 	}
@@ -346,6 +350,17 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		}
 		return send(v1.Message("node.heartbeat", id.NodeID, ID(), v1.Heartbeat{}))
 	}
+	type engineCompletion struct {
+		reply v1.TaskReply
+		err   error
+	}
+	engineResults := make(chan engineCompletion, 1)
+	var engineBusy bool
+	defer func() {
+		if engineBusy {
+			<-engineResults
+		}
+	}()
 	var pendingFrame *telemetryFrameRequest
 	window := time.Now()
 	count := 0
@@ -405,6 +420,16 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			pendingFrame = frame
 		case <-credential.Changed:
 			return errSessionChanged
+		case completed := <-engineResults:
+			engineBusy = false
+			if completed.err != nil {
+				return completed.err
+			}
+			msg := v1.Message("task.result", id.NodeID, ID(), completed.reply)
+			msg.CorrelationID = completed.reply.TaskID
+			if err = send(msg); err != nil {
+				return err
+			}
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-inventory:
@@ -441,6 +466,27 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			var d v1.TaskDispatch
 			if e.Type != "task.dispatch" || e.Revision != nil || v1.Decode(e.Payload, &d) != nil || e.CorrelationID != d.TaskID {
 				return fmt.Errorf("invalid dispatch")
+			}
+			if v1.EngineOperation(d.Operation) {
+				if engineBusy {
+					continue
+				}
+				if d.Engine == nil || d.Engine.Validate(d.Operation) != nil || d.Attempt == nil {
+					return fmt.Errorf("invalid engine task")
+				}
+				accept := v1.TaskReply{TaskID: d.TaskID, Attempt: *d.Attempt, ResourceID: d.ResourceID, State: "accepted"}
+				msg := v1.Message("task.ack", id.NodeID, ID(), accept)
+				msg.CorrelationID = d.TaskID
+				if err = send(msg); err != nil {
+					return err
+				}
+				engineBusy = true
+				workCtx := c.runCtx
+				if workCtx == nil {
+					workCtx = ctx
+				}
+				go func() { reply, err := exec.ExecuteEngine(workCtx, d); engineResults <- engineCompletion{reply, err} }()
+				continue
 			}
 			exec.Calibrate = c.trafficCalibrate
 			result, err := exec.Execute(d)
