@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -34,6 +35,7 @@ func testTelemetryClientReconnect(t *testing.T) {
 	done := make(chan error, 1)
 	posts := make(chan v1.TelemetryBatch, 1)
 	var origin string
+	var logLevel slog.LevelVar
 	var connections atomic.Int32
 	var lastRun atomic.Value
 	var lastSequence atomic.Uint64
@@ -67,6 +69,9 @@ func testTelemetryClientReconnect(t *testing.T) {
 	mux.HandleFunc("GET /api/v1/agents/ws", func(w http.ResponseWriter, r *http.Request) {
 		done <- func() error {
 			connection := connections.Add(1)
+			settings := settings
+			settings.Revision = uint64(connection*2 - 1)
+			settings.LogLevel = "warn"
 			generation := fmt.Sprintf("generation-%d", connection)
 			demandFor := func(revision uint64, enabled bool) v1.TelemetryDemand {
 				d := leaseDemand(revision, enabled)
@@ -119,6 +124,21 @@ func testTelemetryClientReconnect(t *testing.T) {
 			var applied v1.TelemetrySettingsResult
 			if receipt.Type != "node.settings.v3_result" || receipt.CorrelationID != "ready" || v1.DecodeTelemetry(receipt.Payload, &applied, false) != nil || applied.State != "applied" {
 				return fmt.Errorf("settings not applied: %+v", receipt)
+			}
+			if logLevel.Level() != slog.LevelWarn {
+				return fmt.Errorf("ready log level not applied")
+			}
+			settings.Revision++
+			settings.LogLevel = "debug"
+			if err = send(v1.Message("node.settings.v3", "node-demo", "logging", settings)); err != nil {
+				return err
+			}
+			receipt, err = read()
+			if err != nil {
+				return err
+			}
+			if receipt.Type != "node.settings.v3_result" || receipt.CorrelationID != "logging" || v1.DecodeTelemetry(receipt.Payload, &applied, false) != nil || applied.State != "applied" || logLevel.Level() != slog.LevelDebug {
+				return fmt.Errorf("dynamic log level not applied: %+v", receipt)
 			}
 			if err = send(v1.Message("node.metrics.demand", "node-demo", "enable", demandFor(1, true))); err != nil {
 				return err
@@ -192,7 +212,7 @@ func testTelemetryClientReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &Client{cfg: config.Local{PanelURL: origin}, http: server.Client(), store: store, telemetryEnabled: true}
+	client := &Client{logLevel: &logLevel, cfg: config.Local{PanelURL: origin}, http: server.Client(), store: store, telemetryEnabled: true}
 	defer client.Close()
 	var final atomic.Int32
 	client.telemetrySource = func() (telemetrySources, error) {
@@ -243,6 +263,8 @@ func testTelemetryClientReconnect(t *testing.T) {
 	if final.Load() != expectedSaves {
 		t.Fatalf("final ledger saves = %d, want %d", final.Load(), expectedSaves)
 	}
+	settings.Revision = uint64(attempts * 2)
+	settings.LogLevel = "debug"
 	var saved savedTelemetrySettings
 	if err = store.ReadTelemetrySettings(&saved); err != nil || saved.Settings != settings {
 		t.Fatal("settings were not durable", err)

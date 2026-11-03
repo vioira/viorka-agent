@@ -33,6 +33,8 @@ import (
 var ErrIdentityRejected = errors.New("agent identity rejected; contact administrator")
 
 type Client struct {
+	logger           *slog.Logger
+	logLevel         *slog.LevelVar
 	telemetrySource  func() (telemetrySources, error)
 	telemetryEnabled bool // local telemetry control
 	telemetry        *telemetryRunner
@@ -67,7 +69,9 @@ func New(cfg config.Local, s *state.Store) (*Client, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsConfig
-	return &Client{cfg: cfg, telemetryEnabled: cfg.TelemetryV3, http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, store: s, inventory: collector.NewInventory().SampleEvery}, nil
+	level := new(slog.LevelVar)
+	level.Set(parseLogLevel(cfg.LogLevel))
+	return &Client{logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})), logLevel: level, cfg: cfg, telemetryEnabled: cfg.TelemetryV3, http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, store: s, inventory: collector.NewInventory().SampleEvery}, nil
 }
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 func (c *Client) post(ctx context.Context, path string, v, out any) error {
@@ -176,6 +180,13 @@ func (c *Client) Run(ctx context.Context) (runErr error) {
 	if id.NodeID == "" {
 		return fmt.Errorf("enrollment incomplete")
 	}
+	saved, err := loadTelemetrySettings(c.store, id)
+	if err != nil {
+		return err
+	}
+	if saved.current != nil {
+		c.applyLogLevel(saved.current.LogLevel)
+	}
 	exec, err := executor.New(c.store, id.NodeID)
 	if err != nil {
 		return err
@@ -200,7 +211,7 @@ func (c *Client) Run(ctx context.Context) (runErr error) {
 		if time.Since(started) > time.Minute {
 			delay = time.Second
 		}
-		slog.Warn("Panel connection lost; retrying", "retry_seconds", delay.Seconds())
+		c.log().Warn("Panel connection lost; retrying", "retry_seconds", delay.Seconds())
 		j, _ := rand.Int(rand.Reader, big.NewInt(int64(delay/2)))
 		wait := time.NewTimer(delay + time.Duration(j.Int64()))
 		select {
@@ -283,7 +294,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		}
 		inventory = c.assets.wake
 	}
-	slog.Info("Panel connected; session established", "protocol_version", ack.ProtocolVersion, "heartbeat_seconds", ack.HeartbeatSeconds)
+	c.log().Info("Panel connected; session established", "protocol_version", ack.ProtocolVersion, "heartbeat_seconds", ack.HeartbeatSeconds)
 	incoming := make(chan v1.Envelope, 8)
 	done := make(chan struct{})
 	go func() {

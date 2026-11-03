@@ -11,7 +11,8 @@
       "collection_seconds": 30,
       "http_report_seconds": 60,
       "wss_report_seconds": 2,
-      "connection_mode": "auto_http_wss"
+      "connection_mode": "auto_http_wss",
+      "log_level": "warn"
     }
   }
 }

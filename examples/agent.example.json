@@ -2,6 +2,6 @@
   "panel_url": "https://panel.example.com",
   "node_name": "nat-tokyo-01",
   "state_dir": "/var/lib/viorka-agent",
-  "log_level": "info",
+  "log_level": "warn",
   "telemetry_v3": true
 }

@@ -103,6 +103,7 @@ func connect(args []string, out, errOut io.Writer) int {
 		return 1
 	}
 	defer client.Close()
+	client.SetLogOutput(errOut)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if args[0] == "enroll" {

@@ -59,6 +59,10 @@ func startTelemetryRunner(parent context.Context, s *telemetrySchedule, credenti
 	return r
 }
 func (r *telemetryRunner) run(ctx context.Context, s *telemetrySchedule, credential sessionCredential, settings *telemetrySettings, transmit telemetryTransmit, now func() time.Time) {
+	logger := settings.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	defer close(r.done)
 	senderCtx, cancelSender := context.WithCancel(ctx)
 	requests := make(chan telemetryTransmission, 1)
@@ -97,7 +101,11 @@ func (r *telemetryRunner) run(ctx context.Context, s *telemetrySchedule, credent
 		}
 		workerErr := s.workers.stop(shutdown)
 		r.err = errors.Join(r.err, workerErr)
-		slog.Info("Telemetry shutdown", "worker_shutdown_and_final_save_ok", workerErr == nil, "shutdown_ok", r.err == nil)
+		level := slog.LevelInfo
+		if r.err != nil {
+			level = slog.LevelError
+		}
+		logger.Log(context.Background(), level, "Telemetry shutdown", "worker_shutdown_and_final_save_ok", workerErr == nil, "shutdown_ok", r.err == nil)
 	}()
 	control := func(c telemetryControl) bool {
 		if c.generation == "" {
@@ -149,7 +157,7 @@ func (r *telemetryRunner) run(ctx context.Context, s *telemetrySchedule, credent
 				return
 			}
 		}
-		operational.record(ctx, slog.Default(), s, at)
+		operational.record(ctx, logger, s, at)
 		next := s.nextWake(at)
 		delay := next.Sub(at)
 		if delay < 0 {

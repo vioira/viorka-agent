@@ -296,6 +296,17 @@
           "enum": [
             "auto_http_wss"
           ]
+        },
+        "log_level": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "description": "Agent logging threshold; omitted defaults to warn.",
+          "default": "warn"
         }
       },
       "required": [

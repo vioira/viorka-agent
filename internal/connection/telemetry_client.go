@@ -139,6 +139,8 @@ func (t *telemetryClientSession) start(ready v1.TelemetryReady, send func(v1.Env
 	if err != nil {
 		return err
 	}
+	settings.setLogLevel = c.applyLogLevel
+	settings.logger = c.logger
 	result := settings.apply(*ready.Settings)
 	if result.State != "applied" {
 		return t.control(telemetryControl{generation: t.generation, correlation: t.readyID, settings: &result}, send)

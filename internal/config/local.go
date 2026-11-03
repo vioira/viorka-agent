@@ -28,7 +28,7 @@ func LoadFile(path string) (Local, error) {
 	defer f.Close()
 	dec := json.NewDecoder(f)
 	dec.DisallowUnknownFields()
-	cfg := Local{TelemetryV3: true}
+	cfg := Local{TelemetryV3: true, LogLevel: "warn"}
 	if err := dec.Decode(&cfg); err != nil {
 		return Local{}, err
 	}

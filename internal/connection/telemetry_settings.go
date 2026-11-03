@@ -3,6 +3,7 @@ package connection
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -19,6 +20,8 @@ type savedTelemetrySettings struct {
 // telemetrySettings is owned by the scheduler. Persistence is independent of
 // legacy settings and live lease state; a restart never restores a live lease.
 type telemetrySettings struct {
+	logger      *slog.Logger
+	setLogLevel func(string)
 	panel, node string
 	current     *v1.TelemetrySettings
 	write       func(string, any) error
@@ -58,6 +61,12 @@ func (s *telemetrySettings) apply(next v1.TelemetrySettings) v1.TelemetrySetting
 			return result
 		}
 		s.current = &next
+		if s.setLogLevel != nil {
+			s.setLogLevel(next.LogLevel)
+		}
+		if s.logger != nil {
+			s.logger.Debug("Node settings applied", "revision", next.Revision, "log_level", next.LogLevel)
+		}
 		result.State = "applied"
 		result.AppliedRevision = next.Revision
 	}

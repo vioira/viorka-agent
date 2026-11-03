@@ -521,7 +521,7 @@ RC
     [ "$actual" = "$checksum" ] || fail '安装包 SHA-256 校验失败。'
     chmod 700 "$staging/viorka-agent"
     if [ "$reinstall" -eq 1 ]; then
-        printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"info","ca_file":"%s"}\n' \
+        printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"warn","ca_file":"%s"}\n' \
             "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$staging/agent.json"
         "$staging/viorka-agent" config-check --config "$staging/agent.json"
         command -v flock >/dev/null || fail '覆盖安装需要 flock，以确认旧状态未被 Agent 使用。'
@@ -558,7 +558,7 @@ RC
     fi
     mkdir -p state
     if [ ! -f agent.json ]; then
-        printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"info","ca_file":"%s"}\n' \
+        printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"warn","ca_file":"%s"}\n' \
             "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$staging/agent.json"
         mv "$staging/agent.json" agent.json
     fi

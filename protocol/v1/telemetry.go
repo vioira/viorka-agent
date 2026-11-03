@@ -22,9 +22,12 @@ var telemetryRunID = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F
 var telemetryFilter = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func DefaultTelemetrySettings() TelemetrySettings {
-	return TelemetrySettings{Revision: 1, CollectionSeconds: 30, HttpReportSeconds: 60, WssReportSeconds: 2, ConnectionMode: "auto_http_wss"}
+	return TelemetrySettings{LogLevel: "warn", Revision: 1, CollectionSeconds: 30, HttpReportSeconds: 60, WssReportSeconds: 2, ConnectionMode: "auto_http_wss"}
 }
 func (s TelemetrySettings) Validate() error {
+	if s.LogLevel != "" && s.LogLevel != "debug" && s.LogLevel != "info" && s.LogLevel != "warn" && s.LogLevel != "error" {
+		return errors.New("invalid log level")
+	}
 	if s.Revision == 0 || s.Revision > math.MaxInt64 || s.CollectionSeconds < 1 || s.CollectionSeconds > 60 || s.HttpReportSeconds < 30 || s.HttpReportSeconds > 180 || s.WssReportSeconds < 1 || s.WssReportSeconds > 5 || s.ConnectionMode != "auto_http_wss" {
 		return errors.New("invalid telemetry settings")
 	}

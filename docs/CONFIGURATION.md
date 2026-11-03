@@ -16,7 +16,7 @@ go run ./cmd/viorka-agent config-check --config examples/agent.example.json
   "panel_url": "https://panel.example.com",
   "node_name": "nat-tokyo-01",
   "state_dir": "/root/.viorka-agent/state",
-  "log_level": "info"
+  "log_level": "warn"
 }
 ```
 
@@ -135,3 +135,16 @@ C 只保存供退出实时后生效。修改 R 不重排 HTTP fast，跳过的�
 零时间表示尚未发生；最后完成时间不是最后成功采样时间。`last_receipt_accepted` 表示收到入口接收回执，不保证 Panel 已提交 SQLite；刷盘状态应检查 Panel。`pending_sample_bytes` / `inflight_sample_bytes` 不包含外层 JSON、传输头及其他缓存，不能当作进程总内存。`dropped_failed_flight` 表示本地放弃所有权的失败窗口点数；丢失回执前 Panel 可能已接收部分或全部点，不能据此计算服务端丢点量。
 
 退出额外记录一次 `Telemetry shutdown`，分别标记 worker 结束及最终月流量保存是否成功、整体调度关闭是否成功。普通保存状态由 `last_traffic_save_completed` 与 `traffic_save_error` 查看。Agent 只知道是否有实时需求，订阅者引用数量由 Panel 维护。
+
+### 节点日志等级
+
+`log_level` 支持 `debug`、`info`、`warn`、`error`，省略默认 `warn`；新安装配置也使用 `warn`。
+级别为最低输出阈值，例如 `warn` 输出警告和错误，`info` 额外输出连接及每分钟监控状态，
+`debug` 额外输出配置应用诊断。退出失败按 ERROR 输出，CLI 致命错误仍写 stderr 并返回非零退出码。
+
+Panel 节点设置中的日志等级随 `node.settings.v3`（首次连接为 `node.telemetry.ready.settings`）
+和采集周期一起下发。沿用 revision、身份校验、原子持久化和应用回执；仅持久化成功后即时修改
+并发安全的日志阈值，无需重启。无效等级、旧 revision、同 revision 冲突或写盘失败不改变当前等级。
+保存于 `node-telemetry-settings.json`，Agent 重启时恢复已保存的 Panel 等级，优先于本地 bootstrap。
+尚无 Panel 设置时使用本地等级；远程设置省略等级按 `warn` 处理。WSS 断开不重置等级。
+此设置复用监控链路，需启用 `telemetry_v3` 并完成协商。

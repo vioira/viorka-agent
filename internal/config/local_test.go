@@ -63,3 +63,34 @@ func TestRetiredMetricsBootstrapRejected(t *testing.T) {
 		t.Fatal("retired monitoring setting accepted")
 	}
 }
+
+func TestLogLevelConfiguration(t *testing.T) {
+	for _, value := range []string{"", "debug", "info", "warn", "error", "trace"} {
+		raw := `{"panel_url":"https://panel.test","node_name":"node","state_dir":"state"`
+		if value != "" {
+			raw += `,"log_level":"` + value + `"`
+		}
+		raw += `}`
+		path := filepath.Join(t.TempDir(), "agent.json")
+		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFile(path)
+		if value == "trace" {
+			if err == nil {
+				t.Fatal("invalid log level accepted")
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := value
+		if want == "" {
+			want = "warn"
+		}
+		if cfg.LogLevel != want {
+			t.Fatalf("got %q want %q", cfg.LogLevel, want)
+		}
+	}
+}
