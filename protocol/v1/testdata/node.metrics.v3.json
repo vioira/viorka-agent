@@ -42,7 +42,6 @@
         "sequence": 1,
         "sampled_at": "2026-11-02T00:00:00Z",
         "elapsed_seconds": 60,
-        "filesystems": [],
         "errors": [
           "disk_unavailable",
           "disk_io_unavailable",

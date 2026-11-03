@@ -37,7 +37,7 @@ func (t *TelemetryFull) Sample(ctx context.Context, at time.Time) (*v1.Telemetry
 		return nil, fmt.Errorf("invalid full sequence or sample time")
 	}
 	t.sequence++
-	f := &v1.TelemetryFull{Sequence: t.sequence, SampledAt: at.UTC(), Filesystems: []*v1.TelemetryFilesystem{}, Errors: []string{}}
+	f := &v1.TelemetryFull{Sequence: t.sequence, SampledAt: at.UTC(), Errors: []string{}}
 	elapsed := at.Sub(t.previous).Seconds()
 	if !t.previous.IsZero() && elapsed > 0 && elapsed <= 600 {
 		f.ElapsedSeconds = elapsed
@@ -71,7 +71,7 @@ func (t *TelemetryFull) Sample(ctx context.Context, at time.Time) (*v1.Telemetry
 	data, err = t.source.read(ctx, "self/mountinfo")
 	if err == nil {
 		var total, used, available uint64
-		f.Filesystems, total, used, available, err = collectTelemetryFilesystems(ctx, data, t.stat)
+		total, used, available, err = collectTelemetryCapacity(ctx, data, t.stat)
 		if err == nil {
 			f.DiskTotal = &total
 			f.DiskUsed = &used
@@ -79,7 +79,6 @@ func (t *TelemetryFull) Sample(ctx context.Context, at time.Time) (*v1.Telemetry
 		}
 	}
 	if err != nil {
-		f.Filesystems = []*v1.TelemetryFilesystem{}
 		f.Errors = append(f.Errors, "disk_unavailable")
 	}
 	boot, bootErr := t.source.read(ctx, "sys/kernel/random/boot_id")

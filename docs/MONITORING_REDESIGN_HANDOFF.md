@@ -409,7 +409,7 @@ API 可以输出用户期望的 cpu、ram_used、swap_used、net_in_speed、net_
 | 表族 | 主键/核心字段 | 生命周期 |
 | --- | --- | --- |
 | metrics_disk_io / metrics_disk_io_old | node_id、bucket_start、device_id；read/write bytes/s、IOPS、read/write/combined await、util 的 max/count、last_sample_at | 与对应周表同事务轮换；设备级统计 |
-| metrics_filesystems / metrics_filesystems_old | node_id、bucket_start、filesystem_id；mount/type、total/used/available、sampled_at | 只在真实 full 观测产生记录，最多 32 个文件系统 |
+| 磁盘容量汇总 | metrics_history / metrics_history_old 的 disk_total、disk_used、disk_available、disk_sampled_at | 本地过滤去重，最多探测 32 个唯一文件系统；不再上报或保存文件系统明细 |
 | node_system_info | node_id；OS/内核/架构等已有或明确新增字段、sampled_at、错误状态 | 当前资产快照，不随周表轮换 |
 | node_public_addresses | node_id、family；address、sampled_at、error_code | 当前 IPv4/IPv6 快照 |
 | node_asset_changes | node_id、change_time、类型化变化字段 | 仅记录实际变化；明确保留策略，首期最多 14 天 |
@@ -476,3 +476,7 @@ fast 过期阈值建议 `max(90秒, 3×当前有效采集周期, 3×当前发送
 未验证前不得宣称：精确流量计费、离线历史补传、跨所有虚拟网卡的自动准确流量归属、毫秒级 I/O 峰值、所有发行版运行通过、Panel 多实例安全聚合、WSS 写成功即历史耐久保存。
 
 本文交接时仅完成源码核对与设计整理；实现、新库初始化、发布、平台运行验证均未执行。详细任务顺序、验收用例和发布门槛见[实施计划](MONITORING_REDESIGN_IMPLEMENTATION_PLAN.md)。
+
+### 开发期容量协议调整（2026-11-03）
+
+`TelemetryFull` 已移除 `filesystems` 字段。Agent 仅在本地用 mountinfo/statfs 过滤、去重并计算容量汇总，不构造或上报挂载点、格式及逐文件系统容量列表；32 个唯一文件系统的探测预算、溢出检测、取消和失败时未知语义保留。Panel 不创建 metrics_filesystems / metrics_filesystems_old。必须配套更新 Panel 与 Agent，不兼容旧上报格式，不提供历史数据迁移。以上规则取代本文早期设计中的文件系统明细传输与持久化方案。

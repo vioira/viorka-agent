@@ -2,7 +2,6 @@ package v1
 
 import (
 	"math"
-	"path"
 	"slices"
 	"strings"
 	"time"
@@ -168,27 +167,11 @@ func validFull(f *TelemetryFull) bool {
 		return false
 	}
 	if failed("disk_unavailable") {
-		if anyCounters(f.DiskTotal, f.DiskUsed, f.DiskAvailable) || len(f.Filesystems) != 0 {
+		if anyCounters(f.DiskTotal, f.DiskUsed, f.DiskAvailable) {
 			return false
 		}
 	} else {
 		if !allCounters(f.DiskTotal, f.DiskUsed, f.DiskAvailable) || !capacity(*f.DiskTotal, *f.DiskUsed, *f.DiskAvailable) {
-			return false
-		}
-		ids := map[string]bool{}
-		mounts := map[string]bool{}
-		var total, used, available uint64
-		for _, fs := range f.Filesystems {
-			if fs == nil || ids[fs.Identity] || mounts[fs.MountPoint] || !telemetryText(fs.Identity, 256) || !telemetryText(fs.MountPoint, 4096) || !telemetryText(fs.FilesystemType, 64) || path.Clean(fs.MountPoint) != fs.MountPoint || !strings.HasPrefix(fs.MountPoint, "/") || !capacity(fs.TotalBytes, fs.UsedBytes, fs.AvailableBytes) || fs.TotalBytes > math.MaxInt64-total {
-				return false
-			}
-			ids[fs.Identity] = true
-			mounts[fs.MountPoint] = true
-			total += fs.TotalBytes
-			used += fs.UsedBytes
-			available += fs.AvailableBytes
-		}
-		if total != *f.DiskTotal || used != *f.DiskUsed || available != *f.DiskAvailable {
 			return false
 		}
 	}

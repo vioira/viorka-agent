@@ -56,13 +56,20 @@ func TestTelemetryFullContractAndIsolation(t *testing.T) {
 		}
 		b := v1.TelemetryBatch{NodeID: "node", RunID: "11111111-1111-4111-8111-111111111111", BatchID: "b", Fast: []*v1.TelemetryFast{}, Full: []*v1.TelemetryFull{f}, PublicIp: []*v1.TelemetryPublicIP{}}
 		raw, _ := json.Marshal(b)
+		var wire map[string]any
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := wire["full"].([]any)[0].(map[string]any)["filesystems"]; ok {
+			t.Fatal("filesystem details reported")
+		}
 		if _, err = v1.DecodeTelemetryBatch(raw, "node", at, 60, true); err != nil {
 			t.Fatal(string(raw), err)
 		}
 		return f
 	}
 	first := sample()
-	if calls != 2 || len(first.Errors) != 0 || len(first.Filesystems) != 2 || *first.DiskTotal != 819200 || *first.DiskUsed != 491520 || *first.DiskAvailable != 245760 || *first.Processes != 2 || first.OSName != "Test Linux" {
+	if calls != 2 || len(first.Errors) != 0 || *first.DiskTotal != 819200 || *first.DiskUsed != 491520 || *first.DiskAvailable != 245760 || *first.Processes != 2 || first.OSName != "Test Linux" {
 		t.Fatal(first, calls)
 	}
 	write("diskstats", diskFixture(diskCounters{220, 440, 70, 140, 640, 2460, 31000}))
@@ -74,7 +81,7 @@ func TestTelemetryFullContractAndIsolation(t *testing.T) {
 	fail = true
 	at = at.Add(time.Minute)
 	next = sample()
-	if next.DiskTotal != nil || len(next.Filesystems) != 0 || !slices.Contains(next.Errors, "disk_unavailable") {
+	if next.DiskTotal != nil || !slices.Contains(next.Errors, "disk_unavailable") {
 		t.Fatal("partial filesystem sum leaked", next)
 	}
 	if first.Sequence != 1 || *first.DiskTotal != 819200 {
@@ -98,13 +105,13 @@ func TestTelemetryCapacityPrecisionAndAliases(t *testing.T) {
 		}
 	}
 	data := mountLine(1, "8:1", "/", "ext4") + mountLine(2, "8:2", "/alias", "ext4")
-	entries, total, _, _, err := collectTelemetryFilesystems(context.Background(), data, func(string) (filesystemCapacity, error) {
+	total, _, _, err := collectTelemetryCapacity(context.Background(), data, func(string) (filesystemCapacity, error) {
 		return filesystemCapacity{identity: "same", total: math.MaxInt64}, nil
 	})
-	if err != nil || len(entries) != 1 || total != math.MaxInt64 {
-		t.Fatal("dedup before sum", entries, total, err)
+	if err != nil || total != math.MaxInt64 {
+		t.Fatal("dedup before sum", total, err)
 	}
-	_, _, _, _, err = collectTelemetryFilesystems(context.Background(), data, func(path string) (filesystemCapacity, error) {
+	_, _, _, err = collectTelemetryCapacity(context.Background(), data, func(path string) (filesystemCapacity, error) {
 		return filesystemCapacity{identity: path, total: math.MaxInt64}, nil
 	})
 	if err == nil {

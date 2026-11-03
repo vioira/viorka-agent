@@ -30,7 +30,7 @@ func TestTelemetryDiskRatesQualityAndContract(t *testing.T) {
 		if err != nil || items == nil {
 			t.Fatal(items, err)
 		}
-		full := &v1.TelemetryFull{Sequence: 1, SampledAt: at, ElapsedSeconds: seconds, DiskIo: items, Filesystems: []*v1.TelemetryFilesystem{}, Errors: []string{"load_unavailable", "processes_unavailable", "os_unavailable", "disk_unavailable"}}
+		full := &v1.TelemetryFull{Sequence: 1, SampledAt: at, ElapsedSeconds: seconds, DiskIo: items, Errors: []string{"load_unavailable", "processes_unavailable", "os_unavailable", "disk_unavailable"}}
 		b := v1.TelemetryBatch{NodeID: "node", RunID: boot, BatchID: "b", Fast: []*v1.TelemetryFast{}, Full: []*v1.TelemetryFull{full}, PublicIp: []*v1.TelemetryPublicIP{}}
 		raw, _ := json.Marshal(b)
 		if _, err = v1.DecodeTelemetryBatch(raw, "node", at, 60, true); err != nil {

@@ -63,7 +63,7 @@ func TestTelemetryLiveLinux(t *testing.T) {
 	if len(f.Errors) > 0 || f.CPUPercent == nil || f.RamTotal == nil || f.TcpInuse == nil || f.UdpInuse == nil || len(f.Interfaces) == 0 || f.Traffic == nil {
 		t.Fatalf("live fast metrics incomplete: %+v", f)
 	}
-	if len(s.Errors) > 0 || s.DiskTotal == nil || len(s.Filesystems) == 0 || len(s.DiskIo) == 0 || s.Processes == nil || s.OSID == "" {
+	if len(s.Errors) > 0 || s.DiskTotal == nil || s.DiskIo == nil || s.Processes == nil || s.OSID == "" {
 		t.Fatalf("live full metrics incomplete: %+v", s)
 	}
 	batch := v1.TelemetryBatch{NodeID: "live-linux", RunID: "11111111-1111-4111-8111-111111111111", BatchID: "live", Fast: []*v1.TelemetryFast{f}, Full: []*v1.TelemetryFull{s}, PublicIp: []*v1.TelemetryPublicIP{}}
@@ -74,5 +74,5 @@ func TestTelemetryLiveLinux(t *testing.T) {
 	if _, err = v1.DecodeTelemetryBatch(raw, "live-linux", at, 60, true); err != nil {
 		t.Fatal("real host violates protocol", err)
 	}
-	t.Logf("real procfs/statfs: interfaces=%d filesystems=%d disk_devices=%d os=%s CPU delta valid; uid=%d", len(f.Interfaces), len(s.Filesystems), len(s.DiskIo), s.OSID, os.Getuid())
+	t.Logf("real procfs/statfs: interfaces=%d disk_total=%d os=%s CPU delta valid; uid=%d", len(f.Interfaces), *s.DiskTotal, s.OSID, os.Getuid())
 }

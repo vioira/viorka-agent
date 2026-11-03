@@ -93,7 +93,6 @@ func TestTelemetrySemanticCompleteGroups(t *testing.T) {
 		g.DiskTotal = u(100)
 		g.DiskUsed = u(20)
 		g.DiskAvailable = u(70)
-		g.Filesystems = []*TelemetryFilesystem{{Identity: "8:1", MountPoint: "/", FilesystemType: "ext4", TotalBytes: 100, UsedBytes: 20, AvailableBytes: 70}}
 		g.DiskIo = &TelemetryDiskIO{ReadBytesPerSecond: n(0), WriteBytesPerSecond: n(0), ReadIops: n(0), WriteIops: n(0), UtilPercent: n(0), Quality: []string{}}
 		b.PublicIp = []*TelemetryPublicIP{{Sequence: 1, SampledAt: now, Ipv4: "8.8.8.8", Errors: []string{"ipv6_unavailable"}}}
 		return b
@@ -112,9 +111,9 @@ func TestTelemetrySemanticCompleteGroups(t *testing.T) {
 			b.Fast[0].Traffic.FilterRevision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		}},
 		{"unknown with counters", func(b *TelemetryBatch) { b.Fast[0].Traffic.Quality = []string{"unknown"} }},
-		{"capacity mismatch", func(b *TelemetryBatch) { b.Full[0].DiskTotal = u(101) }},
-		{"reserved blocks overflow", func(b *TelemetryBatch) { b.Full[0].Filesystems[0].AvailableBytes = 81 }},
-		{"unclean mount", func(b *TelemetryBatch) { b.Full[0].Filesystems[0].MountPoint = "/a/../b" }},
+		{"incomplete capacity", func(b *TelemetryBatch) { b.Full[0].DiskTotal = nil }},
+		{"reserved blocks overflow", func(b *TelemetryBatch) { *b.Full[0].DiskAvailable = 81 }},
+		{"used exceeds total", func(b *TelemetryBatch) { *b.Full[0].DiskUsed = 101 }},
 		{"OS control text", func(b *TelemetryBatch) { b.Full[0].OSName = "Linux\n" }},
 		{"await without operations", func(b *TelemetryBatch) { b.Full[0].DiskIo.ReadAwaitMs = n(1) }},
 		{"disk baseline with rates", func(b *TelemetryBatch) { b.Full[0].DiskIo.Quality = []string{"baseline"} }},

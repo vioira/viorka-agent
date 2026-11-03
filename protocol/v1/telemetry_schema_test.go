@@ -52,7 +52,7 @@ func TestTelemetryRuntimeSchemaBoundaries(t *testing.T) {
 		},
 		func(v map[string]any) { v["fast"].([]any)[0].(map[string]any)["sampled_at"] = "2026-02-30T00:00:00Z" },
 		func(v map[string]any) { v["fast"] = make([]any, 301) },
-		func(v map[string]any) { v["full"].([]any)[0].(map[string]any)["filesystems"] = make([]any, 33) },
+		func(v map[string]any) { v["full"].([]any)[0].(map[string]any)["filesystems"] = []any{} },
 	} {
 		v := schemaFixture(t)
 		mutate(v)
