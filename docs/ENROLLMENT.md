@@ -68,3 +68,38 @@ CLI 校验本地身份属于该 Panel 和目标节点，创建新的 Ed25519 密
 
 身份拒绝和证书验证失败不会通过再次 Enrollment 或切换上传通道绕过。
 该共享协调器已接入现有 WSS；新版指标 POST/租约/调度仍在开发中，尚未启用。
+
+
+## 删除旧节点后注册新节点
+
+`stop` 只停止 Agent，不删除本地身份。Panel 删除节点后，旧身份无法再获取会话，日志会出现 `agent identity rejected; contact administrator`；OpenRC 可能随后达到重启次数上限。旧安装器遇到已有非空 Node ID 时忽略新令牌，因此重新执行新节点的安装命令不能修复。新版安装器检测到已注册身份和本次 `--token` 时，提供「1) 覆盖重新安装 / 2) 退出并查看恢复说明」选择。回车、其他输入或无交互终端都退出，保留原数据。通过 `/dev/tty` 读取选择，因此支持 `curl | sh` 一键安装。
+
+选择覆盖后，安装器先校验下载包，再停止已验证归属的 Agent 服务，通过进程检查和 `flock` 排除旧状态占用，将旧配置和整个状态目录备份到权限 0700 的 `retired-node-*`，使用本次 URL、CA 和令牌重新注册。不会停止代理服务。失败保留备份和新注册状态供排查或重试，不自动恢复旧身份启动。覆盖重装不沿用自定义配置；原配置保存在备份中，原配置引用的外部状态目录不被删除。
+
+仅升级已有节点时去掉 `--token`。`--reenroll-node` 仅用于原节点换钥，不支持跨 Node ID 迁移。确认旧节点已经删除、要绑定新节点时，先停止 Agent，备份隔离整个旧状态目录，再执行新节点安装命令。不能仅删除 `identity.json`：旧 Journal、遥测设置和流量状态也属于旧身份。
+
+以下适用于安装器默认路径和 OpenRC；先检查 `agent.json` 的 `state_dir` 确实为 `/root/.viorka-agent/state`，并确认没有其他前台 Agent 或安装进程。自定义路径应按实际配置处理。
+
+```sh
+rc-service viorka-agent stop
+rc-service viorka-agent status
+```
+
+确认 Agent 已停止后，执行备份（任一步失败则停止处理）：
+
+```sh
+(
+    set -eu
+    umask 077
+    cd /root/.viorka-agent
+    test -d state
+    test ! -L state
+    backup=$(mktemp -d ./retired-node-XXXXXX)
+    mv state "$backup/state"
+    printf '旧节点状态已保留在 %s\n' "$backup"
+)
+```
+
+随后执行 Panel 新节点的有效安装命令。原 `agent.json` 保留，因此此流程要求仍连接同一 Panel；跨 Panel 迁移需另行核对配置。新安装会创建独立状态和密钥，不触碰代理服务。备份含私钥，须保持受限权限；旧身份已失效，恢复备份不能恢复其 Panel 认证权限。注册失败时保留新建的待注册状态，按首次注册恢复流程重试，不反复移动状态目录。
+
+成功以日志 `Panel connected; session established` 和 Panel 新节点在线为准，不能只看服务已启动。此处不迁移旧节点历史和流量基线。

@@ -23,6 +23,27 @@ main() {
         [ "${#enrollment_token}" -eq 64 ] || fail '注册令牌格式无效。'
         case "$enrollment_token" in *[!a-f0-9]*) fail '注册令牌格式无效。' ;; esac
     }
+    reinstall_help() {
+        cat >&2 <<'HELP'
+已退出，保留现有 Agent 配置和节点数据。
+stop 只停止 Agent，不清除本地身份。面板删除旧节点后，旧身份会报：
+agent identity rejected; contact administrator
+如需绑定新节点，请重新运行新节点安装命令，选择「覆盖重新安装」。
+覆盖前会停止本安装器管理的 Agent，备份旧配置和 state，再使用新令牌注册。
+不会停止代理服务；旧节点历史和流量基线不会迁移。不要只删除 identity.json。
+--reenroll-node 仅用于原节点换钥，不能用于新建节点。
+手动恢复（默认路径）：
+1. OpenRC 执行 rc-service viorka-agent stop 和 rc-service viorka-agent status；
+   systemd 执行 systemctl stop viorka-agent 和 systemctl is-active viorka-agent。
+2. 确认已停止，且 agent.json 的 state_dir 是安装目录下的 state 后，备份隔离：
+   (set -eu; umask 077; cd "$HOME/.viorka-agent"; test -d state; test ! -L state;
+    backup=$(mktemp -d ./retired-node-XXXXXX); mv state "$backup/state";
+    printf '备份位置：%s\n' "$backup")
+3. 同一面板下重新执行新节点的有效安装命令；跨面板需另外核对配置。
+以日志 Panel connected; session established 和面板新节点在线为成功依据。
+详细步骤：docs/ENROLLMENT.md
+HELP
+    }
     render_service() {
         if [ "$service_manager" = systemd ]; then
             cat <<'UNIT'
@@ -409,7 +430,7 @@ RC
     cd "$install_dir"
     install_dir=$(pwd -P)
     mkdir .install-lock 2>/dev/null || fail '另一个安装正在进行；若此前被强制中断，确认无安装进程后删除 .install-lock 空目录。'
-    staging= tty_state= swapped=0 committed=0
+    staging= tty_state= swapped=0 committed=0 reinstall=0 retired=
     cleanup() {
         code=$?
         trap - 0
@@ -418,12 +439,15 @@ RC
         if [ "$swapped" -eq 1 ] && [ "$committed" -eq 0 ] && [ -f viorka-agent.previous ]; then
             if mv -f viorka-agent.previous viorka-agent; then
                 printf '更新失败，已恢复旧 Agent 二进制。\n' >&2
-                if [ "${existing_service:-0}" -eq 1 ]; then
+                if [ "${existing_service:-0}" -eq 1 ] && [ -z "$retired" ]; then
                     restart_service || printf '旧 Agent 服务恢复失败，请人工检查服务日志。\n' >&2
                 fi
             else
                 printf '旧 Agent 二进制恢复失败，请人工处理。\n' >&2
             fi
+        fi
+        if [ "$code" -ne 0 ] && [ -n "$retired" ]; then
+            printf '重新安装未完成。旧配置和状态保留在 %s；新注册状态保留以便重试，未自动启动旧身份。\n' "$retired" >&2
         fi
         [ -z "$staging" ] || rm -rf "$staging"
         rmdir .install-lock
@@ -443,8 +467,25 @@ RC
             registered=0
             printf '检测到未完成注册，将保留原配置和密钥，使用本次令牌继续注册（忽略本次 URL 和 CA）。\n'
         elif [ -z "$reenroll_node" ]; then
-            unset enrollment_token
-            printf '检测到已有身份，将保留配置和身份，忽略本次 URL、CA 和令牌，更新 Agent。\n'
+            if [ "$token_supplied" -eq 1 ]; then
+                printf '检测到历史节点数据。\n1) 覆盖重新安装（备份旧配置和状态，使用新令牌注册）\n2) 退出并查看恢复说明（默认）\n'
+                # Script stdin may be curl's pipe. Never read confirmation there.
+                if ! (exec 3<>/dev/tty) 2>/dev/null; then
+                    reinstall_help
+                    fail '没有交互终端，无法确认覆盖；请在服务器交互终端重新执行。'
+                fi
+                exec 3<>/dev/tty
+                printf '请选择 [1/2，默认 2]：' >&3
+                choice=
+                IFS= read -r choice <&3 || choice=
+                exec 3>&-
+                case "$choice" in
+                    1) reinstall=1 ;;
+                    *) reinstall_help; exit 1 ;;
+                esac
+            else
+                printf '检测到已有身份，将保留配置和身份，忽略本次 URL 和 CA，更新 Agent。\n'
+            fi
         else
             printf '已选择重新注册：保留原配置，成功后替换 Agent 身份。\n'
         fi
@@ -479,13 +520,51 @@ RC
     checksum=$(printf '%s' "$checksum" | tr 'A-F' 'a-f')
     [ "$actual" = "$checksum" ] || fail '安装包 SHA-256 校验失败。'
     chmod 700 "$staging/viorka-agent"
+    if [ "$reinstall" -eq 1 ]; then
+        printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"info","ca_file":"%s"}\n' \
+            "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$staging/agent.json"
+        "$staging/viorka-agent" config-check --config "$staging/agent.json"
+        command -v flock >/dev/null || fail '覆盖安装需要 flock，以确认旧状态未被 Agent 使用。'
+        if [ "${existing_service:-0}" -eq 1 ]; then
+            if [ "$service_manager" = systemd ]; then
+                timeout 45 systemctl stop viorka-agent.service || fail '停止 Agent 管理服务失败。'
+                active_state=$(timeout 15 systemctl show viorka-agent.service -p ActiveState --value) || fail '无法确认 Agent 已停止。'
+                case "$active_state" in inactive|failed) ;; *) fail 'Agent 服务尚未停止，未覆盖数据。' ;; esac
+            else
+                timeout 45 rc-service viorka-agent stop || fail '停止 Agent 管理服务失败。'
+                status_code=0
+                timeout 15 rc-service viorka-agent status || status_code=$?
+                [ "$status_code" -eq 3 ] || fail '无法确认 OpenRC Agent 已停止，未覆盖数据。'
+            fi
+        fi
+        for proc in /proc/[0-9]*/exe; do
+            executable=$(readlink "$proc" 2>/dev/null || :)
+            case "$executable" in "$install_dir/viorka-agent"|"$install_dir/viorka-agent (deleted)")
+                fail 'Agent 仍在运行，请先停止前台 Agent 或外部 supervisor 后重试。' ;;
+            esac
+        done
+        [ ! -L state/agent.lock ] || fail '状态锁不能为符号链接。'
+        [ ! -e state/agent.lock ] || [ -f state/agent.lock ] || fail '状态锁类型不安全。'
+        exec 9>>state/agent.lock
+        flock -n 9 || fail '旧状态仍被占用，未覆盖任何数据。'
+        retired=$(mktemp -d "$install_dir/retired-node-XXXXXX")
+        cp -p agent.json "$retired/agent.json"
+        mv state "$retired/state"
+        # Keep the old state lock until exit, including while enrolling the new identity.
+        mv "$staging/agent.json" agent.json
+        registered=0
+        running=0
+        printf '旧节点配置和状态已备份至：%s\n' "$retired"
+    fi
     mkdir -p state
     if [ ! -f agent.json ]; then
         printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"info","ca_file":"%s"}\n' \
             "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$staging/agent.json"
         mv "$staging/agent.json" agent.json
     fi
-    "$staging/viorka-agent" config-check --config agent.json
+    if [ "$reinstall" -eq 0 ]; then
+        "$staging/viorka-agent" config-check --config agent.json
+    fi
     if [ -f viorka-agent ]; then
         cp viorka-agent "$staging/previous"
         mv -f "$staging/previous" viorka-agent.previous
@@ -519,6 +598,7 @@ RC
         unset enrollment_token
         if [ "$token_supplied" -eq 0 ]; then tty_state=; exec 3>&-; fi
     fi
+    if [ "$reinstall" -eq 1 ]; then exec 9>&-; fi
     if [ "$foreground" -eq 0 ]; then
         install_service
         committed=1

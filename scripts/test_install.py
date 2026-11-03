@@ -4,6 +4,7 @@
 Only platform detection/download transport and the Agent executable are fixtures.
 The shell, terminal echo, SHA-256 verification and filesystem effects are real.
 """
+import fcntl
 import json
 import os
 import pathlib
@@ -16,13 +17,14 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOKEN = "a" * 64
 
 
 class InstallerTests(unittest.TestCase):
-    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False):
+    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False, replacement=False, choice=None, locked_state=False):
         with tempfile.TemporaryDirectory(prefix="viorka-install-") as tmp:
             home = pathlib.Path(tmp) / 'home "quote" \\ slash'
             home.mkdir()
@@ -38,6 +40,7 @@ import os, sys
 s=os.stat(sys.argv[-1])
 print(s.st_uid if sys.argv[2]=='%u' else format(s.st_mode & 0o777, 'o'))
 ''')
+            executable("flock", f'#!{sys.executable}\nimport fcntl, sys\nfcntl.flock(int(sys.argv[-1]), fcntl.LOCK_EX | fcntl.LOCK_NB)\n')
             fixture = b'''#!/bin/sh
 set -eu
 printf '%s\\n' "$1" >> calls
@@ -50,7 +53,7 @@ case "$1" in
      printf '{"node_id":"","private_key":"retained-key"}' > state/identity.json
      exit 1
    fi
-   printf '{"node_id":"node-1","private_key":"retained-key"}' > state/identity.json ;;
+   printf '{"node_id":"%s","private_key":"retained-key"}' "${NODE_ID:-node-1}" > state/identity.json ;;
  run) test -f state/identity.json ;;
 esac
 '''
@@ -195,6 +198,9 @@ else:
                 before = (install / "state/identity.json").read_bytes() if (install / "state/identity.json").exists() else None
                 config = (install / "agent.json").read_bytes() if (install / "agent.json").exists() else None
                 env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}", FAILURE=retry_failure, PAYLOAD=str(payload))
+                if replacement:
+                    env["NODE_ID"] = "node-2"
+                    (install / "state/old-journal.json").write_text("old node history")
                 retry_script = ROOT / "install.sh"
                 if running:
                     proc = pathlib.Path(tmp) / "proc/123"
@@ -203,25 +209,108 @@ else:
                     retry_script = pathlib.Path(tmp) / "install.sh"
                     retry_script.write_text((ROOT / "install.sh").read_text().replace('/proc/', str(pathlib.Path(tmp) / 'proc') + '/'))
                 old_binary = (install / "viorka-agent").read_bytes() if (install / "viorka-agent").exists() else None
-                result = subprocess.run(["sh", str(retry_script), "install", "--foreground", "--url=https://localhost:8143", "--version=v0.1.0", *((["--token=" + TOKEN, "--reenroll-node=node-1"] if reenroll else []) if before and failure != "enroll" else ["--token=" + TOKEN])], env=env, capture_output=True, start_new_session=True, timeout=15)
-                self.assertEqual(result.returncode == 0, not retry_failure, result.stderr.decode())
-                if running and not retry_failure:
+                held_lock = None
+                if locked_state:
+                    held_lock = (install / "state/agent.lock").open("a")
+                    fcntl.flock(held_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                retry_args = ["sh", str(retry_script), "install", "--foreground", "--url=https://localhost:8143", "--version=v0.1.0", *((["--token=" + TOKEN, "--reenroll-node=node-1"] if reenroll else (["--token=" + TOKEN] if replacement else [])) if before and failure != "enroll" else ["--token=" + TOKEN])]
+                if choice is None:
+                    result = subprocess.run(retry_args, env=env, capture_output=True, start_new_session=True, timeout=15)
+                else:
+                    pid, fd = pty.fork()
+                    if pid == 0:
+                        os.environ.update(env)
+                        script_fd = os.open(retry_script, os.O_RDONLY)
+                        os.dup2(script_fd, 0)
+                        os.close(script_fd)
+                        os.execvp("sh", ["sh", "-s", "--", *retry_args[2:]])
+                    output = b""
+                    status = None
+                    sent = False
+                    try:
+                        end = time.monotonic() + 15
+                        while time.monotonic() < end:
+                            if select.select([fd], [], [], .05)[0]:
+                                try:
+                                    output += os.read(fd, 65536)
+                                except OSError:
+                                    pass
+                                if not sent and "默认 2]：".encode() in output:
+                                    os.write(fd, (choice + "\n").encode())
+                                    sent = True
+                            done, value = os.waitpid(pid, os.WNOHANG)
+                            if done:
+                                status = value
+                                break
+                        self.assertIsNotNone(status, "confirmation timed out")
+                    finally:
+                        if status is None:
+                            os.kill(pid, signal.SIGKILL)
+                            os.waitpid(pid, 0)
+                        os.close(fd)
+                    result = SimpleNamespace(returncode=os.waitstatus_to_exitcode(status), stdout=output, stderr=output)
+                if held_lock:
+                    held_lock.close()
+                replaced = replacement and choice == "1" and not retry_failure and not running and not locked_state
+                self.assertEqual(result.returncode == 0, replaced or not (retry_failure or replacement), result.stderr.decode())
+                if running and not retry_failure and not replacement:
                     self.assertIn('安装前检查：检测到 Agent 进程正在运行。'.encode(), result.stdout)
                     self.assertIn('常用命令'.encode(), result.stdout)
                 after_calls = (install / "calls").read_text().splitlines()[len(calls):]
                 expected = ["config-check"] if running else (["config-check", "run"] if before and failure != "enroll" and not reenroll else ["config-check", "enroll", "run"])
+                if replacement:
+                    expected = ["config-check"] if choice == "1" else []
+                    if choice is None:
+                        self.assertIn("没有交互终端".encode(), result.stderr)
+                    elif choice != "1":
+                        self.assertIn("已退出".encode(), result.stderr)
+                    if replaced:
+                        expected = ["config-check", "enroll", "run"]
+                        backups = list(install.glob("retired-node-*"))
+                        self.assertEqual(len(backups), 1)
+                        self.assertEqual((backups[0] / "state/identity.json").read_bytes(), before)
+                        self.assertEqual((backups[0] / "agent.json").read_bytes(), config)
+                        self.assertEqual(backups[0].stat().st_mode & 0o777, 0o700)
+                        self.assertEqual((backups[0] / "state/old-journal.json").read_text(), "old node history")
+                        self.assertFalse((install / "state/old-journal.json").exists())
+                        self.assertEqual(json.loads((install / "state/identity.json").read_text())["node_id"], "node-2")
+                    self.assertEqual((install / "viorka-agent").read_bytes(), old_binary)
+                    self.assertNotIn(TOKEN.encode(), result.stdout + result.stderr)
                 if retry_failure:
                     expected = ["config-check"] if retry_failure == "config" else []
+                    if replacement and retry_failure == "enroll":
+                        expected = ["config-check", "enroll"]
+                        backups = list(install.glob("retired-node-*"))
+                        self.assertEqual(len(backups), 1)
+                        self.assertEqual((backups[0] / "state/identity.json").read_bytes(), before)
+                        self.assertEqual(json.loads((install / "state/identity.json").read_text())["node_id"], "")
+                        self.assertIn("重新安装未完成".encode(), result.stderr)
                     self.assertEqual((install / "viorka-agent").read_bytes(), old_binary)
                 self.assertEqual(after_calls, expected)
                 if before and failure == "enroll":
                     self.assertIn("检测到未完成注册".encode(), result.stdout)
                     self.assertEqual(json.loads((install / "state/identity.json").read_bytes())["private_key"], json.loads(before)["private_key"])
-                if before and failure != "enroll":
+                if before and failure != "enroll" and not replaced and not (replacement and retry_failure == "enroll"):
                     self.assertEqual((install / "state/identity.json").read_bytes(), before)
                 if config:
                     self.assertEqual((install / "agent.json").read_bytes(), config)
                 self.assertFalse(list(install.glob(".install-*")))
+
+    def test_new_token_does_not_silently_reuse_old_identity(self):
+        self.run_install(token_arg=True, retry=True, replacement=True)
+
+    def test_reinstall_confirmation(self):
+        for choice in ("1", "2", "", "invalid"):
+            with self.subTest(choice=choice):
+                self.run_install(token_arg=True, retry=True, replacement=True, choice=choice)
+
+    def test_reinstall_preserves_data_when_locked_or_download_invalid(self):
+        self.run_install(token_arg=True, retry=True, replacement=True, choice="1", locked_state=True)
+        for failure in ("checksum", "config", "enroll"):
+            self.run_install(token_arg=True, retry=True, replacement=True, choice="1", retry_failure=failure)
+
+    def test_reinstall_rejects_running_foreground(self):
+        self.run_install(token_arg=True, retry=True, replacement=True, choice="1", running=True)
 
     def test_explicit_reenrollment_preserves_config(self):
         self.run_install(token_arg=True, retry=True, reenroll=True)
