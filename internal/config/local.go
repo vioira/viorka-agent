@@ -11,12 +11,14 @@ import (
 )
 
 type Local struct {
-	MetricsSeconds int    `json:"metrics_seconds,omitempty"`
-	PanelURL       string `json:"panel_url"`
-	NodeName       string `json:"node_name"`
-	StateDir       string `json:"state_dir"`
-	LogLevel       string `json:"log_level"`
-	CAFile         string `json:"ca_file,omitempty"`
+	TelemetryV3    bool          `json:"telemetry_v3,omitempty"`
+	NetworkFilter  NetworkFilter `json:"network_filter,omitempty"`
+	MetricsSeconds int           `json:"metrics_seconds,omitempty"`
+	PanelURL       string        `json:"panel_url"`
+	NodeName       string        `json:"node_name"`
+	StateDir       string        `json:"state_dir"`
+	LogLevel       string        `json:"log_level"`
+	CAFile         string        `json:"ca_file,omitempty"`
 }
 
 func LoadFile(path string) (Local, error) {
@@ -39,6 +41,9 @@ func LoadFile(path string) (Local, error) {
 }
 
 func (c Local) Validate() error {
+	if err := c.NetworkFilter.Validate(); err != nil {
+		return err
+	}
 	if c.MetricsSeconds != 0 && (c.MetricsSeconds < 10 || c.MetricsSeconds > 300) {
 		return fmt.Errorf("metrics_seconds must be 10–300 (or 0 for default 30)")
 	}

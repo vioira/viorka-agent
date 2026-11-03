@@ -221,6 +221,10 @@ func parseMemory(s string) (*v1.MemoryMetrics, error) {
 	return &v1.MemoryMetrics{TotalBytes: total, AvailableBytes: available, UsedBytes: total - available, SwapTotalBytes: swap, SwapUsedBytes: swap - free}, nil
 }
 func parseNetwork(s string) (map[string][2]uint64, error) {
+	return parseNetworkCounters(s, false)
+}
+
+func parseNetworkCounters(s string, includeLoopback bool) (map[string][2]uint64, error) {
 	result := map[string][2]uint64{}
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	if len(lines) < 2 || !strings.Contains(lines[0], "Inter-") || !strings.Contains(lines[1], "bytes") {
@@ -236,7 +240,7 @@ func parseNetwork(s string) (map[string][2]uint64, error) {
 		if !ok || len(f) != 16 || name == "" || len(name) > 64 {
 			return nil, fmt.Errorf("invalid network counters")
 		}
-		if name == "lo" {
+		if name == "lo" && !includeLoopback {
 			continue
 		}
 		if _, exists := result[name]; exists {
@@ -248,7 +252,7 @@ func parseNetwork(s string) (map[string][2]uint64, error) {
 			return nil, fmt.Errorf("invalid network bytes")
 		}
 		result[name] = [2]uint64{rx, tx}
-		if len(result) > 64 {
+		if (!includeLoopback && len(result) > 64) || len(result) > 4096 {
 			return nil, fmt.Errorf("too many interfaces")
 		}
 	}

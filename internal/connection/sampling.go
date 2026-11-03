@@ -12,6 +12,7 @@ import (
 // sampling lives for Run, not a WSS session. Samples never reach disk.
 // Offline storage is one snapshot; an online window is capped at ten samples.
 type sampling struct {
+	cancel   context.CancelFunc
 	mu       sync.Mutex
 	latest   v1.NodeMetrics
 	pending  []*v1.NodeMetrics
@@ -23,7 +24,8 @@ type sampling struct {
 }
 
 func startSampling(ctx context.Context, interval time.Duration) *sampling {
-	s := &sampling{interval: interval, changed: make(chan struct{}, 1), ready: make(chan struct{}), done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(ctx)
+	s := &sampling{cancel: cancel, interval: interval, changed: make(chan struct{}, 1), ready: make(chan struct{}), done: make(chan struct{})}
 	go s.run(ctx, collector.NewMetrics().Sample)
 	return s
 }

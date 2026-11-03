@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "message_id": "example-1",
+  "node_id": "node-demo",
+  "type": "node.telemetry.ready",
+  "sent_at": "2026-11-02T00:00:00Z",
+  "payload": {
+    "session_generation": "session-1",
+    "settings": {
+      "revision": 1,
+      "collection_seconds": 30,
+      "http_report_seconds": 60,
+      "wss_report_seconds": 2,
+      "connection_mode": "auto_http_wss"
+    }
+  }
+}

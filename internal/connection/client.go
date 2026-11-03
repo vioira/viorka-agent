@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -32,14 +33,19 @@ import (
 var ErrIdentityRejected = errors.New("agent identity rejected; contact administrator")
 
 type Client struct {
-	cfg       config.Local
-	http      *http.Client
-	store     *state.Store
-	inventory func(context.Context, time.Duration) v1.NodeInventory
-	settings  *v1.NodeSettings
-	samples   *sampling
-	runCtx    context.Context
-	assets    *assetSampling
+	telemetrySource  func() (telemetrySources, error)
+	telemetryEnabled bool // explicit local startup gate; default disabled
+	telemetry        *telemetryRunner
+	telemetryBridge  telemetryWSS
+	sessions         sessionCoordinator
+	cfg              config.Local
+	http             *http.Client
+	store            *state.Store
+	inventory        func(context.Context, time.Duration) v1.NodeInventory
+	settings         *v1.NodeSettings
+	samples          *sampling
+	runCtx           context.Context
+	assets           *assetSampling
 }
 
 func New(cfg config.Local, s *state.Store) (*Client, error) {
@@ -63,7 +69,7 @@ func New(cfg config.Local, s *state.Store) (*Client, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsConfig
-	return &Client{cfg: cfg, http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, store: s, inventory: collector.NewInventory().SampleEvery}, nil
+	return &Client{cfg: cfg, telemetryEnabled: cfg.TelemetryV3, http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, store: s, inventory: collector.NewInventory().SampleEvery}, nil
 }
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 func (c *Client) post(ctx context.Context, path string, v, out any) error {
@@ -120,18 +126,29 @@ func (c *Client) Enroll(ctx context.Context, token string) error {
 	id.NodeID = result.NodeID
 	return c.store.Write("identity.json", id)
 }
+func (c *Client) credentials(ctx context.Context, id state.Identity) (sessionCredential, error) {
+	binding := sha256.Sum256(append([]byte(c.cfg.PanelURL+"\x00"+id.NodeID+"\x00"), id.PrivateKey...))
+	return c.sessions.Get(ctx, hex.EncodeToString(binding[:]), func(ctx context.Context) (sessionCredential, error) { return c.issueSession(ctx, id) })
+}
 func (c *Client) session(ctx context.Context, id state.Identity) (string, error) {
+	v, err := c.credentials(ctx, id)
+	return v.Token, err
+}
+func (c *Client) issueSession(ctx context.Context, id state.Identity) (sessionCredential, error) {
+	if len(id.PrivateKey) != ed25519.PrivateKeySize {
+		return sessionCredential{}, fmt.Errorf("invalid identity key")
+	}
 	var ch struct {
 		ID        string    `json:"id"`
 		Message   string    `json:"message"`
 		ExpiresAt time.Time `json:"expires_at"`
 	}
 	if err := c.post(ctx, "/api/v1/agents/challenge", map[string]string{"node_id": id.NodeID}, &ch); err != nil {
-		return "", err
+		return sessionCredential{}, err
 	}
 	expected := fmt.Sprintf("viorka-agent-session-v1\n%s\n%s\n%s\n%s", c.cfg.PanelURL, id.NodeID, ch.ID, ch.ExpiresAt.Format(time.RFC3339Nano))
 	if ch.Message != expected || !ch.ExpiresAt.After(time.Now()) || ch.ExpiresAt.After(time.Now().Add(2*time.Minute)) {
-		return "", fmt.Errorf("invalid challenge context")
+		return sessionCredential{}, fmt.Errorf("invalid challenge context")
 	}
 	sig := ed25519.Sign(ed25519.PrivateKey(id.PrivateKey), []byte(ch.Message))
 	var result struct {
@@ -139,12 +156,12 @@ func (c *Client) session(ctx context.Context, id state.Identity) (string, error)
 		ExpiresAt time.Time `json:"expires_at"`
 	}
 	if err := c.post(ctx, "/api/v1/agents/session", map[string]string{"challenge_id": ch.ID, "signature": base64.StdEncoding.EncodeToString(sig)}, &result); err != nil {
-		return "", err
+		return sessionCredential{}, err
 	}
 	if len(result.Token) != 64 || !result.ExpiresAt.After(time.Now()) {
-		return "", fmt.Errorf("invalid session")
+		return sessionCredential{}, fmt.Errorf("invalid session")
 	}
-	return result.Token, nil
+	return sessionCredential{Token: result.Token, ExpiresAt: result.ExpiresAt}, nil
 }
 func ID() string {
 	var b [16]byte
@@ -153,7 +170,7 @@ func ID() string {
 	}
 	return hex.EncodeToString(b[:])
 }
-func (c *Client) Run(ctx context.Context) error {
+func (c *Client) Run(ctx context.Context) (runErr error) {
 	id, err := c.store.Identity(c.cfg.PanelURL, false)
 	if err != nil {
 		return err
@@ -175,7 +192,7 @@ func (c *Client) Run(ctx context.Context) error {
 	}
 	c.runCtx = runCtx
 	c.samples = startSampling(runCtx, interval)
-	defer func() { stopSampling(); c.waitCollectors() }()
+	defer func() { stopSampling(); runErr = errors.Join(runErr, c.waitCollectors()) }()
 	delay := time.Second
 	for {
 		started := time.Now()
@@ -183,7 +200,7 @@ func (c *Client) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if errors.Is(err, ErrIdentityRejected) {
+		if errors.Is(err, ErrIdentityRejected) || errors.Is(err, errTelemetryStopped) {
 			return err
 		}
 		var certErr *tls.CertificateVerificationError
@@ -205,16 +222,22 @@ func (c *Client) Run(ctx context.Context) error {
 		delay = min(delay*2, 30*time.Second)
 	}
 }
-func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.Executor) error {
-	token, err := c.session(ctx, id)
+func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.Executor) (connectErr error) {
+	credential, err := c.credentials(ctx, id)
+	token := credential.Token
 	if err != nil {
 		return err
 	}
+	ctx, endSession := context.WithDeadline(ctx, credential.ExpiresAt.Add(-30*time.Second))
+	defer endSession()
 	dialCtx, stop := context.WithTimeout(ctx, 15*time.Second)
 	conn, res, err := websocket.Dial(dialCtx, "wss"+strings.TrimPrefix(c.cfg.PanelURL, "https")+"/api/v1/agents/ws", &websocket.DialOptions{HTTPClient: c.http, HTTPHeader: http.Header{"Authorization": []string{"Bearer " + token}}})
 	stop()
 	if err != nil {
 		if res != nil && (res.StatusCode == 401 || res.StatusCode == 403) {
+			if !c.sessions.Reject(credential.Generation, false) {
+				return errSessionChanged
+			}
 			return ErrIdentityRejected
 		}
 		return err
@@ -232,7 +255,11 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		defer stop()
 		return conn.Write(c, websocket.MessageText, b)
 	}
-	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: []string{"node.inspect", "node.metrics.v1", "node.inventory.v1", "node.settings.v2", "node.settings.live.v1", "node.metrics.v2", "node.host_metrics.v1", "node.filesystems.v1"}, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
+	capabilities := []string{"node.inspect", "node.metrics.v1", "node.inventory.v1", "node.settings.v2", "node.settings.live.v1", "node.metrics.v2", "node.host_metrics.v1", "node.filesystems.v1"}
+	if c.telemetryEnabled {
+		capabilities = append(capabilities, v1.TelemetryCapability)
+	}
+	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: capabilities, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
 		return err
 	}
 	hctx, hstop := context.WithTimeout(ctx, 10*time.Second)
@@ -254,7 +281,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		sampleCtx, stop := context.WithCancel(ctx)
 		c.runCtx = sampleCtx
 		c.samples = startSampling(sampleCtx, time.Duration(c.cfg.MetricsIntervalSeconds())*time.Second)
-		defer func() { stop(); c.waitCollectors() }()
+		defer func() { stop(); connectErr = errors.Join(connectErr, c.waitCollectors()) }()
 	}
 	select {
 	case <-c.samples.ready:
@@ -270,6 +297,11 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		reportInterval = time.Duration(c.settings.WssReportSeconds) * time.Second
 	}
 	var metricsTimer *time.Ticker
+	defer func() {
+		if metricsTimer != nil {
+			metricsTimer.Stop()
+		}
+	}()
 	sendSettingsResult := func(correlation string, next v1.NodeSettings) error {
 		result := c.applySettings(id, next)
 		if result.State == "applied" {
@@ -353,14 +385,13 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		}
 		return nil
 	}
-	if ack.MetricsVersion != nil {
+	if ack.MetricsVersion != nil && c.telemetry == nil {
 		if *ack.MetricsVersion != 1 && *ack.MetricsVersion != 2 {
 			return fmt.Errorf("unsupported metrics version")
 		}
 		c.samples.setOnline(true)
 		defer c.samples.setOnline(false)
 		metricsTimer = time.NewTicker(reportInterval)
-		defer metricsTimer.Stop()
 		metricsTick = metricsTimer.C
 	}
 	slog.Info("Panel connected; session established", "protocol_version", ack.ProtocolVersion, "heartbeat_seconds", ack.HeartbeatSeconds)
@@ -390,10 +421,97 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	defer func() { cancel(); conn.CloseNow(); <-done }()
 	tick := time.NewTicker(time.Duration(ack.HeartbeatSeconds) * time.Second)
 	defer tick.Stop()
+	telemetry := &telemetryClientSession{client: c, identity: id, credential: credential}
+	defer telemetry.close()
+	// hello_ack intentionally remains compatible with old Panels. Only a ready
+	// message confirms v3 on this management connection; retain HTTP while waiting.
+	var negotiationTimer *time.Timer
+	var negotiationExpired <-chan time.Time
+	if c.telemetry != nil {
+		negotiationTimer = time.NewTimer(10 * time.Second)
+		negotiationExpired = negotiationTimer.C
+		defer negotiationTimer.Stop()
+	}
+
+	heartbeat := func() error {
+		pingCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+		err := conn.Ping(pingCtx)
+		stop()
+		if err != nil {
+			return err
+		}
+		return send(v1.Message("node.heartbeat", id.NodeID, ID(), v1.Heartbeat{}))
+	}
+	var pendingFrame *telemetryFrameRequest
 	window := time.Now()
 	count := 0
 	for {
+		var controls <-chan telemetryControl
+		var runnerDone <-chan struct{}
+		var frames <-chan *telemetryFrameRequest
+		if c.telemetry != nil {
+			controls = c.telemetry.controls
+			runnerDone = c.telemetry.done
+		}
+		if telemetry.applied && pendingFrame == nil {
+			frames = telemetry.port.requests
+		}
+		// Ready/settings/demand replies and heartbeats precede bulk metrics.
 		select {
+		case control := <-controls:
+			if err = telemetry.control(control, send); err != nil {
+				return err
+			}
+			continue
+		default:
+		}
+		select {
+		case <-tick.C:
+			if err = heartbeat(); err != nil {
+				return err
+			}
+			continue
+		default:
+		}
+		if pendingFrame != nil && len(incoming) == 0 {
+			err = telemetry.port.write(pendingFrame, func(writeCtx context.Context, raw []byte) error {
+				bounded, stop := context.WithTimeout(writeCtx, 5*time.Second)
+				defer stop()
+				return conn.Write(bounded, websocket.MessageText, raw)
+			})
+			pendingFrame = nil
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		select {
+		case <-negotiationExpired:
+			negotiationExpired = nil
+			if telemetry.generation == "" {
+				if err = c.resumeLegacySampling(); err != nil {
+					return fmt.Errorf("%w: fallback: %v", errTelemetryStopped, err)
+				}
+				if ack.MetricsVersion != nil {
+					if *ack.MetricsVersion != 1 && *ack.MetricsVersion != 2 {
+						return fmt.Errorf("unsupported metrics version")
+					}
+					c.samples.setOnline(true)
+					defer func() { c.samples.setOnline(false) }()
+					metricsTimer = time.NewTicker(reportInterval)
+					metricsTick = metricsTimer.C
+				}
+			}
+		case <-runnerDone:
+			return fmt.Errorf("%w: %v", errTelemetryStopped, c.telemetry.err)
+		case control := <-controls:
+			if err = telemetry.control(control, send); err != nil {
+				return err
+			}
+		case frame := <-frames:
+			pendingFrame = frame
+		case <-credential.Changed:
+			return errSessionChanged
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-inventory:
@@ -409,14 +527,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 				return err
 			}
 		case <-tick.C:
-			// Ping checks liveness even when no task is pending. Reader handles control frames.
-			pctx, pstop := context.WithTimeout(ctx, 10*time.Second)
-			err = conn.Ping(pctx)
-			pstop()
-			if err != nil {
-				return err
-			}
-			if err = send(v1.Message("node.heartbeat", id.NodeID, ID(), v1.Heartbeat{})); err != nil {
+			if err = heartbeat(); err != nil {
 				return err
 			}
 		case e := <-incoming:
@@ -427,6 +538,20 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			}
 			if count > 120 {
 				return fmt.Errorf("message rate exceeded")
+			}
+			if handled, handleErr := telemetry.handle(e, send); handled {
+				if telemetry.generation != "" && negotiationTimer != nil {
+					negotiationTimer.Stop()
+					negotiationExpired = nil
+				}
+				if handleErr != nil {
+					return handleErr
+				}
+				if telemetry.applied && metricsTimer != nil {
+					metricsTimer.Stop()
+					metricsTick = nil
+				}
+				continue
 			}
 			if e.Type == "node.settings" {
 				var next v1.NodeSettings
@@ -461,12 +586,29 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	}
 }
 
-func (c *Client) waitCollectors() {
-	<-c.samples.done
+func (c *Client) waitCollectors() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var result error
+	wait := func(done <-chan struct{}) {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			result = errors.Join(result, fmt.Errorf("collector shutdown: %w", ctx.Err()))
+		}
+	}
+	if c.samples != nil {
+		wait(c.samples.done)
+	}
 	if c.assets != nil {
-		<-c.assets.done
+		wait(c.assets.done)
 		c.assets = nil
+	}
+	if c.telemetry != nil {
+		result = errors.Join(result, c.telemetry.stop(ctx))
+		c.telemetry = nil
 	}
 	c.samples = nil
 	c.runCtx = nil
+	return result
 }

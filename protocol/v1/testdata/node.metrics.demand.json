@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "message_id": "example-1",
+  "node_id": "node-demo",
+  "type": "node.metrics.demand",
+  "sent_at": "2026-11-02T00:00:00Z",
+  "payload": {
+    "session_generation": "session-1",
+    "demand_revision": 1,
+    "lease_id": "lease-1",
+    "enabled": true,
+    "ttl_seconds": 90
+  }
+}

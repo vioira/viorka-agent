@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestRejectInsecurePanelURL(t *testing.T) {
 	for _, raw := range []string{"http://example.com", "https://alice:pass@example.com", "https://example.com?a=b", "https://example.com/v1"} {
@@ -30,6 +34,26 @@ func TestMetricsIntervalBounds(t *testing.T) {
 		}
 		if n == 0 && c.MetricsIntervalSeconds() != 30 {
 			t.Fatal("default")
+		}
+	}
+}
+
+func TestTelemetryStartupGate(t *testing.T) {
+	for _, value := range []struct {
+		field   string
+		enabled bool
+		valid   bool
+	}{
+		{"", false, true}, {`,"telemetry_v3":false`, false, true}, {`,"telemetry_v3":true`, true, true}, {`,"telemetry_v3":"true"`, false, false},
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		raw := `{"panel_url":"https://panel.example.com","node_name":"test","state_dir":"state"` + value.field + `}`
+		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFile(path)
+		if (err == nil) != value.valid || cfg.TelemetryV3 != value.enabled {
+			t.Fatalf("gate %q: %v %v", value.field, cfg.TelemetryV3, err)
 		}
 	}
 }

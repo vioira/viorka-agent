@@ -32,21 +32,12 @@ func (m *Metrics) sampleHost(ctx context.Context, elapsed float64, valid bool) *
 		}
 		m.diskIO = counters
 	}
-	data, err = m.read(ctx, "net/sockstat")
-	tcp, udp, parseErr := parseSockets(data, "")
-	v6, err6 := m.read(ctx, "net/sockstat6")
-	if err6 == nil {
-		t, u, e := parseSockets(v6, "6")
-		tcp, udp = tcp+t, udp+u
-		err6 = e
-	} else if os.IsNotExist(err6) {
-		// Kernels built without IPv6 have no sockstat6.
-		err6 = nil
-	}
-	if err != nil || parseErr != nil || err6 != nil || tcp > 1048576 || udp > 1048576 {
+	tcp, udp, socketErr := m.sampleSockets(ctx)
+	if socketErr != nil {
 		h.Errors = append(h.Errors, "sockets_unavailable")
 	} else {
-		h.TcpSockets, h.UdpSockets = &tcp, &udp
+		h.TcpSockets = &tcp
+		h.UdpSockets = &udp
 	}
 	count, err := m.processCount(ctx)
 	if err != nil {
@@ -55,6 +46,24 @@ func (m *Metrics) sampleHost(ctx context.Context, elapsed float64, valid bool) *
 		h.Processes = &count
 	}
 	return h
+}
+
+func (m *Metrics) sampleSockets(ctx context.Context) (uint64, uint64, error) {
+	data, err := m.read(ctx, "net/sockstat")
+	tcp, udp, parseErr := parseSockets(data, "")
+	v6, err6 := m.read(ctx, "net/sockstat6")
+	if err6 == nil {
+		t, u, e := parseSockets(v6, "6")
+		tcp += t
+		udp += u
+		err6 = e
+	} else if os.IsNotExist(err6) {
+		err6 = nil
+	}
+	if err != nil || parseErr != nil || err6 != nil || tcp > 1048576 || udp > 1048576 {
+		return 0, 0, fmt.Errorf("socket counters unavailable")
+	}
+	return tcp, udp, nil
 }
 
 func parseDiskIO(data string) (map[string][2]uint64, []string, error) {

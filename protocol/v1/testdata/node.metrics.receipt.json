@@ -1,0 +1,13 @@
+{
+  "version": "1.0",
+  "message_id": "example-1",
+  "node_id": "node-demo",
+  "type": "node.metrics.receipt",
+  "sent_at": "2026-11-02T00:00:00Z",
+  "payload": {
+    "batch_id": "batch-1",
+    "state": "accepted",
+    "accepted_count": 2,
+    "duplicate_count": 0
+  }
+}
