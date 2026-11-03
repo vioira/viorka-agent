@@ -25,6 +25,10 @@ func localFilesystem(kind, point string) bool {
 		return true
 	case "overlay":
 		return point == "/" // Container root, never count nested overlay views.
+	case "zfs":
+		// Include quota-limited container roots. Other datasets can share pool
+		// capacity, so summing every ZFS mount would overstate available space.
+		return point == "/"
 	}
 	return false
 }

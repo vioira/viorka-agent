@@ -26,6 +26,14 @@ curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubuserconten
 
 需要入口脚本和正式 Release 已发布。默认以 root 安装 systemd/OpenRC 后台服务并设置开机自启；无服务管理器时使用 `--foreground` 前台运行。重复执行可更新版本并复用身份，下载失败后可直接重试。详细参数、私有 CA、失败恢复与发布前提见 [安装说明](packaging/README.md)。
 
+一键卸载（保留身份、配置和代理服务；需先发布包含卸载入口的脚本）：
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- uninstall
+```
+
+后台模式以 root 执行；前台安装先停止 Agent，再由原用户追加 `--foreground` 执行卸载。已下载脚本可直接运行 `sh install.sh uninstall`。
+
 ## 使用当前脚手架
 
 源码构建需要 Go 1.26 或以上版本。

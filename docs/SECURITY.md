@@ -29,5 +29,5 @@ Agent 记录 task_id、operation、node_id、observed_revision、error_code、�
 
 ## 卸载安全
 
-- 卸载 Agent = 停止 Agent 守护进程、删除 Agent 本地身份/二进制（需确认），默认**保留用户已运行的代理服务与配置**。
+- `install.sh uninstall` 只停止经归属校验的 Agent 服务并删除其服务文件、二进制及旧版备份，默认**保留本地身份、配置、其他数据和已运行的代理服务**。身份或业务数据删除必须作为独立的显式操作。
 - 删除 Viorka 自管代理进程、清理节点业务数据或服务商映射必须另设显式选项，且保留必要的恢复手段。

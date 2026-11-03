@@ -153,6 +153,14 @@ else:
             calls = (install / "calls").read_text().splitlines() if (install / "calls").exists() else []
             if failure in ("", "existing") and not extra and arch != "riscv64":
                 self.assertEqual(code, 0, output.decode())
+                self.assertIn('安装前检查：未检测到正在运行的 Agent 进程。'.encode(), output)
+                self.assertIn('运行方式：前台'.encode(), output)
+                self.assertIn(b'Ctrl+C', output)
+                self.assertIn(b"--url='https://localhost:8143' --foreground", output)
+                self.assertIn(b'"$HOME/.viorka-agent/viorka-agent" run --config "$HOME/.viorka-agent/agent.json"', output)
+                self.assertNotIn(b'--token=', output)
+                self.assertNotIn(b'systemctl', output)
+                self.assertNotIn(b'rc-service', output)
                 self.assertEqual(calls, ["config-check", "enroll", "run"])
                 config = json.loads((install / "agent.json").read_text())
                 self.assertEqual(config["state_dir"], str(install.resolve() / "state"))
@@ -197,6 +205,9 @@ else:
                 old_binary = (install / "viorka-agent").read_bytes() if (install / "viorka-agent").exists() else None
                 result = subprocess.run(["sh", str(retry_script), "install", "--foreground", "--url=https://localhost:8143", "--version=v0.1.0", *((["--token=" + TOKEN, "--reenroll-node=node-1"] if reenroll else []) if before and failure != "enroll" else ["--token=" + TOKEN])], env=env, capture_output=True, start_new_session=True, timeout=15)
                 self.assertEqual(result.returncode == 0, not retry_failure, result.stderr.decode())
+                if running and not retry_failure:
+                    self.assertIn('安装前检查：检测到 Agent 进程正在运行。'.encode(), result.stdout)
+                    self.assertIn('常用命令'.encode(), result.stdout)
                 after_calls = (install / "calls").read_text().splitlines()[len(calls):]
                 expected = ["config-check"] if running else (["config-check", "run"] if before and failure != "enroll" and not reenroll else ["config-check", "enroll", "run"])
                 if retry_failure:

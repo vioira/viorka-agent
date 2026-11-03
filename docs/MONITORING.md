@@ -91,10 +91,13 @@ Agent 宣告 `node.filesystems.v1`，仅在 Panel 确认 `filesystems_version: 1
 
 读取最多 256 KiB/4096 行 `/proc/self/mountinfo`，候选挂载最多 128 个，输出最多
 32 个文件系统，路径最多 512 字节。采集 ext2/3/4、XFS、Btrfs、F2FS、JFS、
-ReiserFS、NILFS2、bcachefs、VFAT、exFAT、NTFS3；容器允许根 overlay。
+ReiserFS、NILFS2、bcachefs、VFAT、exFAT、NTFS3；另支持根 overlay 和根 ZFS。
+ZFS 仅读取 `/` 的 statfs 容量（包括 Incus/LXC 的配额根数据集），不调用 zfs/zpool，
+不要求容器安装 ZFS 工具。排除其他 ZFS 挂载，避免绑定别名及共享池空间的数据集重复汇总；
+该值表示内核暴露给根文件系统的容量，不表示整个 ZFS 池或物理磁盘容量。
 排除 tmpfs/devtmpfs、网络/FUSE/autofs、嵌套 overlay 及单文件挂载。
 按设备号及 statfs 文件系统 ID 去重，Btrfs 另按挂载源去重子卷，优先根目录和
-最短路径；不表示物理磁盘容量，不包括未挂载磁盘或未支持文件系统（如 ZFS 池）。
+最短路径；不表示物理磁盘容量，不包括未挂载磁盘或未支持的文件系统。
 不递归扫描、不执行 Shell、不改变挂载。每次系统调用前后检查取消；本地内核 I/O
 异常仍可能延迟 statfs，未声称提供可强制中断内核调用的硬超时。
 

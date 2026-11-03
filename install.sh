@@ -97,7 +97,9 @@ RC
         elif [ -d /run/openrc ] && [ -x /sbin/openrc-run ] && command -v rc-service >/dev/null; then
             service_manager=openrc
             service_file=/etc/init.d/viorka-agent
-            for tool in rc-update supervise-daemon logger; do
+            service_tools='rc-update supervise-daemon logger'
+            [ "$action" != uninstall ] || service_tools=rc-update
+            for tool in $service_tools; do
                 command -v "$tool" >/dev/null || fail "OpenRC 后台服务需要 $tool。"
             done
             [ ! -e /etc/conf.d/viorka-agent ] && [ ! -L /etc/conf.d/viorka-agent ] || fail '已有 OpenRC 配置，拒绝接管。'
@@ -105,7 +107,7 @@ RC
             fail '未检测到运行中的 systemd/OpenRC；请使用 install --foreground 或外部 supervisor。'
         fi
         if [ -e "$service_file" ] || [ -L "$service_file" ]; then
-            [ "$action" = install ] || fail '服务文件已存在，请使用服务管理器管理。'
+            [ "$action" = install ] || [ "$action" = uninstall ] || fail '服务文件已存在，请使用服务管理器管理。'
             [ -f "$service_file" ] && [ ! -L "$service_file" ] || fail '服务文件不安全。'
             [ "$(stat -c %u "$service_file")" = 0 ] || fail '服务文件必须归 root 所有。'
             mode=$(stat -c %a "$service_file")
@@ -127,6 +129,144 @@ RC
             timeout 45 rc-service viorka-agent restart && timeout 15 rc-service viorka-agent status
         fi
     }
+    uninstall_agent() {
+        [ "$(uname -s)" = Linux ] || fail '卸载脚本仅支持 Linux。'
+        case "${HOME:-}" in /*) ;; *) fail 'HOME 必须为绝对路径。' ;; esac
+        plain_text "$HOME"
+        for tool in stat readlink cmp; do
+            command -v "$tool" >/dev/null || fail "卸载需要 $tool。"
+        done
+        # Reject symlinked ancestors as well as the individual deletion targets.
+        [ "$(cd "$HOME" && pwd -P)" = "$HOME" ] || fail 'HOME 必须是无符号链接的规范路径。'
+        install_dir="$HOME/.viorka-agent"
+        for path in "$HOME" "$install_dir" "$install_dir/viorka-agent" "$install_dir/viorka-agent.previous"; do
+            [ ! -L "$path" ] || fail '卸载路径不能包含符号链接。'
+            if [ -e "$path" ]; then
+                case "$path" in
+                    "$HOME"|"$install_dir") [ -d "$path" ] || fail '安装路径不是目录。' ;;
+                    *) [ -f "$path" ] || fail 'Agent 程序不是普通文件。' ;;
+                esac
+                [ "$(stat -c %u "$path")" = "$(id -u)" ] || fail '卸载路径必须归当前用户所有。'
+                mode=$(stat -c %a "$path")
+                case "$mode" in *[2367][0-7]|*[0-7][2367]) fail '卸载路径不能允许组或其他用户写入。' ;; esac
+            fi
+        done
+        # Serialize with install/update; never create a missing installation.
+        if [ -d "$install_dir" ]; then
+            cd "$install_dir"
+            mkdir .install-lock 2>/dev/null || fail '另一个安装或卸载正在进行；请确认无安装进程后再处理残留锁。'
+            trap 'rmdir .install-lock' 0
+            trap 'exit 1' 1 2 15
+        fi
+        [ -d /proc ] && readlink /proc/self/exe >/dev/null || fail '无法检查 /proc 中的 Agent 进程，停止卸载。'
+        if [ "$foreground" -eq 0 ]; then
+            service_preflight
+            # Privileged service removal is limited to trusted parent directories.
+            path=$(dirname "$service_file")
+            while [ "$path" != / ]; do
+                [ "$(cd "$path" && pwd -P)" = "$path" ] || fail '服务目录包含符号链接。'
+                [ "$(stat -c %u "$path")" = 0 ] || fail '服务目录必须归 root 所有。'
+                mode=$(stat -c %a "$path")
+                case "$mode" in *[2367][0-7]|*[0-7][2367]) fail '服务目录权限不安全。' ;; esac
+                path=$(dirname "$path")
+            done
+            if [ "$existing_service" -eq 1 ]; then
+                printf '正在停止 Agent 服务并取消开机自启（%s）...\n' "$service_manager"
+                if [ "$service_manager" = systemd ]; then
+                    timeout 45 systemctl stop viorka-agent.service || fail '停止 Agent 服务失败，保留服务文件和程序。'
+                    active_state=$(timeout 15 systemctl show viorka-agent.service -p ActiveState --value) || fail '无法确认 Agent 已停止，保留服务文件和程序。'
+                    case "$active_state" in inactive|failed) ;; *) fail 'Agent 服务尚未停止，保留服务文件和程序。' ;; esac
+                    timeout 30 systemctl disable viorka-agent.service || fail '取消 Agent 开机自启失败，保留服务文件和程序。'
+                else
+                    timeout 45 rc-service viorka-agent stop || fail '停止 Agent 服务失败，保留服务文件和程序。'
+                    status_code=0
+                    timeout 15 rc-service viorka-agent status || status_code=$?
+                    [ "$status_code" -eq 3 ] || fail '无法确认 OpenRC Agent 已停止，保留服务文件和程序。'
+                    for link in /etc/runlevels/*/viorka-agent; do
+                        if [ -e "$link" ] || [ -L "$link" ]; then
+                            timeout 30 rc-update -a del viorka-agent || fail '取消 Agent 开机自启失败，保留服务文件和程序。'
+                            break
+                        fi
+                    done
+                fi
+            fi
+            if [ "$service_manager" = openrc ]; then
+                for link in /etc/runlevels/*/viorka-agent; do
+                    [ ! -e "$link" ] && [ ! -L "$link" ] || fail '仍有 Agent 开机自启链接，保留文件并停止卸载。'
+                done
+            fi
+        elif [ "$HOME" = /root ]; then
+            for path in /etc/systemd/system/viorka-agent.service /etc/init.d/viorka-agent /etc/conf.d/viorka-agent; do
+                [ ! -e "$path" ] && [ ! -L "$path" ] || fail '检测到后台 Agent 服务，请使用 uninstall（不加 --foreground）。'
+            done
+        fi
+        for proc in /proc/[0-9]*/exe; do
+            executable=$(readlink "$proc" 2>/dev/null || :)
+            case "$executable" in
+                "$install_dir/viorka-agent"|"$install_dir/viorka-agent (deleted)"|"$install_dir/viorka-agent.previous"|"$install_dir/viorka-agent.previous (deleted)")
+                    fail '仍有 Agent 进程运行，请通过原终端或 supervisor 停止后重试；未删除程序。' ;;
+            esac
+        done
+        if [ "$foreground" -eq 0 ]; then
+            if [ "$existing_service" -eq 1 ]; then
+                rm "$service_file" || fail '删除 Agent 服务文件失败，程序已保留。'
+            fi
+            if [ "$service_manager" = systemd ]; then
+                timeout 30 systemctl daemon-reload || fail '刷新 systemd 失败；服务文件可能已移除，程序已保留，请重试卸载。'
+            fi
+        fi
+        rm -f "$install_dir/viorka-agent" "$install_dir/viorka-agent.previous" || fail '删除 Agent 程序失败，请检查权限后重试。'
+        printf 'Agent 卸载完成（重复执行安全）。\n配置、身份和其他数据保留在：%s\n未停止或删除代理服务、代理配置及服务商映射；Panel 节点记录需在面板单独处理。\n' "$install_dir"
+    }
+    print_commands() {
+        printf '\n常用命令（请使用本次安装用户执行）：\n'
+        case "${service_manager:-foreground}" in
+            systemd)
+                printf '  服务管理：systemd\n'
+                printf '  启动：systemctl start viorka-agent\n'
+                printf '  停止：systemctl stop viorka-agent\n'
+                printf '  重启：systemctl restart viorka-agent\n'
+                printf '  状态：systemctl status viorka-agent\n'
+                printf '  最近日志：journalctl -u viorka-agent -n 100 --no-pager\n'
+                printf '  实时日志：journalctl -u viorka-agent -f\n'
+                ;;
+            openrc)
+                printf '  服务管理：OpenRC\n'
+                printf '  启动：rc-service viorka-agent start\n'
+                printf '  停止：rc-service viorka-agent stop\n'
+                printf '  重启：rc-service viorka-agent restart\n'
+                printf '  状态：rc-service viorka-agent status\n'
+                printf "  最近日志：grep 'viorka-agent' /var/log/messages | tail -n 100\n"
+                printf "  实时日志：tail -f /var/log/messages | grep 'viorka-agent'\n"
+                printf "  若 syslog 使用内存缓冲区：logread -f | grep 'viorka-agent'\n"
+                printf '  日志由 logger 写入系统 syslog，需运行 syslog 服务；文件位置取决于 syslog 配置。\n'
+                ;;
+            foreground)
+                printf '  运行方式：前台\n'
+                printf '  启动："$HOME/.viorka-agent/viorka-agent" run --config "$HOME/.viorka-agent/agent.json"\n'
+                printf '  停止：在运行 Agent 的终端按 Ctrl+C；若由外部 supervisor 管理，请使用其停止命令。\n'
+                printf '  重启：停止后重新执行启动命令；若由外部 supervisor 管理，请使用其重启命令。\n'
+                printf '  运行日志：直接显示在运行 Agent 的终端；外部 supervisor 的日志请按其配置查看。\n'
+                ;;
+        esac
+        printf '\n更新 Agent（保留配置和身份，无需注册令牌）：\n'
+        if [ -z "$panel_url" ]; then
+            printf '  请将下面的 https://panel.example.com 替换为面板地址。\n'
+        fi
+        # panel_url is a validated HTTPS origin; never include enrollment credentials.
+        printf "  curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- install --url='%s'" "${panel_url:-https://panel.example.com}"
+        [ "$foreground" -eq 0 ] || printf ' --foreground'
+        printf '\n  默认更新至最新正式版；指定版本可在命令末尾追加 --version=vX.Y.Z。\n'
+        if [ "$foreground" -eq 0 ]; then
+            printf '  更新成功后自动重启 Agent 服务。\n'
+        else
+            printf '  已运行的前台进程需自行重启才能使用新版。\n'
+        fi
+        printf '\n卸载 Agent（保留配置、身份和代理服务）：\n'
+        printf "  curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- uninstall"
+        [ "$foreground" -eq 0 ] || printf ' --foreground'
+        printf '\n\nPanel 在线状态：请查看面板，或确认日志出现 Panel connected; session established。\n\n'
+    }
     install_service() {
         if [ "${existing_service:-0}" -eq 1 ]; then
             if [ "$service_manager" = systemd ]; then
@@ -135,7 +275,8 @@ RC
                 timeout 30 rc-update add viorka-agent default || fail '设置 Agent 服务失败。'
             fi
             restart_service || fail '新版 Agent 服务启动失败。'
-            printf 'Agent 服务已重启；Panel 在线状态请查看面板或连接日志。\n'
+            printf '\nAgent 服务已重启。\n'
+            print_commands
             return
         fi
         # Do not clobber existing files, including dangling symlinks, on retries.
@@ -144,21 +285,24 @@ RC
             chmod 644 "$service_file"
             timeout 30 systemctl daemon-reload && timeout 45 systemctl enable --now viorka-agent.service &&
                 timeout 15 systemctl is-active --quiet viorka-agent.service || fail '服务启动失败；身份已保留，请运行 journalctl -u viorka-agent 检查，勿重新注册。'
-            printf 'Agent 后台服务已启动并设置开机自启；Panel 是否在线请查看面板或连接成功日志。\n日志：journalctl -u viorka-agent -f\n'
         else
             (set -C; render_service > "$service_file") || fail '创建 OpenRC 服务失败，身份已保留。'
             chmod 755 "$service_file"
             timeout 30 rc-update add viorka-agent default && timeout 45 rc-service viorka-agent start &&
                 timeout 15 rc-service viorka-agent status || fail '服务启动失败；身份已保留，请检查 rc-service viorka-agent status 和系统日志，勿重新注册。'
-            printf 'Agent 后台服务已启动并设置开机自启；Panel 是否在线请查看面板或连接成功日志。\n日志：系统 syslog 中的 viorka-agent 标签（常见 /var/log/messages 或 logread）；需运行 syslog 服务。\n'
         fi
+        printf '\nAgent 后台服务已启动并设置开机自启。\n'
+        print_commands
     }
     action=${1:-}
-    case "$action" in install|service) ;; *) fail '用法：sh install.sh install --url=https://panel.example.com [--token=TOKEN] [--version=vX.Y.Z] [--ca-file=/path/ca.pem] [--foreground] [--reenroll-node=ID]；已有安装转后台：sh install.sh service' ;; esac
+    case "$action" in install|service|uninstall) ;; *) fail '用法：sh install.sh install --url=https://panel.example.com [--token=TOKEN] [--version=vX.Y.Z] [--ca-file=/path/ca.pem] [--foreground] [--reenroll-node=ID]；已有安装转后台：sh install.sh service；卸载：sh install.sh uninstall [--foreground]' ;; esac
     shift
     panel_url= release_tag= ca_file= enrollment_token= token_supplied=0 foreground=0 reenroll_node=
     for arg do
         plain_text "$arg"
+        if [ "$action" = uninstall ]; then
+            [ "$arg" = --foreground ] || fail 'uninstall 仅接受可选的 --foreground，不接受安装参数。'
+        fi
         case "$arg" in
             --foreground) foreground=1 ;;
             --reenroll-node=*) reenroll_node=${arg#*=} ;;
@@ -174,10 +318,17 @@ RC
     done
     unset arg
     set --
+    if [ "$action" = uninstall ]; then
+        uninstall_agent
+        return
+    fi
     if [ "$action" = service ]; then
         [ -z "$panel_url$release_tag$ca_file$enrollment_token$reenroll_node" ] && [ "$token_supplied" -eq 0 ] && [ "$foreground" -eq 0 ] || fail 'service 不接受安装参数。'
         service_preflight
         cd /root/.viorka-agent
+        mkdir .install-lock 2>/dev/null || fail '另一个安装或卸载正在进行，请稍后重试。'
+        trap 'rmdir .install-lock' 0
+        trap 'exit 1' 1 2 15
         for path in viorka-agent agent.json state state/identity.json; do
             [ -e "$path" ] && [ ! -L "$path" ] || fail '已有安装不完整或包含符号链接。'
             [ "$(stat -c %u "$path")" = 0 ] || fail '已有安装必须归 root 所有。'
@@ -300,7 +451,11 @@ RC
         executable=$(readlink "$proc" 2>/dev/null || :)
         case "$executable" in "$install_dir/viorka-agent"|"$install_dir/viorka-agent (deleted)") running=1 ;; esac
     done
-    printf 'Agent 进程状态：%s（1=运行中，0=未检测到）。\n' "$running"
+    if [ "$running" -eq 1 ]; then
+        printf '安装前检查：检测到 Agent 进程正在运行。\n'
+    else
+        printf '安装前检查：未检测到正在运行的 Agent 进程。\n'
+    fi
     [ "$running" -eq 0 ] || [ "$registered" -eq 1 ] || fail 'Agent 正在运行但身份不完整，请先检查已有进程。'
     if [ "$running" -eq 1 ] && [ "$foreground" -eq 0 ] && [ "${existing_service:-0}" -eq 0 ]; then
         fail '检测到未由本安装器服务管理的 Agent，请先停止前台进程再转为后台。'
@@ -373,8 +528,10 @@ RC
     trap - 0 1 2 15
     if [ "$running" -eq 1 ]; then
         printf '磁盘上的 Agent 已更新；已有进程继续运行旧版本，请通过原 supervisor 或终端重启。\n'
+        print_commands
         return
     fi
+    print_commands
     printf '注册完成，正在前台连接 Panel。请保持终端运行；是否在线以面板状态为准。\n'
     exec ./viorka-agent run --config "$install_dir/agent.json"
 }

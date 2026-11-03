@@ -40,19 +40,31 @@ curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubuserconten
 systemd：
 
 ```sh
-systemctl status viorka-agent
-journalctl -u viorka-agent -f
+systemctl start viorka-agent
+systemctl stop viorka-agent
 systemctl restart viorka-agent
+systemctl status viorka-agent
+journalctl -u viorka-agent -n 100 --no-pager
+journalctl -u viorka-agent -f
 ```
 
 OpenRC：
 
 ```sh
-rc-service viorka-agent status
+rc-service viorka-agent start
+rc-service viorka-agent stop
 rc-service viorka-agent restart
+rc-service viorka-agent status
 # 日志由 logger 写入系统 syslog，需启用 syslog 服务；常见查看方式：
-tail -f /var/log/messages
+grep 'viorka-agent' /var/log/messages | tail -n 100
+tail -f /var/log/messages | grep 'viorka-agent'
+# 若 syslog 使用内存缓冲区：
+logread -f | grep 'viorka-agent'
 ```
+
+安装和更新成功后，安装器会按实际使用的 systemd、OpenRC 或前台模式输出管理及日志命令。开头的进程检查明确标注为「安装前检查」，不代表安装后的状态。OpenRC 日志文件位置取决于系统 syslog 配置。
+
+输出中的更新命令不含注册令牌，复用现有配置和身份，默认选择最新正式版，也可追加 `--version=vX.Y.Z`。后台模式更新成功后自动重启 Agent；前台模式保留 `--foreground`，已有进程需自行重启。单独执行 `sh install.sh service` 时未提供面板地址，输出的更新命令使用 `https://panel.example.com` 占位并提示替换。请使用原安装用户执行这些命令；后台模式为 root。
 
 日志轮转和保留上限由系统 journald/syslog 配置负责；安装器不创建无界追加日志文件。服务启动失败保留身份及服务文件并返回非零状态，排查后通过上述管理命令恢复，不要重新注册。支持手动重复安装更新，无定时自动更新功能。
 
@@ -62,8 +74,23 @@ tail -f /var/log/messages
 "$HOME/.viorka-agent/viorka-agent" run --config "$HOME/.viorka-agent/agent.json"
 ```
 
-停止/移除 Agent 服务不删除身份或代理配置。卸载时先停止并禁用 Agent 服务（systemd：`systemctl disable --now viorka-agent`；OpenRC：`rc-service viorka-agent stop`、`rc-update del viorka-agent default`），然后仅移除确认由此安装器创建的 Agent 服务文件；systemd 需 `systemctl daemon-reload`。保留数据目录与代理服务，任何数据删除单独决定。
+一键卸载（后台模式以 root、HOME=/root 执行；需先发布包含 `uninstall` 的脚本）：
 
-安装器回归测试：`python3 scripts/test_install.py`。使用真实 shell、PTY、文件权限与 SHA-256，下载/平台/Agent 可执行文件使用本地 fixtures；不访问生产数据，不替代真实 Linux Release 安装验收。
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' \
+  'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' \
+  | sh -s -- uninstall
+```
 
-SHA-256 用于完整性校验，发布来源依赖 GitHub HTTPS 与仓库发布权限；独立签名验证和真实 VPS Release 安装验收尚未完成。服务测试 `python3 scripts/test_services.py` 使用临时目录验证文件保护及错误处理；CI 中 `scripts/test_services_linux.sh` 使用真实 Ubuntu systemd 和 Alpine OpenRC 验证启动、崩溃恢复、停止与身份保留（Agent 进程为本地 fixture）。该脚本仅允许在可丢弃的 root 测试环境运行，不用于生产主机。
+也可下载、审阅脚本后执行 `sh install.sh uninstall`。不需要面板地址、Token 或下载 Agent 二进制。安装后的命令提示也包含卸载入口。
+
+- 自动识别运行中的 systemd / OpenRC，只处理与本安装器模板完全匹配的 `viorka-agent` 服务；自定义服务、systemd drop-in、不安全路径或权限均拒绝操作。
+- 先停止 Agent 并确认停止，再取消开机自启（OpenRC 清理所有 runlevel 中该服务的链接）、移除 Agent 服务文件及 `viorka-agent` / `viorka-agent.previous`。systemd 同步执行 daemon-reload。
+- 默认保留整个数据目录中的配置、身份、Journal 和其他数据，不停止或删除代理服务、代理配置、服务商映射，也不删除 Panel 节点记录。不提供隐式清空数据选项。
+- 与安装/更新共用 `.install-lock`，可重复执行。停止、状态检查或取消自启失败均返回非零并保留服务文件和程序；删除服务后刷新 systemd 失败时保留程序，修复后可重试。失败前已完成的停止或禁用操作不会自动撤销。
+- 前台安装由原用户先停止 Agent / 外部 supervisor，然后执行 `sh install.sh uninstall --foreground`（远程命令同样追加 `--foreground`）。脚本检查 `/proc` 中当前安装路径的进程；仍在运行时拒绝删除，不使用进程名批量杀进程。无法读取 `/proc/self/exe` 时拒绝卸载。
+- 后台卸载要求 Linux、root、HOME=/root、运行中的服务管理器及 stat/readlink/cmp/timeout 等基础工具。若服务被手动改动、迁到其他目录或使用其他 supervisor，需按实际配置手动卸载。
+
+安装器回归测试：`python3 scripts/test_install.py`；卸载回归测试：`python3 scripts/test_uninstall.py`。使用真实 shell、PTY、文件权限与 SHA-256，下载/平台/Agent 可执行文件使用本地 fixtures；卸载测试使用临时目录和服务管理器、`/proc` fixtures，覆盖保留数据、拒绝第三方服务、停止失败、残留进程、锁及重复卸载。不访问生产数据，不替代真实 Linux Release 安装验收。
+
+SHA-256 用于完整性校验，发布来源依赖 GitHub HTTPS 与仓库发布权限；独立签名验证和真实 VPS Release 安装验收尚未完成。服务测试 `python3 scripts/test_services.py` 使用临时目录验证文件保护及错误处理；CI 中 `scripts/test_services_linux.sh` 使用真实 Ubuntu systemd 和 Alpine OpenRC 验证启动、崩溃恢复、停止、卸载、身份保留及无关进程存活（Agent 进程为本地 fixture）。该脚本仅允许在可丢弃的 root 测试环境运行，不用于生产主机。

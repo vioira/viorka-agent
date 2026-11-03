@@ -4,6 +4,7 @@
 The separate Linux smoke test exercises real service managers.
 """
 import os
+import re
 import sys
 from pathlib import Path
 import subprocess
@@ -73,8 +74,7 @@ exit 0
                 service.symlink_to(root / 'missing')
             script = (ROOT / 'install.sh').read_text()
             # Relocate only fixed filesystem constants, never add installer override knobs.
-            for prefix in ('/root', '/etc', '/run', '/sbin'):
-                script = script.replace(prefix, str(root) + prefix)
+            script = re.sub(r'/(?:root|etc|run|sbin)\b', lambda match: str(root) + match[0], script)
             local = root / 'install.sh'
             local.write_text(script)
             calls = root / 'calls'
@@ -84,6 +84,7 @@ exit 0
             if failure:
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertNotIn('后台服务已启动'.encode(), result.stdout)
+                self.assertNotIn('常用命令'.encode(), result.stdout)
                 if failure == 'existing':
                     self.assertEqual(service.read_text(), 'do not touch')
                 if failure == 'symlink':
@@ -94,6 +95,8 @@ exit 0
             else:
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 self.assertIn('后台服务已启动'.encode(), result.stdout)
+                self.assert_commands(result.stdout, manager)
+                self.assertIn('替换为面板地址'.encode(), result.stdout)
                 self.assertTrue(service.exists())
                 self.assertIn(str(install), service.read_text())
                 self.assertEqual(service.stat().st_mode & 0o777, 0o644 if manager == 'systemd' else 0o755)
@@ -127,6 +130,25 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                         self.assertEqual(agent.read_bytes(), old_binary)
                     else:
                         self.assertIn(b'new release', agent.read_bytes())
+                        self.assert_commands(result.stdout, manager)
+                        self.assertIn(b"--url='https://localhost'", result.stdout)
+
+    def assert_commands(self, output, manager):
+        for action in ('start', 'stop', 'restart', 'status'):
+            command = f'systemctl {action} viorka-agent' if manager == 'systemd' else f'rc-service viorka-agent {action}'
+            self.assertIn(command.encode(), output)
+        if manager == 'systemd':
+            self.assertIn(b'journalctl -u viorka-agent -n 100 --no-pager', output)
+            self.assertIn(b'journalctl -u viorka-agent -f', output)
+            self.assertNotIn(b'rc-service', output)
+        else:
+            self.assertIn(b"tail -f /var/log/messages | grep 'viorka-agent'", output)
+            self.assertIn(b"logread -f | grep 'viorka-agent'", output)
+            self.assertNotIn(b'systemctl', output)
+        self.assertIn(b'install.sh\' | sh -s -- install --url=', output)
+        self.assertNotIn(b'--token=', output)
+        self.assertNotIn(b'--foreground', output)
+        self.assertIn(b'Panel connected; session established', output)
 
     def test_service_modes(self):
         for manager in ('systemd', 'openrc'):

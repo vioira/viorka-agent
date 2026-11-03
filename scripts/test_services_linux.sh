@@ -73,4 +73,28 @@ fi
 sleep 2
 if kill -0 "$(cat "$agent_dir/fixture.pid")" 2>/dev/null; then exit 1; fi
 test "$(cat "$agent_dir/state/identity.json")" = 'preserved identity'
-echo 'Service start, repeated update, respawn, stop and identity preservation passed'
+# Exercise uninstall against the real supervisor while an unrelated process lives.
+sleep 120 &
+unrelated_pid=$!
+trap 'kill "$unrelated_pid" 2>/dev/null || :; wait "$unrelated_pid" 2>/dev/null || :' 0
+if [ -d /run/systemd/system ]; then
+    systemctl start viorka-agent
+else
+    rc-service viorka-agent start
+fi
+sleep 2
+agent_pid=$(cat "$agent_dir/fixture.pid")
+kill -0 "$agent_pid"
+sh install.sh uninstall
+if kill -0 "$agent_pid" 2>/dev/null; then exit 1; fi
+kill -0 "$unrelated_pid"
+test ! -e "$agent_dir/viorka-agent"
+test ! -e "$agent_dir/viorka-agent.previous"
+test ! -e /etc/systemd/system/viorka-agent.service
+test ! -e /etc/init.d/viorka-agent
+test ! -L /etc/runlevels/default/viorka-agent
+test "$(cat "$agent_dir/state/identity.json")" = 'preserved identity'
+test "$(cat "$agent_dir/agent.json")" = '{}'
+sh install.sh uninstall
+kill -0 "$unrelated_pid"
+echo 'Service start, update, respawn, stop, uninstall and data preservation passed'

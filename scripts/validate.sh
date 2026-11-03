@@ -8,6 +8,7 @@ fi
 sh -n install.sh
 python3 scripts/test_install.py
 python3 scripts/test_services.py
+python3 scripts/test_uninstall.py
 python3 scripts/test_release.py
 go test ./...
 go vet ./...
