@@ -262,3 +262,80 @@ func TestTelemetryHealthyPOSTJitterPreservesWindow(t *testing.T) {
 	}
 	s.finish(second, next.Add(time.Millisecond), "", 0)
 }
+
+func TestTelemetryReconnectRestoresCachedGroupsBeforeNextTick(t *testing.T) {
+	s, start := scheduleFixture(t, v1.DefaultTelemetrySettings())
+	batch := windowFixture(t)
+	for _, value := range []any{batch.Fast[0], batch.Full[0], &v1.TelemetryPublicIP{Sequence: 1, SampledAt: start, Ipv4: "8.8.8.8", Errors: []string{"ipv6_unavailable"}}} {
+		if err := s.window.add(value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The previous samples were already sent; only the immutable latest cache remains.
+	s.window.collapse()
+	s.disconnect(start)
+	at := start.Add(5 * time.Second)
+	if err := s.reconnected(2, "restarted-panel", at); err != nil {
+		t.Fatal(err)
+	}
+	send := s.take(at)
+	if send == nil || !send.attempt.HTTP || len(send.flight.samples) != 3 {
+		t.Fatal("reconnect did not immediately restore all cached groups")
+	}
+	for _, sample := range send.flight.samples {
+		cached := s.window.latest[sample.kind]
+		if sample.sequence != cached.sequence || string(sample.raw) != string(cached.raw) {
+			t.Fatal("reconnect changed observation identity or timestamp")
+		}
+	}
+	if s.take(at) != nil {
+		t.Fatal("overlapping reconnect send")
+	}
+	s.finish(send, at, "", 0)
+	// A repeated settings/ready acknowledgement on this same connection must not
+	// schedule another cached snapshot after the normal retry budget expires.
+	if err := s.reconnected(2, "restarted-panel", at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if s.take(at.Add(time.Minute)) != nil {
+		t.Fatal("same connection scheduled another bootstrap")
+	}
+}
+
+func TestTelemetryReconnectSnapshotRespectsRetryBudget(t *testing.T) {
+	for _, code := range []string{"", "rate_limited", "session_invalid"} {
+		t.Run(code, func(t *testing.T) {
+			s, start := scheduleFixture(t, v1.DefaultTelemetrySettings())
+			if err := s.window.add(windowFixture(t).Fast[0]); err != nil {
+				t.Fatal(err)
+			}
+			s.postWanted = true
+			first := s.take(start)
+			if first == nil {
+				t.Fatal("missing first upload")
+			}
+			s.finish(first, start, code, 90*time.Second)
+			s.disconnect(start)
+			at := start.Add(5 * time.Second)
+			if err := s.reconnected(2, "new-panel", at); err != nil {
+				t.Fatal(err)
+			}
+			if s.take(at) != nil {
+				t.Fatal("reconnect bypassed pacing or rejection")
+			}
+			if code == "session_invalid" {
+				if s.take(start.Add(10*time.Minute)) != nil {
+					t.Fatal("reconnect bypassed blocked identity")
+				}
+				return
+			}
+			eligible := s.retry.earliest(true)
+			if s.take(eligible.Add(-time.Nanosecond)) != nil {
+				t.Fatal("early retry")
+			}
+			if s.take(eligible) == nil {
+				t.Fatal("snapshot waited for a cadence tick after budget became available")
+			}
+		})
+	}
+}

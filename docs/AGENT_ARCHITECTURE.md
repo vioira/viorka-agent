@@ -85,3 +85,9 @@ Agent 不转发用户的代理业务流量；由 Xray、sing-box、Realm 承担�
 - `internal/state` 初期可使用文件/受控嵌入数据存储，任务日志有容量限制和原子写入要求。
 
 详见 [RUNTIMES.md](RUNTIMES.md) 和 [ENROLLMENT.md](ENROLLMENT.md)。
+
+### Panel 重连后的监控补报
+
+完成新连接的 telemetry ready 和设置确认后，调度器立即排入一次监控补报，不再等待下一个 HTTP 上报周期触发。已缓存的 fast/full/public IP 随窗口发送，保留原始采样时间、序号和 run；不重建采集基线、不将旧采样改成当前时间。同一连接的重复确认不额外安排补报。
+
+补报仍受单一在途请求、POST 最小间隔、Retry-After、退避及身份阻断约束：预算允许时立即发送，否则在预算恢复后发送。重连本身不清除限流和熔断，不能承诺所有情况下数秒恢复。此改动需更新 Agent；Panel 的实时快照仍为内存缓存，数据库与协议不变。

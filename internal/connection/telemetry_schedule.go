@@ -229,6 +229,7 @@ func (s *telemetrySchedule) nextWake(now time.Time) time.Time {
 // reconnected is called only after ready and persisted settings are accepted.
 // Local token generation and server WSS generation are distinct identities.
 func (s *telemetrySchedule) reconnected(generation uint64, serverGeneration string, now time.Time) error {
+	reconnected := generation > s.retry.generation || s.lease.generation != serverGeneration || !s.lease.connected
 	if generation < s.retry.generation {
 		return fmt.Errorf("stale telemetry credentials")
 	}
@@ -242,5 +243,11 @@ func (s *telemetrySchedule) reconnected(generation uint64, serverGeneration stri
 	}
 	s.retry.negotiated(generation)
 	s.mode(now)
+	if reconnected {
+		// Restore the Panel's volatile snapshot without waiting for the next
+		// cadence tick. take still enforces in-flight ownership and all retry
+		// budgets; cached groups keep their original observation identities.
+		s.postWanted = true
+	}
 	return nil
 }
