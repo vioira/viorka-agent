@@ -37,7 +37,7 @@ func (t *TelemetryFull) Sample(ctx context.Context, at time.Time) (*v1.Telemetry
 		return nil, fmt.Errorf("invalid full sequence or sample time")
 	}
 	t.sequence++
-	f := &v1.TelemetryFull{Sequence: t.sequence, SampledAt: at.UTC(), Filesystems: []*v1.TelemetryFilesystem{}, DiskIo: []*v1.TelemetryDiskIO{}, Errors: []string{}}
+	f := &v1.TelemetryFull{Sequence: t.sequence, SampledAt: at.UTC(), Filesystems: []*v1.TelemetryFilesystem{}, Errors: []string{}}
 	elapsed := at.Sub(t.previous).Seconds()
 	if !t.previous.IsZero() && elapsed > 0 && elapsed <= 600 {
 		f.ElapsedSeconds = elapsed
@@ -91,7 +91,7 @@ func (t *TelemetryFull) Sample(ctx context.Context, at time.Time) (*v1.Telemetry
 		t.disk.previous = time.Time{}
 	}
 	if err != nil {
-		f.DiskIo = []*v1.TelemetryDiskIO{}
+		f.DiskIo = nil
 		f.Errors = append(f.Errors, "disk_io_unavailable")
 	}
 	if ctx.Err() == nil {

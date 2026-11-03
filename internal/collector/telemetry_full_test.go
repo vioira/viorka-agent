@@ -27,6 +27,7 @@ func TestTelemetryFullContractAndIsolation(t *testing.T) {
 	full := NewTelemetryFull()
 	full.source = m
 	full.disk.source = m
+	full.disk.sysRoot = diskSysFixture(t, "sda")
 	full.readRelease = func(string) ([]byte, error) { return []byte("ID=test\nPRETTY_NAME=Test Linux\nVERSION_ID=1"), nil }
 	fail := false
 	calls := 0
@@ -67,7 +68,7 @@ func TestTelemetryFullContractAndIsolation(t *testing.T) {
 	write("diskstats", diskFixture(diskCounters{220, 440, 70, 140, 640, 2460, 31000}))
 	at = at.Add(60 * time.Second)
 	next := sample()
-	if next.Sequence != 2 || next.ElapsedSeconds != 60 || *next.DiskIo[0].ReadIops != 1 {
+	if next.Sequence != 2 || next.ElapsedSeconds != 60 || *next.DiskIo.ReadIops != 1 {
 		t.Fatal(next)
 	}
 	fail = true

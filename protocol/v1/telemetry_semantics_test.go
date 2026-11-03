@@ -94,7 +94,7 @@ func TestTelemetrySemanticCompleteGroups(t *testing.T) {
 		g.DiskUsed = u(20)
 		g.DiskAvailable = u(70)
 		g.Filesystems = []*TelemetryFilesystem{{Identity: "8:1", MountPoint: "/", FilesystemType: "ext4", TotalBytes: 100, UsedBytes: 20, AvailableBytes: 70}}
-		g.DiskIo = []*TelemetryDiskIO{{Device: "8:0", ReadBytes: 0, WriteBytes: 0, ReadBytesPerSecond: n(0), WriteBytesPerSecond: n(0), ReadIops: n(0), WriteIops: n(0), UtilPercent: n(0), Quality: []string{}}}
+		g.DiskIo = &TelemetryDiskIO{ReadBytesPerSecond: n(0), WriteBytesPerSecond: n(0), ReadIops: n(0), WriteIops: n(0), UtilPercent: n(0), Quality: []string{}}
 		b.PublicIp = []*TelemetryPublicIP{{Sequence: 1, SampledAt: now, Ipv4: "8.8.8.8", Errors: []string{"ipv6_unavailable"}}}
 		return b
 	}
@@ -116,9 +116,9 @@ func TestTelemetrySemanticCompleteGroups(t *testing.T) {
 		{"reserved blocks overflow", func(b *TelemetryBatch) { b.Full[0].Filesystems[0].AvailableBytes = 81 }},
 		{"unclean mount", func(b *TelemetryBatch) { b.Full[0].Filesystems[0].MountPoint = "/a/../b" }},
 		{"OS control text", func(b *TelemetryBatch) { b.Full[0].OSName = "Linux\n" }},
-		{"await without operations", func(b *TelemetryBatch) { b.Full[0].DiskIo[0].ReadAwaitMs = n(1) }},
-		{"disk baseline with rates", func(b *TelemetryBatch) { b.Full[0].DiskIo[0].Quality = []string{"baseline"} }},
-		{"duplicate disk", func(b *TelemetryBatch) { b.Full[0].DiskIo = append(b.Full[0].DiskIo, b.Full[0].DiskIo[0]) }},
+		{"await without operations", func(b *TelemetryBatch) { b.Full[0].DiskIo.ReadAwaitMs = n(1) }},
+		{"disk baseline with rates", func(b *TelemetryBatch) { b.Full[0].DiskIo.Quality = []string{"baseline"} }},
+		{"missing disk summary", func(b *TelemetryBatch) { b.Full[0].DiskIo = nil }},
 		{"private public IP", func(b *TelemetryBatch) { b.PublicIp[0].Ipv4 = "10.1.2.3" }},
 		{"IP error with value", func(b *TelemetryBatch) { b.PublicIp[0].Errors = append(b.PublicIp[0].Errors, "ipv4_unavailable") }},
 	} {

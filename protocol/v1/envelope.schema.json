@@ -595,22 +595,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "device": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
-        },
-        "read_bytes": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9223372036854775807
-        },
-        "write_bytes": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9223372036854775807
-        },
         "read_bytes_per_second": {
           "type": "number",
           "minimum": 0,
@@ -672,9 +656,6 @@
         }
       },
       "required": [
-        "device",
-        "read_bytes",
-        "write_bytes",
         "quality"
       ]
     },
@@ -784,11 +765,7 @@
           "maxItems": 32
         },
         "disk_io": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TelemetryDiskIO"
-          },
-          "maxItems": 64
+          "$ref": "#/$defs/TelemetryDiskIO"
         },
         "os_id": {
           "type": "string",
@@ -827,7 +804,6 @@
         "sampled_at",
         "elapsed_seconds",
         "filesystems",
-        "disk_io",
         "errors"
       ]
     },

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,13 +20,14 @@ func TestTelemetryDiskRatesQualityAndContract(t *testing.T) {
 	m, write := fixtureMetrics(t)
 	d := NewTelemetryDisk()
 	d.source = m
+	d.sysRoot = diskSysFixture(t, "sda")
 	at := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
 	boot := "11111111-1111-4111-8111-111111111111"
 	sample := func(seconds float64) *v1.TelemetryDiskIO {
 		t.Helper()
 		at = at.Add(time.Duration(seconds * float64(time.Second)))
 		items, err := d.Sample(context.Background(), at, boot)
-		if err != nil || len(items) != 1 {
+		if err != nil || items == nil {
 			t.Fatal(items, err)
 		}
 		full := &v1.TelemetryFull{Sequence: 1, SampledAt: at, ElapsedSeconds: seconds, DiskIo: items, Filesystems: []*v1.TelemetryFilesystem{}, Errors: []string{"load_unavailable", "processes_unavailable", "os_unavailable", "disk_unavailable"}}
@@ -33,11 +36,11 @@ func TestTelemetryDiskRatesQualityAndContract(t *testing.T) {
 		if _, err = v1.DecodeTelemetryBatch(raw, "node", at, 60, true); err != nil {
 			t.Fatal(string(raw), err)
 		}
-		return items[0]
+		return items
 	}
 	write("diskstats", diskFixture(diskCounters{100, 200, 10, 20, 40, 60, 1000}))
 	first := sample(0)
-	if first.Quality[0] != "baseline" || first.ReadBytes != 51200 || first.ReadIops != nil {
+	if first.Quality[0] != "unknown" || first.ReadIops != nil {
 		t.Fatal(first)
 	}
 	write("diskstats", diskFixture(diskCounters{220, 440, 70, 140, 640, 2460, 31000}))
@@ -56,30 +59,30 @@ func TestTelemetryDiskRatesQualityAndContract(t *testing.T) {
 	}
 	write("diskstats", diskFixture(diskCounters{1, 2, 1, 2, 1, 2, 1}))
 	v = sample(1)
-	if v.Quality[0] != "counter_reset" || v.ReadBytesPerSecond != nil {
+	if v.Quality[0] != "unknown" || v.ReadBytesPerSecond != nil {
 		t.Fatal(v)
 	}
 	boot = "22222222-2222-4222-8222-222222222222"
 	v = sample(1)
-	if v.Quality[0] != "identity_changed" {
+	if v.Quality[0] != "unknown" {
 		t.Fatal(v)
 	}
 	// A long gap rebuilds rates without erasing absolute counters.
 	at = at.Add(601 * time.Second)
 	items, err := d.Sample(context.Background(), at, boot)
-	if err != nil || items[0].Quality[0] != "baseline" {
+	if err != nil || items.Quality[0] != "unknown" {
 		t.Fatal(items, err)
 	}
 	write("diskstats", "bad")
-	if items, err = d.Sample(context.Background(), at.Add(time.Second), boot); err == nil || len(items) != 0 {
+	if items, err = d.Sample(context.Background(), at.Add(time.Second), boot); err == nil || items != nil {
 		t.Fatal("malformed diskstats accepted")
 	}
 	write("diskstats", diskFixture(diskCounters{10, 20, 10, 20, 10, 20, 10}))
 	v = sample(1)
-	if v.Quality[0] != "baseline" {
+	if v.Quality[0] != "unknown" {
 		t.Fatal("failure recovery reused baseline")
 	}
-	if first.ReadBytes != 51200 {
+	if first.ReadIops != nil {
 		t.Fatal("old snapshot mutated")
 	}
 }
@@ -96,5 +99,78 @@ func TestTelemetryDiskParserBounds(t *testing.T) {
 	}
 	if _, err := parseTelemetryDisk(raw.String()); err == nil {
 		t.Fatal("device budget")
+	}
+}
+
+func diskSysFixture(t *testing.T, names ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, name := range names {
+		if err := os.MkdirAll(filepath.Join(root, "class/block", name, "slaves"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestDiskSummaryFiltersTopologyAndWeightsLatency(t *testing.T) {
+	m, write := fixtureMetrics(t)
+	d := NewTelemetryDisk()
+	d.source = m
+	d.sysRoot = diskSysFixture(t, "sda", "sdb", "sda1", "dm-0", "md0")
+	if err := os.WriteFile(filepath.Join(d.sysRoot, "class/block/sda1/partition"), []byte("1"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"dm-0", "md0"} {
+		if err := os.WriteFile(filepath.Join(d.sysRoot, "class/block", name, "slaves/sda"), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	row := func(name string, v diskCounters) string { return strings.Replace(diskFixture(v), "sda", name, 1) }
+	ignored := row("sda1", diskCounters{999, 999, 999, 999, 999, 999, 999}) + row("dm-0", diskCounters{999, 999, 999, 999, 999, 999, 999}) + row("md0", diskCounters{999, 999, 999, 999, 999, 999, 999}) + row("loop0", diskCounters{}) + row("ram0", diskCounters{})
+	at := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
+	boot := "11111111-1111-4111-8111-111111111111"
+	write("diskstats", row("sda", diskCounters{})+row("sdb", diskCounters{})+ignored)
+	if _, err := d.Sample(context.Background(), at, boot); err != nil {
+		t.Fatal(err)
+	}
+	write("diskstats", row("sda", diskCounters{2, 4, 2, 4, 20, 80, 100})+row("sdb", diskCounters{6, 8, 6, 8, 180, 320, 500})+ignored)
+	result, err := d.Sample(context.Background(), at.Add(time.Second), boot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *result.ReadBytesPerSecond != 4096 || *result.WriteBytesPerSecond != 6144 || *result.ReadIops != 8 || *result.WriteIops != 12 || *result.ReadAwaitMs != 25 || *result.WriteAwaitMs != float64(400)/12 || *result.AwaitMs != 30 || *result.UtilPercent != 50 || len(result.Quality) != 0 {
+		t.Fatalf("unexpected aggregate: %+v", result)
+	}
+	raw, _ := json.Marshal(result)
+	if strings.Contains(string(raw), "device") || strings.Contains(string(raw), "sda") || strings.Contains(string(raw), `"read_bytes":`) {
+		t.Fatal("device details leaked", string(raw))
+	}
+	// A healthy idle disk remains a valid zero even when another disk resets.
+	write("diskstats", row("sda", diskCounters{2, 4, 2, 4, 20, 80, 100})+row("sdb", diskCounters{}))
+	result, err = d.Sample(context.Background(), at.Add(2*time.Second), boot)
+	if err != nil || result.ReadIops == nil || *result.ReadIops != 0 || result.AwaitMs != nil || len(result.Quality) != 1 || result.Quality[0] != "partial" {
+		t.Fatal("idle/reset aggregation", result, err)
+	}
+	// Malformed records and unavailable topology do not discard healthy fields.
+	write("diskstats", row("sda", diskCounters{4, 4, 4, 4, 40, 80, 100})+"8 1 broken -1\n"+row("missing", diskCounters{}))
+	result, err = d.Sample(context.Background(), at.Add(3*time.Second), boot)
+	if err != nil || *result.ReadIops != 2 || result.Quality[0] != "partial" {
+		t.Fatal("partial parse", result, err)
+	}
+	write("diskstats", row("loop0", diskCounters{}))
+	if result, err = d.Sample(context.Background(), at.Add(4*time.Second), boot); err == nil || result != nil {
+		t.Fatal("no eligible devices became zero", result, err)
+	}
+}
+
+func TestDiskAggregateKeepsValidFields(t *testing.T) {
+	n := func(v float64) *float64 { return &v }
+	d := aggregateDiskIO([]*v1.TelemetryDiskIO{
+		{ReadBytesPerSecond: n(10), WriteBytesPerSecond: n(0), ReadIops: n(2), WriteIops: n(0), AwaitMs: n(5), UtilPercent: nil, Quality: []string{"partial"}},
+		{ReadBytesPerSecond: n(20), WriteBytesPerSecond: n(0), ReadIops: n(6), WriteIops: n(0), AwaitMs: n(15), UtilPercent: n(20), Quality: []string{}},
+	}, false)
+	if *d.ReadBytesPerSecond != 30 || *d.AwaitMs != 12.5 || *d.UtilPercent != 20 || d.Quality[0] != "partial" {
+		t.Fatal(d)
 	}
 }

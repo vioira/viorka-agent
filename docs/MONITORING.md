@@ -10,7 +10,7 @@
 - 设置使用 `node.settings.v3` / `node.settings.v3_result`，保存于固定 `node-telemetry-settings.json`，先验证和原子持久化再确认。旧 `node-settings.json` 不再读取或写入。`metrics_seconds` 已删除，旧 bootstrap 中应移除此字段。
 - Panel 设置入口仅为 `/api/v1/nodes/{id}/telemetry-settings` 及 `/status`；保存 Desired 不代表 Agent 已应用。旧 `/settings` 接口返回 404。
 - 实时窗口最多 600 点、10 分钟；历史按 UTC 30 秒桶聚合，查询保留最近 168 小时。管理连接离线不使仍新鲜的 HTTP 数据自动过期。
-- 文件系统使用率按 used/(used+available) 计算，排除保留空间；设备 IO 分别显示，不合计分层设备。大整数以十进制字符串传给浏览器。
+- 文件系统使用率按 used/(used+available) 计算，排除保留空间；磁盘 IO 由 Agent 筛选整盘底层设备、去除分层重复后汇总；实时和历史只显示汇总图表，可切换速度、IOPS、加权等待时间和最高利用率，未知留缺口，部分数据有标记。大整数以十进制字符串传给浏览器。
 
 Agent 仅主动出站；断线、停用监控或停止 Agent 不停止代理服务。Linux 采集不依赖 root，权限不足报告未知；非 Linux 报告 unsupported_platform。macOS 自动化检查不能替代 Debian/Ubuntu/Alpine、Linux arm64 与低配 NAT VPS 的实机长稳验收。
 

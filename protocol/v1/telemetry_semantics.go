@@ -193,39 +193,36 @@ func validFull(f *TelemetryFull) bool {
 		}
 	}
 	if failed("disk_io_unavailable") {
-		return len(f.DiskIo) == 0
+		return f.DiskIo == nil
 	}
-	devices := map[string]bool{}
-	for _, d := range f.DiskIo {
-		if d == nil || devices[d.Device] {
+	d := f.DiskIo
+	if d == nil {
+		return false
+	}
+	rates := anyNumbers(d.ReadBytesPerSecond, d.WriteBytesPerSecond, d.ReadIops, d.WriteIops, d.ReadAwaitMs, d.WriteAwaitMs, d.AwaitMs, d.UtilPercent)
+	if baselineQuality(d.Quality) && rates {
+		return false
+	}
+	if !rates {
+		if len(d.Quality) == 0 {
 			return false
 		}
-		devices[d.Device] = true
-		rates := anyNumbers(d.ReadBytesPerSecond, d.WriteBytesPerSecond, d.ReadIops, d.WriteIops, d.ReadAwaitMs, d.WriteAwaitMs, d.AwaitMs, d.UtilPercent)
-		if baselineQuality(d.Quality) && rates {
-			return false
-		}
-		if !rates {
-			if len(d.Quality) == 0 {
-				return false
-			}
-			continue
-		}
-		if f.ElapsedSeconds <= 0 {
-			return false
-		}
-		if !slices.Contains(d.Quality, "partial") && (d.ReadBytesPerSecond == nil || d.WriteBytesPerSecond == nil || d.ReadIops == nil || d.WriteIops == nil || d.UtilPercent == nil) {
-			return false
-		}
-		if d.ReadAwaitMs != nil && (d.ReadIops == nil || *d.ReadIops <= 0) {
-			return false
-		}
-		if d.WriteAwaitMs != nil && (d.WriteIops == nil || *d.WriteIops <= 0) {
-			return false
-		}
-		if d.AwaitMs != nil && ((d.ReadIops == nil || *d.ReadIops == 0) && (d.WriteIops == nil || *d.WriteIops == 0)) {
-			return false
-		}
+		return true
+	}
+	if f.ElapsedSeconds <= 0 {
+		return false
+	}
+	if !slices.Contains(d.Quality, "partial") && (d.ReadBytesPerSecond == nil || d.WriteBytesPerSecond == nil || d.ReadIops == nil || d.WriteIops == nil || d.UtilPercent == nil) {
+		return false
+	}
+	if d.ReadAwaitMs != nil && (d.ReadIops == nil || *d.ReadIops <= 0) {
+		return false
+	}
+	if d.WriteAwaitMs != nil && (d.WriteIops == nil || *d.WriteIops <= 0) {
+		return false
+	}
+	if d.AwaitMs != nil && ((d.ReadIops == nil || *d.ReadIops == 0) && (d.WriteIops == nil || *d.WriteIops == 0)) {
+		return false
 	}
 	return true
 }

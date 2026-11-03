@@ -67,6 +67,10 @@ func TestTelemetryRuntimeSchemaConditionals(t *testing.T) {
 		name, raw string
 		valid     bool
 	}{
+		{"TelemetryDiskIO", `{"quality":[],"read_bytes_per_second":0,"write_bytes_per_second":5,"read_iops":0,"write_iops":1,"await_ms":2,"util_percent":10}`, true},
+		{"TelemetryDiskIO", `[]`, false},
+		{"TelemetryDiskIO", `{"device":"sda","quality":[]}`, false},
+		{"TelemetryDiskIO", `{"quality":[],"read_bytes_per_second":null}`, false},
 		{"TelemetryDemand", `{"session_generation":"s","demand_revision":1,"lease_id":"l","enabled":true,"ttl_seconds":90}`, true},
 		{"TelemetryDemand", `{"session_generation":"s","demand_revision":1,"lease_id":"l","enabled":false,"ttl_seconds":90}`, false},
 		{"TelemetryReceipt", `{"batch_id":"b","state":"accepted","accepted_count":1,"duplicate_count":0}`, true},
