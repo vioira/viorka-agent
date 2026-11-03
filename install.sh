@@ -184,8 +184,11 @@ RC
                     [ "$status_code" -eq 3 ] || fail '无法确认 OpenRC Agent 已停止，保留服务文件和程序。'
                     for link in /etc/runlevels/*/viorka-agent; do
                         if [ -e "$link" ] || [ -L "$link" ]; then
-                            timeout 30 rc-update -a del viorka-agent || fail '取消 Agent 开机自启失败，保留服务文件和程序。'
-                            break
+                            # -a also visits runlevels without this service and can
+                            # return failure even after removing existing links.
+                            runlevel=${link%/viorka-agent}
+                            runlevel=${runlevel##*/}
+                            timeout 30 rc-update del viorka-agent "$runlevel" || fail '取消 Agent 开机自启失败，保留服务文件和程序。'
                         fi
                     done
                 fi

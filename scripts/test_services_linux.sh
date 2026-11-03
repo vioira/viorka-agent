@@ -80,6 +80,10 @@ trap 'kill "$unrelated_pid" 2>/dev/null || :; wait "$unrelated_pid" 2>/dev/null 
 if [ -d /run/systemd/system ]; then
     systemctl start viorka-agent
 else
+    # Remove registrations from every populated runlevel, while leaving
+    # unrelated empty runlevels alone (rc-update -a del fails on those).
+    mkdir -p /etc/runlevels/viorka-test
+    rc-update add viorka-agent viorka-test
     rc-service viorka-agent start
 fi
 sleep 2
@@ -93,6 +97,7 @@ test ! -e "$agent_dir/viorka-agent.previous"
 test ! -e /etc/systemd/system/viorka-agent.service
 test ! -e /etc/init.d/viorka-agent
 test ! -L /etc/runlevels/default/viorka-agent
+test ! -L /etc/runlevels/viorka-test/viorka-agent
 test "$(cat "$agent_dir/state/identity.json")" = 'preserved identity'
 test "$(cat "$agent_dir/agent.json")" = '{}'
 sh install.sh uninstall

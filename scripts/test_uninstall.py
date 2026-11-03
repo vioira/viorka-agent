@@ -75,8 +75,13 @@ exit 0
 ''')
             executable('rc-update', '''printf 'rc-update %s\n' "$*" >> "$CALLS"
 if [ "$1" = -a ]; then
+ # Real OpenRC reports failure for runlevels without the service.
+ rm -f "$RUNLEVELS"/default/viorka-agent "$RUNLEVELS"/custom/viorka-agent
+ exit 1
+elif [ "$1" = del ] && [ "$2" = viorka-agent ]; then
  [ "$FAILURE" != disable ] || exit 1
- rm "$RUNLEVELS"/default/viorka-agent "$RUNLEVELS"/custom/viorka-agent
+ [ "$FAILURE" != residual ] || exit 0
+ rm "$RUNLEVELS/$3/viorka-agent"
 fi
 ''')
             for name in ('supervise-daemon', 'logger'):
@@ -118,7 +123,8 @@ fi
                 result = run('service')
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 if manager == 'openrc':
-                    for level in ('default', 'custom'):
+                    levels = () if scenario == 'disabled' else ('default', 'custom')
+                    for level in levels:
                         link = root / 'etc/runlevels' / level / 'viorka-agent'
                         link.parent.mkdir(parents=True)
                         link.symlink_to(service)
@@ -156,7 +162,7 @@ fi
                 (root / 'stopped').touch()
             calls.write_text('')
             result = run(*args, failure=scenario)
-            success = scenario in ('', 'foreground', 'stopped')
+            success = scenario in ('', 'foreground', 'stopped', 'disabled')
             self.assertEqual(result.returncode == 0, success, result.stdout.decode() + result.stderr.decode())
             for path, data in preserved.items():
                 self.assertEqual(path.read_bytes(), data)
@@ -166,6 +172,10 @@ fi
                 self.assertIn('服务目录权限不安全。'.encode(), result.stderr)
                 self.assertNotIn('stop', calls.read_text())
             if success:
+                if manager == 'openrc' and not foreground:
+                    self.assertNotIn('rc-update -a', calls.read_text())
+                    for level in levels:
+                        self.assertIn(f'rc-update del viorka-agent {level}\n', calls.read_text())
                 self.assertFalse(service.exists())
                 self.assertFalse(agent.exists())
                 self.assertFalse(previous.exists())
@@ -203,6 +213,8 @@ fi
                          'bad_args', 'nonroot', 'bypass', 'stop', 'status', 'active', 'disable')
             if manager == 'systemd':
                 scenarios += ('dropin', 'fragment', 'reload')
+            else:
+                scenarios += ('disabled', 'residual')
             for scenario in scenarios:
                 with self.subTest(manager=manager, scenario=scenario):
                     self.exercise(manager, scenario)

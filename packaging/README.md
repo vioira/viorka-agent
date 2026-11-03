@@ -85,7 +85,7 @@ curl -fsSL --proto '=https' --proto-redir '=https' \
 也可下载、审阅脚本后执行 `sh install.sh uninstall`。不需要面板地址、Token 或下载 Agent 二进制。安装后的命令提示也包含卸载入口。
 
 - 自动识别运行中的 systemd / OpenRC，只处理与本安装器模板完全匹配的 `viorka-agent` 服务；自定义服务、systemd drop-in、不安全路径或权限均拒绝操作。
-- 先停止 Agent 并确认停止，再取消开机自启（OpenRC 清理所有 runlevel 中该服务的链接）、移除 Agent 服务文件及 `viorka-agent` / `viorka-agent.previous`。systemd 同步执行 daemon-reload。
+- 先停止 Agent 并确认停止，再取消开机自启（OpenRC 逐个清理实际包含该服务的 runlevel，并确认没有残留链接）、移除 Agent 服务文件及 `viorka-agent` / `viorka-agent.previous`。systemd 同步执行 daemon-reload。
 - 默认保留整个数据目录中的配置、身份、Journal 和其他数据，不停止或删除代理服务、代理配置、服务商映射，也不删除 Panel 节点记录。不提供隐式清空数据选项。
 - 与安装/更新共用 `.install-lock`，可重复执行。停止、状态检查或取消自启失败均返回非零并保留服务文件和程序；删除服务后刷新 systemd 失败时保留程序，修复后可重试。失败前已完成的停止或禁用操作不会自动撤销。
 - 前台安装由原用户先停止 Agent / 外部 supervisor，然后执行 `sh install.sh uninstall --foreground`（远程命令同样追加 `--foreground`）。脚本检查 `/proc` 中当前安装路径的进程；仍在运行时拒绝删除，不使用进程名批量杀进程。无法读取 `/proc/self/exe` 时拒绝卸载。
