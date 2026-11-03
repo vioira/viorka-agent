@@ -2,7 +2,7 @@ package v1
 
 import (
 	"bytes"
-	"encoding/json"
+
 	"os"
 	"testing"
 	"time"
@@ -24,14 +24,7 @@ func TestTelemetrySettingsIndependentCadence(t *testing.T) {
 			t.Fatal("accepted invalid C", c)
 		}
 	}
-	legacy := NodeSettings{Revision: 1, CollectionSeconds: 0, ReportSeconds: 60, WssReportSeconds: 2, ConnectionMode: "wss"}
-	if legacy.Validate() != nil {
-		t.Fatal("legacy semantics changed")
-	}
-	raw, _ := json.Marshal(DefaultTelemetrySettings())
-	if Decode(raw, &legacy) == nil {
-		t.Fatal("new settings accepted by legacy decoder")
-	}
+
 }
 
 func TestTelemetryContextAdmission(t *testing.T) {

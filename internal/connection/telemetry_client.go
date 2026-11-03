@@ -169,36 +169,5 @@ func (t *telemetryClientSession) start(ready v1.TelemetryReady, send func(v1.Env
 		return errors.Join(err, schedule.workers.stop(ctx))
 	}
 	c.telemetry = startTelemetryRunner(c.runCtx, schedule, t.credential, settings, c.telemetryTransport(t.identity.NodeID, runID, c.telemetryBridge.delivery), time.Now)
-	if c.samples != nil && c.samples.cancel != nil {
-		c.samples.cancel()
-	}
-	return nil
-}
-
-// resumeLegacySampling is only called by the management owner after the bounded
-// ready negotiation window. It preserves identity/settings and propagates final
-// ledger failures instead of pretending fallback succeeded.
-func (c *Client) resumeLegacySampling() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if c.telemetry != nil {
-		if err := c.telemetry.stop(ctx); err != nil {
-			return err
-		}
-		c.telemetry = nil
-	}
-	if c.samples != nil {
-		c.samples.cancel()
-		select {
-		case <-c.samples.done:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	interval := time.Duration(c.cfg.MetricsIntervalSeconds()) * time.Second
-	if c.settings != nil {
-		interval = settingsInterval(*c.settings)
-	}
-	c.samples = startSampling(c.runCtx, interval)
 	return nil
 }

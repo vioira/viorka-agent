@@ -1,109 +1,17 @@
 # 节点主机监控
 
-Agent 在已认证的出站 WSS 中发送 `node.metrics`，不开放新的端口、不执行 Shell、不修改代理服务。当前采集目标是 Linux amd64/arm64，读取当前主机命名空间的 `/proc` 和根文件系统 `statfs`；不将容器 cgroup 配额误称为主机总量。非 Linux 返回 `unsupported_platform`，不会返回伪造的零指标。
+当前只支持 `node.telemetry.v3`，旧版 Agent 监控设置、REST 设置接口、v1/v2 指标上报和自动回退路径已移除。外层 Envelope 仍为 1.0；监控能力必须单独协商。Panel 与 Agent 需要配套升级，不能再依赖旧版监控兼容。
 
-## 指标与语义
+默认启用 v3。Panel 的 `VIORKA_TELEMETRY_V3=false` 或 Agent 的 `telemetry_v3:false` 可明确停用新版监控，但不会恢复旧协议。管理连接、身份、只读任务和代理进程生命周期保持独立。
 
-- CPU：`/proc/stat` 聚合 CPU 前八项的差值（不再次累加 guest）；idle 与 iowait 计为空闲。显示全机 0–100% 使用率和逻辑 CPU 数。
-- 内存：`MemTotal - MemAvailable` 为已用量，另报可用量、总量、Swap 已用/总量。缺少 `MemAvailable` 不猜测替代值。
-- 负载与运行时长：`/proc/loadavg` 的 1/5/15 分钟负载，以及 `/proc/uptime`。
-- 磁盘：仅根文件系统 `/` 的总量、已用量、普通用户可用量；保留块使已用加可用不一定等于总量。不扫描文件树，不枚举远端挂载。
-- 网络：`/proc/net/dev` 每个非回环网卡的累计 RX/TX 字节，以及两个成功采样间的字节/秒速率。首次采样、网卡新增、计数器倒退、采集失败后的恢复，以及大于 600 秒的间隔不产生速率。虚拟网卡可能重复记录同一业务流量，合计仅用于观察主机接口活动；不是今日、月度、代理用户用量或服务商计费。
+- 常规快速采集 C 为 1–60 秒，默认 30；HTTP 上报及完整采集 R 为 30–180 秒，默认 60；实时采集/上报 W 为 1–5 秒，默认 2。C 与 R 独立。
+- 无浏览器订阅时通过认证 HTTP POST 上报；有效实时需求租约使用 WSS。每组保留独立采样时间、水位与错误状态，未知值不补零。
+- fast 包含 CPU、内存/Swap、运行时长、网络与套接字；full 包含负载、进程数、文件系统和设备 IO；公网 IP 每 600 秒刷新。资产探测独立运行。
+- 设置使用 `node.settings.v3` / `node.settings.v3_result`，保存于固定 `node-telemetry-settings.json`，先验证和原子持久化再确认。旧 `node-settings.json` 不再读取或写入。`metrics_seconds` 已删除，旧 bootstrap 中应移除此字段。
+- Panel 设置入口仅为 `/api/v1/nodes/{id}/telemetry-settings` 及 `/status`；保存 Desired 不代表 Agent 已应用。旧 `/settings` 接口返回 404。
+- 实时窗口最多 600 点、10 分钟；历史按 UTC 30 秒桶聚合，查询保留最近 168 小时。管理连接离线不使仍新鲜的 HTTP 数据自动过期。
+- 文件系统使用率按 used/(used+available) 计算，排除保留空间；设备 IO 分别显示，不合计分层设备。大整数以十进制字符串传给浏览器。
 
-CPU 首次采样或计数器倒退也只报告 CPU 数，等待下一次有效差值。每个采集组单独报告 `*_unavailable`，不把未知量写为 0。错误只使用固定代码，不发送本地路径或系统错误文本。
+Agent 仅主动出站；断线、停用监控或停止 Agent 不停止代理服务。Linux 采集不依赖 root，权限不足报告未知；非 Linux 报告 unsupported_platform。macOS 自动化检查不能替代 Debian/Ubuntu/Alpine、Linux arm64 与低配 NAT VPS 的实机长稳验收。
 
-## 配置和资源上限
-
-每节点设置 v2：采集 `collection_seconds` 0–10，默认 0；历史入库周期 `report_seconds` 30–180，默认 60；实时上报 `wss_report_seconds` 1–5，默认 2。0 表示随实时上报采集，不创建零周期定时器。采集快于上报时积累并发送期间样本；慢于上报时复用快照及原始 sampled_at，Panel 不重复计数。资产信息独立每 300 秒刷新，心跳独立每 30 秒。
-
-旧 Panel 不下发 v2 设置时，Agent 使用本地 `metrics_seconds`（默认 30，范围 10–300，0 使用默认）。每个内核文件最多读 256 KiB、最多 64 个非回环网卡。采集不需要 root，权限不足时报告未知。
-
-指标与资产由独立、有界的采集任务生成，WSS 单 writer 负责发送。指标仅保留有界内存窗口，不做磁盘缓存或断线补传。节点设置在线同步和生命周期详见下节。
-
-## Panel 与界面
-
-详情实时监控每 2 秒轮询，列表沿用每 30 秒刷新。历史每 30 秒查询，仅活动面板发起请求；失败保留原内容，通过全局 Toast 提示。所有接口要求 viewer 或以上实例级权限。
-
-`GET /api/v1/nodes/{id}/metrics` 保留已有实时快照及兼容的一小时内存历史契约，后者不是持久化均值。新历史接口 `GET /api/v1/nodes/{id}/metrics/history?range=1h|6h|24h|7d` 返回已落库分钟统计：1h/6h 为 60 秒，24h 为 300 秒，7d 为 900 秒，最多 674 个点。记录各指标 sum/max/count，样本均值为 sum/count，峰值是已采样到的最大值，不是采样间隔内绝对峰值。不同采样频率的样本均值不等于连续时间加权平均。
-
-历史包括 CPU、内存/Swap、根文件系统用量、1/5/15 分钟负载、网络收发速率。缺失指标省略，Swap 总量为零时使用率未知；没有采样的时间桶不创建。图表使用真实时间坐标和独立路径展示断线缺口，并提供可访问的数值列表。Arc LineChart 会把缺失值视为零，因此此处使用最小静态 SVG，范围切换、按钮及设置继续使用 Arc。
-
-采样时间必须在 Panel 时间前后 5 分钟内，按 UTC sampled_at 分分钟桶。重复、迟到采样不覆盖最新水位；v2 批次必须有序且为 1–10 个样本，整批校验通过后接收。每连接仍最多 120 条消息/分钟。离线或超过 max(90 秒, 3×有效采样间隔, 3×上报间隔) 时实时值过期，不用上次值填充缺失区间。
-
-## 持久化与兼容性
-
-SQLite 单表保留 7 天，按配置周期批量写入，不同步阻塞 WSS 接收。正常退出先关闭 Gateway，再停止聚合循环并最多等待 5 秒刷盘；异常退出可能丢失尚未落库的数据。后台存储故障记录错误，缓存有时间和节点数上限，详见 Panel 仓库的 docs/DATABASE.md。最多缓存 1024 个节点，目标规模为 50 个节点。
-
-外层协议继续为 1.0，权威 Schema 在 Panel `api/agent/v1`：
-
-| 组合 | 行为 |
-| --- | --- |
-| v1 Agent / 新 Panel | 仍协商 metrics_version=1、接收 node.metrics 并汇总；不下发新设置或旧语义的 node_settings |
-| 新 Agent / v1 Panel | 宣告 node.metrics.v1 与 v2；按确认版本发送，无监控确认则不发送；不宣告 node.settings.v1，沿用本地周期 |
-| 新 Agent / 新 Panel | node.metrics.v2 对应 metrics_version=2 与 node.metrics_batch；node.settings.v2 对应 collection_settings |
-
-旧 node_settings 的 Schema 保留为 LegacyNodeSettings，新参数使用独立 collection_settings，避免严格解码的旧 Agent 接收不兼容字段。未协商批量消息、跨节点身份或非法指标会关闭连接。发布需要分别发布匹配的 Panel/Agent 制品，工作区实现不等于已发布。
-
-## 验证边界
-
-单元和集成测试覆盖周期边界、零周期、批量、重复与乱序、旧版兼容、TLS/WSS、任务共存、权限、SQLite 重启恢复与重试、过期清理及缺失图表数据。macOS 不执行真实 Linux procfs 采集；Debian/Ubuntu/Alpine 与低配 NAT VPS 的资源开销、长时间运行仍需实机验收。当前没有告警、流量计费、任意挂载点监控、容器配额或离线补传。
-
-## 节点设置在线同步（node.settings.live.v1）
-
-本扩展保持外层协议 1.0。Agent 宣告 `node.settings.live.v1` 后，Panel 才在
-`system.hello_ack` 中返回 `settings_version: 1`，并可发送 `node.settings`
-（payload 为已有 `NodeSettings`）。未协商的 Agent 不会收到新字段或消息。
-初次设置仍通过 `collection_settings` 下发；两种下发方式均须回报
-`node.settings_result`，`correlation_id` 等于对应下发消息的 `message_id`。
-结果包含请求的 `revision`、本机实际 `applied_revision`、`state`（applied/failed）
-及失败时的固定 `error_code`。applied 只代表采集设置已持久保存并应用，不代表代理部署成功。
-
-Agent 将校验后的设置保存到 `state_dir/node-settings.json`（0600，目录 0700），
-绑定 Panel Origin 与 Node ID，原子替换并同步文件和目录后应用。Bootstrap `agent.json`
-和身份文件不被远程设置修改。启动时恢复最后生效设置；文件损坏、权限不安全、身份不匹配
-会明确报错退出。低 Revision 拒绝；同 Revision 同内容允许重试，同 Revision 不同内容拒绝。
-失败保留内存中的原设置，错误码为 invalid_settings/stale_revision/revision_conflict/persist_failed。
-
-Panel 保存 Desired 后通过容量为 1 的通知唤醒 WSS 单 writer，合并多次修改并读取最新设置。
-记录当前 Revision 的回执；旧回执不覆盖新 Desired，失败不倒退已确认成功状态。
-30 秒未收到匹配回执会关闭管理连接，由 Agent 重连再次对账。失败回执不触发紧密重试，
-可修复节点后重连或保存新版本。GET `/api/v1/nodes/{id}/settings/status` 返回 pending/applied/failed，
-状态随 SQLite 保存并通过 node_settings_result SSE 事件通知界面。
-“已生效”表示该版本最后一次获得节点确认，不是实时健康或在线保证。
-
-旧 Agent 仍采用保存后重连握手的行为，没有明确回执时显示待同步或未确认。
-新 Agent 连接旧 Panel 时只发送原有消息；有效的握手设置仍保存到本地，不发送新回执。
-兼容扩展需要双方分别发布；工作区实现不代表已发布。
-
-指标采集由 Agent 进程持有，不随 WSS 重连重建；collection_seconds=0 时使用
-wss_report_seconds 作为独立采集周期。启动后按已保存设置采集，没有保存设置时使用本地
-metrics_seconds。只有 Panel 协商指标能力才发送。在线最多缓存 10 条，离线仅保留最新快照，
-重连丢弃离线积压；指标不落盘、不补传。独立时钟在边界可能复用上一快照，保留原 sampled_at。
-资产探测首次协商后由进程级独立任务每 5 分钟执行，单次 15 秒超时，快照通知合并到容量 1；
-慢探测不阻塞心跳和设置处理。退出时取消并等待采集任务，不停止代理进程。
-
-## 本地文件系统容量（node.filesystems.v1）
-
-新增 `filesystems` 扩展，保留原 `disk` 和历史序列的根文件系统语义。
-Agent 宣告 `node.filesystems.v1`，仅在 Panel 确认 `filesystems_version: 1` 后发送。
-权威 Schema 为 Panel `api/agent/v1/envelope.schema.json`；需双方分别发布，
-新 Agent 对旧 Panel 省略此字段，旧 Agent 对新 Panel 仍只显示根文件系统。
-
-读取最多 256 KiB/4096 行 `/proc/self/mountinfo`，候选挂载最多 128 个，输出最多
-32 个文件系统，路径最多 512 字节。采集 ext2/3/4、XFS、Btrfs、F2FS、JFS、
-ReiserFS、NILFS2、bcachefs、VFAT、exFAT、NTFS3；另支持根 overlay 和根 ZFS。
-ZFS 仅读取 `/` 的 statfs 容量（包括 Incus/LXC 的配额根数据集），不调用 zfs/zpool，
-不要求容器安装 ZFS 工具。排除其他 ZFS 挂载，避免绑定别名及共享池空间的数据集重复汇总；
-该值表示内核暴露给根文件系统的容量，不表示整个 ZFS 池或物理磁盘容量。
-排除 tmpfs/devtmpfs、网络/FUSE/autofs、嵌套 overlay 及单文件挂载。
-按设备号及 statfs 文件系统 ID 去重，Btrfs 另按挂载源去重子卷，优先根目录和
-最短路径；不表示物理磁盘容量，不包括未挂载磁盘或未支持的文件系统。
-不递归扫描、不执行 Shell、不改变挂载。每次系统调用前后检查取消；本地内核 I/O
-异常仍可能延迟 statfs，未声称提供可强制中断内核调用的硬超时。
-
-挂载表无效、超限或任一候选读取失败时，整个扩展返回空 mounts 和
-`filesystems_unavailable`，不显示误导性的部分汇总；根分区旧指标独立保留。
-目录遍历期间发生挂载变化不是原子快照，下一次采样重读挂载表。
-已用为 `(blocks-bfree)*bsize`，可用为 `bavail*bsize`；保留空间不算已用。
-新列表/概览使用率按 `ceil(100*used/(used+available))` 与 df 对齐。
-原根文件系统趋势保留 used/total 口径与历史值，不混入 /data。
+权威监控契约位于配套 Panel 仓库 `api/agent/v1/TELEMETRY_V3.md`；本地 Schema 与生成模型必须和该版本一致。详细本地文件权限、网络过滤和月流量账本见 [CONFIGURATION.md](CONFIGURATION.md)。

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,31 +21,13 @@ func TestAcceptBaseURL(t *testing.T) {
 	}
 }
 
-func TestMetricsIntervalBounds(t *testing.T) {
-	for _, n := range []int{-1, 1, 9, 301} {
-		c := Local{PanelURL: "https://panel.example.com", NodeName: "node", StateDir: "state", MetricsSeconds: n}
-		if c.Validate() == nil {
-			t.Fatalf("accepted interval %d", n)
-		}
-	}
-	for _, n := range []int{0, 10, 30, 300} {
-		c := Local{PanelURL: "https://panel.example.com", NodeName: "node", StateDir: "state", MetricsSeconds: n}
-		if c.Validate() != nil {
-			t.Fatalf("rejected interval %d", n)
-		}
-		if n == 0 && c.MetricsIntervalSeconds() != 30 {
-			t.Fatal("default")
-		}
-	}
-}
-
 func TestTelemetryStartupGate(t *testing.T) {
 	for _, value := range []struct {
 		field   string
 		enabled bool
 		valid   bool
 	}{
-		{"", false, true}, {`,"telemetry_v3":false`, false, true}, {`,"telemetry_v3":true`, true, true}, {`,"telemetry_v3":"true"`, false, false},
+		{"", true, true}, {`,"telemetry_v3":false`, false, true}, {`,"telemetry_v3":true`, true, true}, {`,"telemetry_v3":"true"`, false, false},
 	} {
 		path := filepath.Join(t.TempDir(), "config.json")
 		raw := `{"panel_url":"https://panel.example.com","node_name":"test","state_dir":"state"` + value.field + `}`
@@ -55,5 +38,28 @@ func TestTelemetryStartupGate(t *testing.T) {
 		if (err == nil) != value.valid || cfg.TelemetryV3 != value.enabled {
 			t.Fatalf("gate %q: %v %v", value.field, cfg.TelemetryV3, err)
 		}
+		if value.valid {
+			encoded, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, encoded, 0600); err != nil {
+				t.Fatal(err)
+			}
+			reloaded, err := LoadFile(path)
+			if err != nil || reloaded.TelemetryV3 != value.enabled {
+				t.Fatalf("gate changed after saving: %v %v", reloaded.TelemetryV3, err)
+			}
+		}
+	}
+}
+
+func TestRetiredMetricsBootstrapRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(path, []byte(`{"panel_url":"https://panel.test","node_name":"node","state_dir":"state","metrics_seconds":30}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(path); err == nil {
+		t.Fatal("retired monitoring setting accepted")
 	}
 }

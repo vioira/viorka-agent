@@ -7,46 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	v1 "github.com/vioira/viorka-agent/protocol/v1"
 )
-
-// Disk entries are reported separately: partitions and stacked devices must not
-// be summed as host throughput. Kernel diskstats sectors are always 512 bytes.
-func (m *Metrics) sampleHost(ctx context.Context, elapsed float64, valid bool) *v1.HostMetrics {
-	h := &v1.HostMetrics{DiskIo: []*v1.DiskIOMetrics{}, Errors: []string{}}
-	data, err := m.read(ctx, "diskstats")
-	counters, devices, parseErr := parseDiskIO(data)
-	if err != nil || parseErr != nil {
-		h.Errors = append(h.Errors, "disk_io_unavailable")
-		m.diskIO = nil
-	} else {
-		for _, device := range devices {
-			v := counters[device]
-			item := &v1.DiskIOMetrics{Device: device, ReadBytes: float64(v[0]) * 512, WriteBytes: float64(v[1]) * 512}
-			if old, ok := m.diskIO[device]; ok && valid && v[0] >= old[0] && v[1] >= old[1] {
-				r, w := float64(v[0]-old[0])*512/elapsed, float64(v[1]-old[1])*512/elapsed
-				item.ReadBytesPerSecond, item.WriteBytesPerSecond = &r, &w
-			}
-			h.DiskIo = append(h.DiskIo, item)
-		}
-		m.diskIO = counters
-	}
-	tcp, udp, socketErr := m.sampleSockets(ctx)
-	if socketErr != nil {
-		h.Errors = append(h.Errors, "sockets_unavailable")
-	} else {
-		h.TcpSockets = &tcp
-		h.UdpSockets = &udp
-	}
-	count, err := m.processCount(ctx)
-	if err != nil {
-		h.Errors = append(h.Errors, "processes_unavailable")
-	} else {
-		h.Processes = &count
-	}
-	return h
-}
 
 func (m *Metrics) sampleSockets(ctx context.Context) (uint64, uint64, error) {
 	data, err := m.read(ctx, "net/sockstat")
@@ -66,44 +27,6 @@ func (m *Metrics) sampleSockets(ctx context.Context) (uint64, uint64, error) {
 	return tcp, udp, nil
 }
 
-func parseDiskIO(data string) (map[string][2]uint64, []string, error) {
-	counters := map[string][2]uint64{}
-	var devices []string
-	for _, line := range strings.Split(data, "\n") {
-		f := strings.Fields(line)
-		if len(f) == 0 {
-			continue
-		}
-		if len(f) < 14 || len(f[2]) > 64 {
-			return nil, nil, fmt.Errorf("invalid disk counters")
-		}
-		// Include the kernel device identity so replacement under a different major/
-		// minor does not reuse its baseline. Device names remain human readable.
-		name := f[0] + ":" + f[1] + ":" + f[2]
-		if len(name) > 64 {
-			return nil, nil, fmt.Errorf("device identity too long")
-		}
-		if _, ok := counters[name]; ok {
-			return nil, nil, fmt.Errorf("duplicate disk")
-		}
-		for _, x := range []string{f[0], f[1], f[5], f[9]} {
-			if _, e := strconv.ParseUint(x, 10, 64); e != nil {
-				return nil, nil, e
-			}
-		}
-		r, _ := strconv.ParseUint(f[5], 10, 64)
-		w, _ := strconv.ParseUint(f[9], 10, 64)
-		counters[name] = [2]uint64{r, w}
-		devices = append(devices, name)
-		if len(devices) > 64 {
-			return nil, nil, fmt.Errorf("too many disk devices")
-		}
-	}
-	return counters, devices, nil
-}
-
-// inuse counts allocated TCP/UDP sockets (IPv4 plus IPv6), including listeners;
-// TCP TIME_WAIT sockets are excluded. UDP has no TCP-style connection state.
 func parseSockets(data, suffix string) (uint64, uint64, error) {
 	values := map[string]uint64{}
 	for _, line := range strings.Split(data, "\n") {

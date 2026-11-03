@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Uninstall(unittest.TestCase):
-    def exercise(self, manager, scenario=''):
-        with tempfile.TemporaryDirectory() as tmp:
+    def exercise(self, manager, scenario='', tmp_parent=None):
+        with tempfile.TemporaryDirectory(dir=tmp_parent) as tmp:
             root = Path(tmp).resolve()
             home = root / 'root'
             install = home / '.viorka-agent'
@@ -98,6 +98,11 @@ fi
             (proc / 'self/exe').symlink_to(sys.executable)
             script = (ROOT / 'install.sh').read_text()
             script = re.sub(r'/(?:root|etc|run|sbin|proc)\b', lambda match: str(root) + match[0], script)
+            # Relocate the ancestor-walk boundary along with /etc: the host's
+            # temporary directory (often /tmp, mode 1777) is outside this fixture.
+            boundary = 'while [ "$path" != / ]; do'
+            self.assertEqual(script.count(boundary), 1)
+            script = script.replace(boundary, f'while [ "$path" != "{root}" ]; do')
             local = root / 'install.sh'
             local.write_text(script)
             calls = root / 'calls'
@@ -130,6 +135,10 @@ fi
                 target.symlink_to(proxy_service)
             if scenario == 'permissions':
                 agent.chmod(0o777)
+            if scenario == 'service_directory_permissions':
+                service.parent.chmod(0o775)
+            if scenario == 'service_ancestor_permissions':
+                (root / 'etc').chmod(0o757)
             if scenario == 'locked':
                 (install / '.install-lock').mkdir()
             if scenario in ('running', 'foreground_running'):
@@ -153,6 +162,9 @@ fi
                 self.assertEqual(path.read_bytes(), data)
             self.assertNotIn('unexpected-', calls.read_text())
             self.assertNotIn('sing-box', calls.read_text())
+            if scenario in ('service_directory_permissions', 'service_ancestor_permissions'):
+                self.assertIn('服务目录权限不安全。'.encode(), result.stderr)
+                self.assertNotIn('stop', calls.read_text())
             if success:
                 self.assertFalse(service.exists())
                 self.assertFalse(agent.exists())
@@ -187,12 +199,21 @@ fi
         for manager in ('systemd', 'openrc'):
             scenarios = ('', 'stopped', 'foreground', 'foreground_running', 'custom', 'symlink',
                          'binary_symlink', 'permissions', 'locked', 'running', 'no_proc',
+                         'service_directory_permissions', 'service_ancestor_permissions',
                          'bad_args', 'nonroot', 'bypass', 'stop', 'status', 'active', 'disable')
             if manager == 'systemd':
                 scenarios += ('dropin', 'fragment', 'reload')
             for scenario in scenarios:
                 with self.subTest(manager=manager, scenario=scenario):
                     self.exercise(manager, scenario)
+
+    def test_shared_temp_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # Reproduce a Linux /tmp parent even on hosts with a private TMPDIR.
+            Path(tmp).chmod(0o1777)
+            for manager in ('systemd', 'openrc'):
+                with self.subTest(manager=manager):
+                    self.exercise(manager, tmp_parent=tmp)
 
 
 if __name__ == '__main__':

@@ -34,7 +34,7 @@ var ErrIdentityRejected = errors.New("agent identity rejected; contact administr
 
 type Client struct {
 	telemetrySource  func() (telemetrySources, error)
-	telemetryEnabled bool // explicit local startup gate; default disabled
+	telemetryEnabled bool // local telemetry control
 	telemetry        *telemetryRunner
 	telemetryBridge  telemetryWSS
 	sessions         sessionCoordinator
@@ -42,8 +42,6 @@ type Client struct {
 	http             *http.Client
 	store            *state.Store
 	inventory        func(context.Context, time.Duration) v1.NodeInventory
-	settings         *v1.NodeSettings
-	samples          *sampling
 	runCtx           context.Context
 	assets           *assetSampling
 }
@@ -182,16 +180,8 @@ func (c *Client) Run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return err
 	}
-	if err = c.loadSettings(id); err != nil {
-		return err
-	}
 	runCtx, stopSampling := context.WithCancel(ctx)
-	interval := time.Duration(c.cfg.MetricsIntervalSeconds()) * time.Second
-	if c.settings != nil {
-		interval = settingsInterval(*c.settings)
-	}
 	c.runCtx = runCtx
-	c.samples = startSampling(runCtx, interval)
 	defer func() { stopSampling(); runErr = errors.Join(runErr, c.waitCollectors()) }()
 	delay := time.Second
 	for {
@@ -255,7 +245,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		defer stop()
 		return conn.Write(c, websocket.MessageText, b)
 	}
-	capabilities := []string{"node.inspect", "node.metrics.v1", "node.inventory.v1", "node.settings.v2", "node.settings.live.v1", "node.metrics.v2", "node.host_metrics.v1", "node.filesystems.v1"}
+	capabilities := []string{"node.inspect", "node.inventory.v1"}
 	if c.telemetryEnabled {
 		capabilities = append(capabilities, v1.TelemetryCapability)
 	}
@@ -276,57 +266,9 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	if envelope.Type != "system.hello_ack" || v1.Decode(envelope.Payload, &ack) != nil || ack.ProtocolVersion != v1.Version || ack.HeartbeatSeconds < 5 || ack.HeartbeatSeconds > 60 {
 		return fmt.Errorf("unsupported hello response")
 	}
-	// Direct connect callers (tests) get the same bounded lifecycle.
-	if c.samples == nil {
-		sampleCtx, stop := context.WithCancel(ctx)
-		c.runCtx = sampleCtx
-		c.samples = startSampling(sampleCtx, time.Duration(c.cfg.MetricsIntervalSeconds())*time.Second)
-		defer func() { stop(); connectErr = errors.Join(connectErr, c.waitCollectors()) }()
-	}
-	select {
-	case <-c.samples.ready:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	liveSettings := ack.SettingsVersion != nil
-	if liveSettings && *ack.SettingsVersion != 1 {
-		return fmt.Errorf("unsupported settings version")
-	}
-	reportInterval := time.Duration(c.cfg.MetricsIntervalSeconds()) * time.Second
-	if c.settings != nil {
-		reportInterval = time.Duration(c.settings.WssReportSeconds) * time.Second
-	}
-	var metricsTimer *time.Ticker
-	defer func() {
-		if metricsTimer != nil {
-			metricsTimer.Stop()
-		}
-	}()
-	sendSettingsResult := func(correlation string, next v1.NodeSettings) error {
-		result := c.applySettings(id, next)
-		if result.State == "applied" {
-			reportInterval = time.Duration(next.WssReportSeconds) * time.Second
-			if metricsTimer != nil {
-				metricsTimer.Reset(reportInterval)
-			}
-		}
-		msg := v1.Message("node.settings_result", id.NodeID, ID(), result)
-		msg.CorrelationID = correlation
-		return send(msg)
-	}
-	if ack.CollectionSettings != nil {
-		if liveSettings {
-			if err = sendSettingsResult(envelope.MessageID, *ack.CollectionSettings); err != nil {
-				return err
-			}
-		} else {
-			// Legacy Panels do not understand receipts, but their valid settings still persist.
-			result := c.applySettings(id, *ack.CollectionSettings)
-			if result.State != "applied" {
-				return fmt.Errorf("node settings rejected: %s", result.ErrorCode)
-			}
-			reportInterval = time.Duration(ack.CollectionSettings.WssReportSeconds) * time.Second
-		}
+	if c.runCtx == nil {
+		c.runCtx = ctx
+		defer func() { cancel(); connectErr = errors.Join(connectErr, c.waitCollectors()) }()
 	}
 	// Assets have a bounded independent worker, started after negotiation.
 	var inventory <-chan struct{}
@@ -340,59 +282,6 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			c.assets.notify()
 		}
 		inventory = c.assets.wake
-	}
-	var metricsTick <-chan time.Time
-	sendMetrics := func() error {
-		samples := c.samples.take()
-		// Strip unnegotiated groups on copies; the collector retains its baseline.
-		for i, m := range samples {
-			copy := *m
-			if ack.FilesystemsVersion == nil || *ack.FilesystemsVersion != 1 {
-				copy.Filesystems = nil
-			}
-			if ack.HostMetricsVersion == nil || *ack.HostMetricsVersion != 1 {
-				copy.Host = nil
-			}
-			samples[i] = &copy
-		}
-		if len(samples) == 0 {
-			return nil
-		}
-		if *ack.MetricsVersion == 1 {
-			return send(v1.Message("node.metrics", id.NodeID, ID(), samples[len(samples)-1]))
-		}
-		for len(samples) > 0 {
-			n := len(samples)
-			var msg v1.Envelope
-			for {
-				msg = v1.Message("node.metrics_batch", id.NodeID, ID(), v1.NodeMetricsBatch{Samples: samples[:n]})
-				b, e := json.Marshal(msg)
-				if e != nil {
-					return e
-				}
-				if len(b) <= 65536 {
-					break
-				}
-				if n == 1 {
-					return fmt.Errorf("metric sample exceeds frame limit")
-				}
-				n--
-			}
-			if err := send(msg); err != nil {
-				return err
-			}
-			samples = samples[n:]
-		}
-		return nil
-	}
-	if ack.MetricsVersion != nil && c.telemetry == nil {
-		if *ack.MetricsVersion != 1 && *ack.MetricsVersion != 2 {
-			return fmt.Errorf("unsupported metrics version")
-		}
-		c.samples.setOnline(true)
-		defer c.samples.setOnline(false)
-		metricsTimer = time.NewTicker(reportInterval)
-		metricsTick = metricsTimer.C
 	}
 	slog.Info("Panel connected; session established", "protocol_version", ack.ProtocolVersion, "heartbeat_seconds", ack.HeartbeatSeconds)
 	incoming := make(chan v1.Envelope, 8)
@@ -423,11 +312,11 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	defer tick.Stop()
 	telemetry := &telemetryClientSession{client: c, identity: id, credential: credential}
 	defer telemetry.close()
-	// hello_ack intentionally remains compatible with old Panels. Only a ready
-	// message confirms v3 on this management connection; retain HTTP while waiting.
+	// Only ready confirms telemetry on this management connection; retain HTTP
+	// across reconnects while waiting for the new session generation.
 	var negotiationTimer *time.Timer
 	var negotiationExpired <-chan time.Time
-	if c.telemetry != nil {
+	if c.telemetryEnabled {
 		negotiationTimer = time.NewTimer(10 * time.Second)
 		negotiationExpired = negotiationTimer.C
 		defer negotiationTimer.Stop()
@@ -489,18 +378,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		case <-negotiationExpired:
 			negotiationExpired = nil
 			if telemetry.generation == "" {
-				if err = c.resumeLegacySampling(); err != nil {
-					return fmt.Errorf("%w: fallback: %v", errTelemetryStopped, err)
-				}
-				if ack.MetricsVersion != nil {
-					if *ack.MetricsVersion != 1 && *ack.MetricsVersion != 2 {
-						return fmt.Errorf("unsupported metrics version")
-					}
-					c.samples.setOnline(true)
-					defer func() { c.samples.setOnline(false) }()
-					metricsTimer = time.NewTicker(reportInterval)
-					metricsTick = metricsTimer.C
-				}
+				return fmt.Errorf("Panel does not support telemetry v3")
 			}
 		case <-runnerDone:
 			return fmt.Errorf("%w: %v", errTelemetryStopped, c.telemetry.err)
@@ -520,10 +398,6 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 				continue
 			}
 			if err = send(v1.Message("node.inventory", id.NodeID, ID(), value)); err != nil {
-				return err
-			}
-		case <-metricsTick:
-			if err = sendMetrics(); err != nil {
 				return err
 			}
 		case <-tick.C:
@@ -546,20 +420,6 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 				}
 				if handleErr != nil {
 					return handleErr
-				}
-				if telemetry.applied && metricsTimer != nil {
-					metricsTimer.Stop()
-					metricsTick = nil
-				}
-				continue
-			}
-			if e.Type == "node.settings" {
-				var next v1.NodeSettings
-				if !liveSettings || e.Revision != nil || e.CorrelationID != "" || v1.Decode(e.Payload, &next) != nil || next.Revision == 0 {
-					return fmt.Errorf("invalid settings message")
-				}
-				if err = sendSettingsResult(e.MessageID, next); err != nil {
-					return err
 				}
 				continue
 			}
@@ -597,9 +457,6 @@ func (c *Client) waitCollectors() error {
 			result = errors.Join(result, fmt.Errorf("collector shutdown: %w", ctx.Err()))
 		}
 	}
-	if c.samples != nil {
-		wait(c.samples.done)
-	}
 	if c.assets != nil {
 		wait(c.assets.done)
 		c.assets = nil
@@ -608,7 +465,6 @@ func (c *Client) waitCollectors() error {
 		result = errors.Join(result, c.telemetry.stop(ctx))
 		c.telemetry = nil
 	}
-	c.samples = nil
 	c.runCtx = nil
 	return result
 }

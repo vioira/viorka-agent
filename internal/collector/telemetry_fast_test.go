@@ -22,7 +22,6 @@ func TestTelemetryFastGroupsAndContract(t *testing.T) {
 	write("sys/kernel/random/boot_id", "11111111-1111-4111-8111-111111111111")
 	write("net/sockstat", "TCP: inuse 2 orphan 0 tw 99\nUDP: inuse 3 mem 0\n")
 	write("net/sockstat6", "TCP6: inuse 4\nUDP6: inuse 5\n")
-	m.disk = func() (*v1.DiskMetrics, error) { t.Fatal("fast invoked disk collector"); return nil, nil }
 	if err := os.Remove(filepath.Join(m.root, "loadavg")); err != nil {
 		t.Fatal(err)
 	}

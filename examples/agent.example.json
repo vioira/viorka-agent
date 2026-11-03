@@ -3,5 +3,5 @@
   "node_name": "nat-tokyo-01",
   "state_dir": "/var/lib/viorka-agent",
   "log_level": "info",
-  "metrics_seconds": 30
+  "telemetry_v3": true
 }

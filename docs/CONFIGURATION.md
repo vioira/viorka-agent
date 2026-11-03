@@ -62,10 +62,6 @@ Agent 收到旧于当前 Revision 的普通 apply 指令时应拒绝；如果操
 - 完整代理配置可能仍包含业务 Secret，必须限定读权限和备份策略。
 - 日志只保留配置 Revision、Hash、操作结果，异常堆栈须脱敏。
 
-## 主机监控周期
-
-可选 `metrics_seconds` 默认 30 秒，允许 10–300 秒，0 使用默认值。该周期独立于心跳；只有 Panel 确认 `node.metrics.v1` 扩展后才发送指标。指标范围、失败状态、资源上限及平台边界见 [MONITORING.md](MONITORING.md)。
-
 ## 发行版与公网地址资产
 
 Agent 与 Panel 协商 `node.inventory.v1` 后，上线及每 5 分钟发送一次 `node.inventory`。Linux 读取 `/etc/os-release`，不存在时回退 `/usr/lib/os-release`，上报 ID、PRETTY_NAME 和 VERSION_ID；非 Linux 或读取失败保留基础 OS，并报告发行版未知。
@@ -74,19 +70,7 @@ Agent 与 Panel 协商 `node.inventory.v1` 后，上线及每 5 分钟发送一�
 
 Panel 将最新快照保存在 `nodes.inventory_json`，断线后保留，页面显示采集时间。此扩展需升级双方；旧 Panel 不确认扩展时 Agent 不发资产消息，新 Panel 对旧 Agent 不添加 ACK 字段。未部署的新二进制不会改变现有节点上报。
 
-## 每节点采集设置（node.settings.v2）
-
-握手 collection_settings 覆盖本会话配置：采集 0–10 秒默认 0（随 WSS 上报采集），历史入库 30–180 秒默认 60，WSS 发送 1–5 秒默认 2。资产刷新独立 300 秒，心跳 30 秒。快采集通过有界样本批次发送，慢采集重复快照保持原采样时间。新 Agent 不宣告旧 node.settings.v1；旧 Panel 下使用本地 metrics_seconds，不将旧资产周期解释成历史周期。详见 [MONITORING.md](MONITORING.md)。
-
-## 最后生效的节点采集设置
-
-新版 Panel 通过已协商的 `node.settings.live.v1` 在线下发采集设置，Agent 先校验、
-写入 `state_dir/node-settings.json`，再应用并回报 Revision。文件绑定 Panel/Node 身份，
-使用状态目录的权限与原子写入规则；不修改本地 `agent.json`。启动时恢复此设置并独立采集，
-断线只保留最新内存快照，不保存指标历史。旧 Panel 未下发设置时使用 metrics_seconds 回退值。
-旧版本兼容、错误码和确认语义见 [MONITORING.md](MONITORING.md)。
-
-### 新版监控接口过滤（开发中）
+### 新版监控接口过滤
 
 本地配置可增加 `network_filter`：
 
@@ -106,11 +90,11 @@ Panel 将最新快照保存在 `nodes.inventory_json`，断线后保留，页面
 规则生成稳定的 SHA-256 filter_revision，列表重排不改变统计口径标识。
 
 当前字段已通过配置校验并由独立 v3 网络采集器支持，但 v3 调度链路尚未启用，
-**现有运行中的旧版指标采集不会应用此字段**。后续启用时，接口名称、ifindex、
+新版采集应用该字段。接口名称、ifindex、
 boot_id 共同决定计数基线；切换采集周期保留基线，首次/身份变化/计数倒退/采集失败
 恢复不输出伪造速率。默认过滤是启发式规则，不保证等同于服务商计费流量。
 
-### 月流量账本文件（开发中）
+### 月流量账本文件
 
 新版月流量组件使用固定 `state_dir/traffic.dat`，不接受远程文件名或路径。
 状态目录须为 0700，文件须为当前用户拥有的 0600 普通单链接文件；读取不跟随
@@ -127,10 +111,9 @@ Node ID、UTC 月、boot_id、过滤规则、逐接口基线和累计。校验�
 当前账本及文件恢复测试已实现，尚未连接客户端采集/保存/退出生命周期；现有 Agent
 不会因这些开发中组件自动生成 traffic.dat。
 
-### 新版监控设置文件（开发中）
+### 新版监控设置文件
 
-v3 设置使用固定 `state_dir/node-telemetry-settings.json`，与旧
-`node-settings.json` 分开保存并绑定 Panel/Node。读取限制 16 KiB、0700 目录、
+v3 设置使用固定 `state_dir/node-telemetry-settings.json`，绑定 Panel/Node。读取限制 16 KiB、0700 目录、
 当前用户拥有的 0600 普通单链接文件，拒绝最终符号链接及重复/未知 JSON 字段。
 低 revision 或同 revision 不同内容均拒绝；只有原子写入成功后才更新已应用设置。
 同 revision 重投仍执行耐久写入，以恢复先前可能失败的目录同步。
@@ -141,9 +124,9 @@ C 只保存供退出实时后生效。修改 R 不重排 HTTP fast，跳过的�
 
 ### 新监控启动开关（受控验收）
 
-`telemetry_v3` 是本地 JSON 布尔字段，省略或 `false` 时不声明新能力；`true` 时声明 `node.telemetry.v3`，仍须 Panel 下发 ready 并应用独立设置后才启用双出口。此开关默认关闭，不表示长稳与平台验收已完成。修改后需重新启动 Agent，不能从远端任务修改本地开关。首次连接不支持新能力的 Panel 时保留旧协议协商路径。
+`telemetry_v3` 省略或 `true` 时声明 `node.telemetry.v3`，必须经 Panel ready 和设置确认后才能上报。`false` 明确停用监控，不恢复旧采集。Panel 默认启用，可用 `VIORKA_TELEMETRY_V3=false` 停用；两端启动配置修改需要重启。
 
-受控联合测试需 Panel 同时设置 `VIORKA_TELEMETRY_V3=true`。仅配置 Agent 不会让未支持的 Panel 自动接受 POST。回退配置时保留身份、旧设置与 `traffic.dat`，不清理代理服务或历史数据；已协商 v3 的进程重连后会等待 10 秒 ready；若始终没有 ready，则有界停止 v3 runner、保存月账本并恢复旧版采集/上报。关闭失败会明确退出而非假称回退成功。已收到 ready 但设置应用失败不会静默走此回退。再次协商 v3 会建立新的运行代次；普通 v3 重连保留原代次。该机制不修改代理服务，完整跨版本失败矩阵仍须验收。
+旧 `metrics_seconds` 已删除，严格配置解析会拒绝该字段；升级时从 bootstrap JSON 移除。旧 `node-settings.json` 不再读取或写入，不自动删除用户状态目录中的文件。没有 ready 的管理连接在 10 秒后报不支持错误并重连，不回退旧协议；正常 v3 重连保留采集运行代次。此行为不修改代理服务。
 
 ### v3 本地运行诊断
 

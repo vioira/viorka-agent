@@ -1,21 +1,17 @@
 package collector
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"path"
 	"sort"
 	"strings"
 	"unicode/utf8"
-
-	v1 "github.com/vioira/viorka-agent/protocol/v1"
 )
 
 var errNotFilesystemDirectory = errors.New("mount is not a directory")
 
 type filesystemMount struct{ point, kind, device, source string }
-type filesystemStat func(string) (string, *v1.DiskMetrics, error)
 
 // Only local disk filesystems are probed. In particular, never stat NFS, CIFS,
 // FUSE or autofs mounts, which can wait on an unavailable remote server.
@@ -102,57 +98,4 @@ func parseFilesystemMounts(data string) ([]filesystemMount, error) {
 		return mounts[i].point < mounts[j].point
 	})
 	return mounts, nil
-}
-
-func collectFilesystems(ctx context.Context, data string, stat filesystemStat) *v1.FilesystemMetrics {
-	failed := func() *v1.FilesystemMetrics {
-		return &v1.FilesystemMetrics{Mounts: []*v1.FilesystemUsage{}, Errors: []string{"filesystems_unavailable"}}
-	}
-	mounts, err := parseFilesystemMounts(data)
-	if err != nil {
-		return failed()
-	}
-	out := &v1.FilesystemMetrics{Mounts: []*v1.FilesystemUsage{}, Errors: []string{}}
-	devices, ids, btrfsSources := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	for _, m := range mounts {
-		if ctx.Err() != nil {
-			return failed()
-		}
-		// Btrfs subvolumes may expose different device numbers and fsids.
-		// mountinfo retains the backing source shared by these views.
-		if devices[m.device] || (m.kind == "btrfs" && btrfsSources[m.source]) {
-			continue
-		}
-		id, usage, err := stat(m.point)
-		if errors.Is(err, errNotFilesystemDirectory) {
-			continue
-		}
-		if err != nil || usage == nil || id == "" {
-			return failed()
-		}
-		devices[m.device] = true
-		if m.kind == "btrfs" {
-			btrfsSources[m.source] = true
-		}
-		if ids[id] {
-			continue
-		}
-		ids[id] = true
-		out.Mounts = append(out.Mounts, &v1.FilesystemUsage{MountPoint: m.point, FilesystemType: m.kind, Usage: usage})
-		if len(out.Mounts) > 32 {
-			return failed()
-		}
-	}
-	if ctx.Err() != nil {
-		return failed()
-	}
-	return out
-}
-
-func (m *Metrics) sampleFilesystems(ctx context.Context) *v1.FilesystemMetrics {
-	data, err := m.read(ctx, "self/mountinfo")
-	if err != nil {
-		return &v1.FilesystemMetrics{Mounts: []*v1.FilesystemUsage{}, Errors: []string{"filesystems_unavailable"}}
-	}
-	return collectFilesystems(ctx, data, statFilesystem)
 }

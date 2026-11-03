@@ -23,12 +23,8 @@ import (
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
 )
 
-func TestTelemetryClientReadyLiveAndHTTP(t *testing.T) { testTelemetryClientReconnect(t, false, false) }
-func TestTelemetryClientFallbackToLegacy(t *testing.T) { testTelemetryClientReconnect(t, true, false) }
-func TestTelemetryClientReenableAfterFallback(t *testing.T) {
-	testTelemetryClientReconnect(t, true, true)
-}
-func testTelemetryClientReconnect(t *testing.T, fallback, reenable bool) {
+func TestTelemetryClientReadyLiveAndHTTP(t *testing.T) { testTelemetryClientReconnect(t) }
+func testTelemetryClientReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	fixture := uploadFixture(t)
@@ -104,27 +100,14 @@ func testTelemetryClientReconnect(t *testing.T, fallback, reenable bool) {
 			if v1.Decode(hello.Payload, &payload) != nil || !slices.Contains(payload.Capabilities, v1.TelemetryCapability) {
 				return fmt.Errorf("v3 capability missing")
 			}
-			legacy := uint64(2)
-			ack := v1.HelloAck{ProtocolVersion: v1.Version, HeartbeatSeconds: 30, MetricsVersion: &legacy}
-			if fallback && connection == 2 {
-				ack.CollectionSettings = &v1.NodeSettings{Revision: 1, CollectionSeconds: 1, ReportSeconds: 60, WssReportSeconds: 1, ConnectionMode: "wss"}
+			for _, capability := range payload.Capabilities {
+				if capability != "node.inspect" && capability != "node.inventory.v1" && capability != v1.TelemetryCapability {
+					return fmt.Errorf("unexpected or retired capability: %s", capability)
+				}
 			}
+			ack := v1.HelloAck{ProtocolVersion: v1.Version, HeartbeatSeconds: 30}
 			if err = send(v1.Message("system.hello_ack", "node-demo", "ack", ack)); err != nil {
 				return err
-			}
-			if fallback && connection == 2 {
-				frame, err := read()
-				if err != nil {
-					return err
-				}
-				var batch v1.NodeMetricsBatch
-				if frame.Type != "node.metrics_batch" || v1.Decode(frame.Payload, &batch) != nil || len(batch.Samples) == 0 {
-					return fmt.Errorf("legacy fallback produced no valid batch: %s", frame.Type)
-				}
-				if time.Since(batch.Samples[len(batch.Samples)-1].SampledAt) > 5*time.Second {
-					return fmt.Errorf("legacy fallback replayed stale snapshot")
-				}
-				return nil
 			}
 			if err = send(v1.Message("node.telemetry.ready", "node-demo", "ready", v1.TelemetryReady{SessionGeneration: generation, Settings: &settings})); err != nil {
 				return err
@@ -160,12 +143,7 @@ func testTelemetryClientReconnect(t *testing.T, fallback, reenable bool) {
 				return err
 			}
 			if previous := lastRun.Load(); previous != nil {
-				if reenable && connection == 3 {
-					if previous.(string) == batch.RunID {
-						return fmt.Errorf("re-enabled runner reused stopped run identity")
-					}
-					lastSequence.Store(0)
-				} else if previous.(string) != batch.RunID {
+				if previous.(string) != batch.RunID {
 					return fmt.Errorf("run reset on reconnect")
 				}
 			}
@@ -239,7 +217,6 @@ func testTelemetryClientReconnect(t *testing.T, fallback, reenable bool) {
 	}
 	// Match Run's ownership: reconnects retain the same samplers and runner.
 	client.runCtx = ctx
-	client.samples = startSampling(ctx, 30*time.Second)
 	defer func() {
 		cancel()
 		if err := client.waitCollectors(); err != nil {
@@ -247,9 +224,6 @@ func testTelemetryClientReconnect(t *testing.T, fallback, reenable bool) {
 		}
 	}()
 	attempts := 2
-	if reenable {
-		attempts = 3
-	}
 	for i := 0; i < attempts; i++ {
 		_ = client.connect(ctx, state.Identity{PanelURL: origin, NodeID: "node-demo", PrivateKey: key}, execution)
 		select {
@@ -260,21 +234,12 @@ func testTelemetryClientReconnect(t *testing.T, fallback, reenable bool) {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
 		}
-		if fallback && i == 1 && client.telemetry != nil {
-			t.Fatal("v3 runner retained after fallback")
-		}
-	}
-	if reenable && client.telemetry == nil {
-		t.Fatal("v3 runner missing after re-enabling")
 	}
 	cancel()
 	if err := client.waitCollectors(); err != nil {
 		t.Fatal(err)
 	}
 	expectedSaves := int32(1)
-	if reenable {
-		expectedSaves = 2
-	}
 	if final.Load() != expectedSaves {
 		t.Fatalf("final ledger saves = %d, want %d", final.Load(), expectedSaves)
 	}
