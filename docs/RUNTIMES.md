@@ -6,7 +6,7 @@
 
 支持范围为 Linux + systemd + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v1`。运行目录 `/var/lib/viorka-engines/<name>`，独立 unit 为 `viorka-engine-<name>.service`。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
 
-安装不启动。配置以结构化任务为输入，不接受任意 Shell、URL 或原生配置。sing-box 执行 `check -c`，Xray 执行 `run -test -c`；Realm 2.9.6 没有原生配置检查命令，使用严格结构化渲染校验和启动后的本地检查。修改运行配置可能重启整个引擎。停止意愿会 disable/stop，停止时应用配置不启动。
+安装不启动。配置以结构化任务为输入，不接受任意 Shell、URL 或原生配置。sing-box 执行 `check -C`，Xray 执行 `run -test -c`；Realm 2.9.6 没有原生配置检查命令，使用严格结构化渲染校验和启动后的本地检查。修改运行配置可能重启整个引擎。停止意愿会 disable/stop，停止时应用配置不启动。
 
 预检包含绑定端口、目标 DNS/TCP 和 REALITY TLS 校验。Realm 的明确允许目标暂不可达仅豁免网络失败，不能绕过自循环和格式检查。失败尝试有界恢复，回滚失败返回 degraded。进程/本地监听正常不代表外部客户端可用。
 
@@ -21,3 +21,17 @@
 本地 Go、race、vet、协议和 Linux 双架构编译检查覆盖实现。运行时测试采用临时文件、本地监听及模拟 supervisor；没有在真实 Linux/systemd 和外部客户端上执行安装、VLESS REALITY、Realm、升级、故障回滚及重启恢复。因此清单为开发适配清单，不能宣称生产兼容。
 
 当前只有每种引擎一个固定版本；升级路径存在但尚无第二个可选版本及真实升级证据。受控运行日志查看、被动第三方实例发现仍未实现。用户确认本次记录实机验收缺口，不以模拟测试替代实机验收。
+
+## sing-box 分文件配置
+
+托管 sing-box 1.14.4 使用 `/var/lib/viorka-engines/sing-box/conf.d/`，校验与启动分别为 `sing-box check -C <目录>` 和 `sing-box run -C <目录>`。
+
+- `00-base.json`：warn 级别日志、时间戳及 direct 出站。
+- `00-egress.json`：本地 DNS、带域名解析器的 `sb-egress-direct` 出站，以及所有启用节点的 300ms sniff 规则；`route.final` 指向该出站，确保域名解析器实际用于默认出口。
+- `01-<service_id>.json`：每个启用的节点（协议中的 EngineService）一个 VLESS REALITY 配置文件，使用稳定 ID 命名，不采用可修改的显示名称。停用或删除节点后，新配置集不再包含其文件与 sniff 匹配项。凭据仍来自结构化任务，不使用示例中的固定密钥。
+
+配置目录权限为 0700，文件为 0600。`conf.d` 是指向同一私有引擎目录下 `.conf-*` 版本目录的受控相对符号链接；先生成完整配置集并执行原生校验，再原子替换链接，避免逐文件覆盖造成新旧混合。仅接受 Agent 格式的私有版本目录，拒绝已有普通 conf.d 目录、外部链接和悬空链接，避免接管手工配置。此目录专供 Agent 管理，手工添加文件会在 inspect 时报告不一致。
+
+旧安装在下一次 `engine.apply` 时迁移并更新 unit；单纯升级 Agent 不改写正在运行的配置。迁移失败恢复原链接与 unit，旧 `config.json` 保留作为迁移前备份，但新 unit 不再读取它。已迁移安装支持整组回滚，成功后清理被替换的版本目录；回滚失败保留现场并返回 degraded。进程中断可能留下 staging 版本目录，现有 journal 将中断任务标为 unknown，不自动重放或清理这些目录，需人工核查。Observed Revision 仍只在部署操作和必要健康检查成功后保存。
+
+文件系统测试覆盖分片、停用/删除、旧配置迁移、校验拒绝、回滚、权限与链接边界。当前未在实际 sing-box 1.14.4 / Linux systemd 环境验证目录合并和业务连通性；本地模拟 supervisor 的测试不代表实机验收通过。

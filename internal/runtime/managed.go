@@ -177,6 +177,9 @@ func (m *Managed) unit(name, dir string) []byte {
 	binary := filepath.Join(dir, name)
 	config := filepath.Join(dir, "config.json")
 	args := "run -c " + config
+	if name == "sing-box" {
+		args = "run -C " + filepath.Join(dir, "conf.d")
+	}
 	if name == "realm" {
 		config = filepath.Join(dir, "config.toml")
 		args = "-c " + config
@@ -275,7 +278,7 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		next.Version = c.Version
 		next.Revision = c.Revision
 		if enabled(next) > 0 {
-			err = m.validate(ctx, dir, next, filepath.Join(dir, configName(c.Name)))
+			err = m.validate(ctx, dir, next, activeConfig(dir, c.Name))
 		}
 		if err == nil && r.Status == "running" {
 			err = m.ctl(ctx, c.Name, "restart")
@@ -328,14 +331,21 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		return r, nil
 	}
 	if operation == "engine.inspect" {
-		if len(old.Command.Services) > 0 {
-			expected, err := Render(old.Command)
-			if err != nil {
-				return fail("engine_result_unknown")
-			}
-			actual, err := os.ReadFile(filepath.Join(dir, configName(c.Name)))
-			if err != nil || !bytes.Equal(expected, actual) {
-				return fail("engine_result_unknown")
+		splitConfig := c.Name == "sing-box" && activeConfig(dir, c.Name) == filepath.Join(dir, "conf.d")
+		if len(old.Command.Services) > 0 || splitConfig {
+			if splitConfig {
+				if err := inspectSingbox(dir, old.Command); err != nil {
+					return fail("engine_result_unknown")
+				}
+			} else {
+				expected, err := Render(old.Command)
+				if err != nil {
+					return fail("engine_result_unknown")
+				}
+				actual, err := os.ReadFile(filepath.Join(dir, configName(c.Name)))
+				if err != nil || !bytes.Equal(expected, actual) {
+					return fail("engine_result_unknown")
+				}
 			}
 			if r.Status == "running" && m.healthy(ctx, old.Command) != nil {
 				r.Status = "degraded"
@@ -395,7 +405,16 @@ func (m *Managed) validate(ctx context.Context, dir string, c v1.EngineCommand, 
 	binary := filepath.Join(dir, c.Name)
 	switch c.Name {
 	case "sing-box":
-		return m.run(ctx, binary, "check", "-c", path)
+		if filepath.Base(path) == "conf.d" {
+			if _, err := singboxGeneration(dir); err != nil {
+				return err
+			}
+		}
+		flag := "-c"
+		if filepath.Base(path) != "config.json" {
+			flag = "-C"
+		}
+		return m.run(ctx, binary, "check", flag, path)
 	case "xray":
 		return m.run(ctx, binary, "run", "-test", "-c", path)
 	case "realm":
@@ -454,34 +473,24 @@ func (m *Managed) healthy(ctx context.Context, c v1.EngineCommand) error {
 func (m *Managed) apply(ctx context.Context, id string, c v1.EngineCommand, old managedState, r v1.EngineResult) (v1.EngineResult, error) {
 	fail := func(code string) (v1.EngineResult, error) { r.ErrorCode = code; return r, nil }
 	dir := filepath.Join(m.root, c.Name)
-	target := filepath.Join(dir, configName(c.Name))
-	staging := filepath.Join(dir, "pending-"+configName(c.Name))
 	if err := preflight(ctx, c, old.Command, r.Status == "running"); err != nil {
 		return fail(err.Error())
 	}
-	data, err := Render(c)
-	if err != nil {
-		return fail("engine_invalid_config")
+	rollbackConfig, cleanup, code := m.prepareConfig(ctx, dir, c)
+	if cleanup != nil {
+		defer func() {
+			if r.ErrorCode != "engine_rollback_failed" && !(code == "" && r.ErrorCode == "engine_io_failed") {
+				cleanup()
+			}
+		}()
 	}
-	if err = atomicEngineFile(staging, data, 0600); err != nil {
-		return fail("engine_io_failed")
-	}
-	defer os.Remove(staging)
-	if enabled(c) > 0 && m.validate(ctx, dir, c, staging) != nil {
-		return fail("engine_invalid_config")
-	}
-	previous, readErr := os.ReadFile(target)
-	if readErr != nil && !os.IsNotExist(readErr) {
-		return fail("engine_io_failed")
-	}
-	if readErr == nil {
-		if err = atomicEngineFile(filepath.Join(dir, "previous-"+configName(c.Name)), previous, 0600); err != nil {
-			return fail("engine_io_failed")
+	if code != "" {
+		if code == "engine_rollback_failed" {
+			r.Status = "degraded"
 		}
+		return fail(code)
 	}
-	if err = atomicEngineFile(target, data, 0600); err != nil {
-		return fail("engine_io_failed")
-	}
+	var err error
 	running := c.RunIntent == "running" && enabled(c) > 0
 	if running {
 		err = m.ctl(ctx, c.Name, "enable")
@@ -500,12 +509,7 @@ func (m *Managed) apply(ctx context.Context, id string, c v1.EngineCommand, old 
 	if err != nil {
 		recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		rollback := error(nil)
-		if readErr == nil {
-			rollback = atomicEngineFile(target, previous, 0600)
-		} else {
-			rollback = os.Remove(target)
-		}
+		rollback := rollbackConfig(recovery)
 		if rollback == nil && r.Status == "running" {
 			rollback = m.ctl(recovery, c.Name, "restart")
 			if rollback == nil {
@@ -536,4 +540,39 @@ func (m *Managed) apply(ctx context.Context, id string, c v1.EngineCommand, old 
 		r.Status = "running"
 	}
 	return r, nil
+}
+
+func (m *Managed) prepareSingle(ctx context.Context, dir string, c v1.EngineCommand) (func(context.Context) error, func(), string) {
+	target := filepath.Join(dir, configName(c.Name))
+	staging := filepath.Join(dir, "pending-"+configName(c.Name))
+	data, err := Render(c)
+	if err != nil {
+		return nil, nil, "engine_invalid_config"
+	}
+	if err = atomicEngineFile(staging, data, 0600); err != nil {
+		return nil, nil, "engine_io_failed"
+	}
+	defer os.Remove(staging)
+	if enabled(c) > 0 && m.validate(ctx, dir, c, staging) != nil {
+		return nil, nil, "engine_invalid_config"
+	}
+	previous, readErr := os.ReadFile(target)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return nil, nil, "engine_io_failed"
+	}
+	if readErr == nil {
+		if err = atomicEngineFile(filepath.Join(dir, "previous-"+configName(c.Name)), previous, 0600); err != nil {
+			return nil, nil, "engine_io_failed"
+		}
+	}
+	if err = atomicEngineFile(target, data, 0600); err != nil {
+		return nil, nil, "engine_io_failed"
+	}
+
+	return func(context.Context) error {
+		if readErr == nil {
+			return atomicEngineFile(target, previous, 0600)
+		}
+		return os.Remove(target)
+	}, nil, ""
 }
