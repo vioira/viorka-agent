@@ -1375,6 +1375,16 @@
           "items": {
             "$ref": "#/$defs/EngineService"
           }
+        },
+        "outbounds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EngineOutbound"
+          },
+          "maxItems": 32
+        },
+        "routing": {
+          "$ref": "#/$defs/EngineRouting"
         }
       }
     },
@@ -1422,6 +1432,204 @@
           "maxLength": 64
         }
       }
+    },
+    "EngineOutbound": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "vless",
+            "socks",
+            "http"
+          ]
+        },
+        "server": {
+          "type": "string",
+          "maxLength": 253
+        },
+        "server_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "username": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "password": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "uuid": {
+          "type": "string",
+          "maxLength": 36
+        },
+        "server_name": {
+          "type": "string",
+          "maxLength": 253
+        },
+        "public_key": {
+          "type": "string",
+          "maxLength": 43
+        },
+        "short_id": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "flow": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "fingerprint": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "tls": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "type",
+        "server",
+        "server_port"
+      ]
+    },
+    "EngineRouteRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "inbound": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 32
+        },
+        "domain": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "maxItems": 64
+        },
+        "domain_suffix": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "maxItems": 64
+        },
+        "ip_cidr": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 64
+        },
+        "port": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "maxItems": 64
+        },
+        "port_range": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 11
+          },
+          "maxItems": 64
+        },
+        "network": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ]
+          },
+          "maxItems": 2
+        },
+        "outbound": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "match_all": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "enabled",
+        "outbound",
+        "match_all"
+      ]
+    },
+    "EngineRouting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outbound_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 32
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EngineRouteRule"
+          },
+          "maxItems": 128
+        },
+        "final": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sniff": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "outbound_ids",
+        "rules",
+        "final",
+        "sniff"
+      ]
     }
   }
 }

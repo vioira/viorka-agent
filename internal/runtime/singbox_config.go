@@ -28,25 +28,15 @@ func renderSingboxFiles(c v1.EngineCommand) (map[string][]byte, error) {
 	docs := map[string]any{
 		"00-base.json": map[string]any{"log": map[string]any{"level": "warn", "timestamp": true}, "outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}}},
 	}
-	tags := []string{}
 	index := 0
 	for _, service := range c.Services {
 		if !service.Enabled {
 			continue
 		}
 		docs["01-"+service.ID+".json"] = map[string]any{"inbounds": []json.RawMessage{full.Inbounds[index]}}
-		tags = append(tags, service.ID)
 		index++
 	}
-	rules := []any{}
-	if len(tags) > 0 {
-		rules = append(rules, map[string]any{"inbound": tags, "action": "sniff", "timeout": "300ms"})
-	}
-	docs["00-egress.json"] = map[string]any{
-		"outbounds": []any{map[string]any{"type": "direct", "tag": "sb-egress-direct", "domain_resolver": "sb-egress-dns"}},
-		"dns":       map[string]any{"servers": []any{map[string]any{"type": "local", "tag": "sb-egress-dns"}}},
-		"route":     map[string]any{"rules": rules, "final": "sb-egress-direct"},
-	}
+	docs["00-egress.json"] = singboxEgress(c)
 	files := make(map[string][]byte, len(docs))
 	for name, doc := range docs {
 		b, err := json.MarshalIndent(doc, "", "  ")

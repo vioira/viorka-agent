@@ -37,7 +37,10 @@ func Render(c v1.EngineCommand) ([]byte, error) {
 		}
 	}
 	if c.Name == "sing-box" {
-		return json.Marshal(map[string]any{"log": map[string]any{"disabled": true}, "inbounds": inbounds, "outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}}})
+		config := singboxEgress(c)
+		config["log"] = map[string]any{"disabled": true}
+		config["inbounds"] = inbounds
+		return json.Marshal(config)
 	}
 	return json.Marshal(map[string]any{"log": map[string]any{"access": "none", "error": "none", "loglevel": "none"}, "inbounds": inbounds, "outbounds": []any{map[string]any{"protocol": "freedom", "tag": "direct"}}})
 }

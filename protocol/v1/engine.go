@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const EngineCapability = "engine.manage.v2"
+const EngineCapability = "engine.manage.v3"
 
 func EngineOperation(op string) bool {
 	switch op {
@@ -20,6 +20,9 @@ func EngineOperation(op string) bool {
 }
 func (c EngineCommand) Validate(operation string) error {
 	bad := errors.New("invalid engine command")
+	if err := c.ValidateRouting(operation); err != nil {
+		return err
+	}
 	if !EngineOperation(operation) || (c.Name != "sing-box" && c.Name != "xray" && c.Name != "realm") || len(c.Version) < 1 || len(c.Version) > 64 || c.Revision > 1<<53-1 || (c.RunIntent != "running" && c.RunIntent != "stopped") || len(c.Services) > 32 {
 		return bad
 	}

@@ -323,3 +323,36 @@ func TestSingboxStateWriteFailureRetainsPreviousGeneration(t *testing.T) {
 		t.Fatal("recovery configuration removed", err)
 	}
 }
+
+func TestSingboxSharedOutboundsAndOrderedRules(t *testing.T) {
+	c := renderCommand(t, "sing-box")
+	c.Outbounds = []*v1.EngineOutbound{{ID: "proxy", Name: "Proxy", Type: "socks", Server: "127.0.0.1", ServerPort: 1080, Username: "user", Password: "secret"}}
+	c.Routing = &v1.EngineRouting{OutboundIds: []string{"proxy"}, Final: "reject", Sniff: true, Rules: []*v1.EngineRouteRule{
+		{ID: "one", Name: "Domain and network", Enabled: true, DomainSuffix: []string{"example.com"}, Network: []string{"tcp"}, Outbound: "proxy"},
+		{ID: "disabled", Name: "Disabled", Enabled: false, MatchAll: true, Outbound: "direct"},
+		{ID: "two", Name: "Direct", Enabled: true, Port: []uint64{443}, Outbound: "direct"},
+	}}
+	files, err := renderSingboxFiles(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Outbounds []struct{ Tag, Type, Password string }
+		Route     struct {
+			Final string
+			Rules []struct {
+				Type, Mode, Action, Outbound string
+				Rules                        []json.RawMessage
+			}
+		}
+	}
+	if err = json.Unmarshal(files["00-egress.json"], &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Outbounds) != 2 || doc.Outbounds[1].Tag != "egress-proxy" || doc.Outbounds[1].Password != "secret" {
+		t.Fatal("outbound rendering failed")
+	}
+	if len(doc.Route.Rules) != 4 || doc.Route.Rules[0].Action != "sniff" || doc.Route.Rules[1].Type != "logical" || doc.Route.Rules[1].Mode != "and" || len(doc.Route.Rules[1].Rules) != 2 || doc.Route.Rules[1].Outbound != "egress-proxy" || doc.Route.Rules[2].Outbound != "sb-egress-direct" || doc.Route.Rules[3].Action != "reject" {
+		t.Fatal("ordered routing semantics failed")
+	}
+}

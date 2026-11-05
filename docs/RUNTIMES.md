@@ -37,3 +37,11 @@
 文件系统测试覆盖分片、停用/删除、旧配置迁移、校验拒绝、回滚、权限与链接边界。当前未在实际 sing-box 1.14.4 / Linux systemd 环境验证目录合并和业务连通性；本地模拟 supervisor 的测试不代表实机验收通过。
 
 引擎任务使用 Panel 权威 Schema 的 `EngineService.short_ids` 数组，VLESS 为 1 至 8 个不重复（忽略大小写）的偶数位十六进制值，每项 2 至 16 位，Realm 为空数组。sing-box 的 `reality.short_id` 与 Xray 的 `realitySettings.shortIds` 原样接收完整列表。旧单值 `short_id` 不再接受；仅声明 `engine.manage.v2`，需要匹配的新 Panel，不回退 `engine.manage.v1`。本次在本地同步协议与渲染，未发布 Agent 制品。
+
+## 2026-11-05 共享出口与分流
+
+当前引擎能力为 `engine.manage.v3`，需配套的新 Panel；上文 v2 为此前交付记录。仅 sing-box apply 接收结构化出口与分流：SOCKS5、HTTP CONNECT（可选 TLS）及 VLESS TCP REALITY。Panel 解析全局出口，节点不支持覆盖；Agent 严格验证引用、范围、字段及协议约束。
+
+`00-egress.json` 渲染出口、顺序规则及默认动作。不同条件使用 logical AND，HTTP 仅用于明确 TCP 规则，默认拒绝以末尾 reject 动作实现；代理不可用不会自动直连。域名嗅探可关闭，有 IP 条件时通过本地 DNS 解析。DNS 查询和出口服务器域名使用本地解析器。整组文件复用原生检查、原子切换和失败回滚。
+
+已在 macOS arm64 上对官方 sing-box 1.14.4 发行包核验 SHA-256，并实际通过 `check -C`；`VIORKA_TEST_SINGBOX=/path/to/sing-box go test ./internal/runtime -run TestSingboxNative -v` 验证配置及本地 HTTP/SOCKS 夹具流量（规则、直连、代理、代理失效不降级、默认拒绝）。这不是 Linux/systemd、远端 TLS 或 UDP 实机验收；未发布或部署到真实节点。未设置环境变量时原生测试明确 skip，普通渲染和文件回滚测试仍执行。
