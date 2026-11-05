@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const EngineCapability = "engine.manage.v1"
+const EngineCapability = "engine.manage.v2"
 
 func EngineOperation(op string) bool {
 	switch op {
@@ -56,7 +56,7 @@ func (c EngineCommand) Validate(operation string) error {
 			}
 		}
 		if c.Name == "realm" {
-			if s.Uuid != "" || s.PrivateKey != "" || s.ShortID != "" || s.ServerName != "" {
+			if s.Uuid != "" || s.PrivateKey != "" || len(s.ShortIds) != 0 || s.ServerName != "" {
 				return bad
 			}
 		} else {
@@ -83,9 +83,16 @@ func (c EngineCommand) Validate(operation string) error {
 			if _, err = ecdh.X25519().NewPrivateKey(key); err != nil {
 				return bad
 			}
-			short, err := hex.DecodeString(s.ShortID)
-			if err != nil || len(short) != 8 {
+			if len(s.ShortIds) < 1 || len(s.ShortIds) > 8 {
 				return bad
+			}
+			seenIDs := map[string]bool{}
+			for _, id := range s.ShortIds {
+				short, err := hex.DecodeString(id)
+				if err != nil || len(short) < 1 || len(short) > 8 || seenIDs[strings.ToLower(id)] {
+					return bad
+				}
+				seenIDs[strings.ToLower(id)] = true
 			}
 		}
 	}

@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "message_id": "engine-message-demo",
+  "node_id": "node-demo",
+  "type": "task.dispatch",
+  "correlation_id": "engine-task-demo",
+  "sent_at": "2026-11-03T12:00:00Z",
+  "payload": {
+    "task_id": "engine-task-demo",
+    "operation": "engine.apply",
+    "resource_kind": "engine",
+    "resource_id": "engine-demo",
+    "idempotency_key": "engine-apply-short-ids-demo",
+    "attempt": 1,
+    "deadline_at": "2026-11-03T12:05:00Z",
+    "engine": {
+      "name": "sing-box",
+      "version": "1.14.4",
+      "revision": 1,
+      "run_intent": "stopped",
+      "allow_unreachable": false,
+      "services": [
+        {
+          "id": "service-demo",
+          "name": "VLESS demo",
+          "listen_host": "127.0.0.1",
+          "target_host": "example.com",
+          "server_name": "example.com",
+          "uuid": "12345678-1234-4234-8234-123456789012",
+          "private_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+          "short_ids": [
+            "0123456789abcdef",
+            "fedcba9876543210"
+          ],
+          "listen_port": 8443,
+          "target_port": 443,
+          "enabled": true
+        }
+      ]
+    },
+    "config_sha256": "1630580ddda1265bc87734df8b369c3cea4898689537b0e02e562050e37d9d72"
+  }
+}

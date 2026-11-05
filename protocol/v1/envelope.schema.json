@@ -1272,7 +1272,7 @@
         "server_name",
         "uuid",
         "private_key",
-        "short_id",
+        "short_ids",
         "listen_port",
         "target_port",
         "enabled"
@@ -1306,9 +1306,14 @@
           "type": "string",
           "maxLength": 253
         },
-        "short_id": {
-          "type": "string",
-          "maxLength": 253
+        "short_ids": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-fA-F]{2}){1,8}$"
+          }
         },
         "listen_port": {
           "type": "integer",

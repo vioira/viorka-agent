@@ -19,12 +19,12 @@ func renderCommand(t *testing.T, name string) v1.EngineCommand {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &v1.EngineService{ID: "service", Name: "service", Enabled: true, ListenHost: "127.0.0.1", ListenPort: 8443, TargetHost: "example.com", TargetPort: 443, ServerName: "example.com", Uuid: "12345678-1234-4234-8234-123456789012", PrivateKey: base64.RawURLEncoding.EncodeToString(key.Bytes()), ShortID: "0123456789abcdef"}
+	s := &v1.EngineService{ID: "service", Name: "service", Enabled: true, ListenHost: "127.0.0.1", ListenPort: 8443, TargetHost: "example.com", TargetPort: 443, ServerName: "example.com", Uuid: "12345678-1234-4234-8234-123456789012", PrivateKey: base64.RawURLEncoding.EncodeToString(key.Bytes()), ShortIds: []string{"0123456789abcdef", "ab12"}}
 	if name == "realm" {
 		s.ServerName = ""
 		s.Uuid = ""
 		s.PrivateKey = ""
-		s.ShortID = ""
+		s.ShortIds = []string{}
 	}
 	return v1.EngineCommand{Name: name, Version: v1.EngineVersion(name), Revision: 1, RunIntent: "running", Services: []*v1.EngineService{s}}
 }
@@ -48,6 +48,15 @@ func TestRenderUsesSeparateNativeFormats(t *testing.T) {
 				in := doc["inbounds"].([]any)[0].(map[string]any)
 				if name == "sing-box" && in["type"] != "vless" || name == "xray" && in["protocol"] != "vless" {
 					t.Fatal(in)
+				}
+				var shortIDs []any
+				if name == "sing-box" {
+					shortIDs = in["tls"].(map[string]any)["reality"].(map[string]any)["short_id"].([]any)
+				} else {
+					shortIDs = in["streamSettings"].(map[string]any)["realitySettings"].(map[string]any)["shortIds"].([]any)
+				}
+				if len(shortIDs) != 2 || shortIDs[0] != c.Services[0].ShortIds[0] || shortIDs[1] != c.Services[0].ShortIds[1] {
+					t.Fatalf("rendered short IDs: %+v", shortIDs)
 				}
 			}
 			c.Services[0].Enabled = false

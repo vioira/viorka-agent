@@ -4,7 +4,7 @@
 
 `internal/runtime/managed.go` 实现类型化任务运行时，`render.go` 生成 sing-box/Xray 的 VLESS REALITY 配置和 Realm TCP 配置，`download.go` 下载校验固定发行资源，`preflight.go` 进行端口和目标预检。旧 `Engine` 接口仅为接口定义，实际任务通过 `Managed.Execute` 路径执行。
 
-支持范围为 Linux + systemd + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v1`。运行目录 `/var/lib/viorka-engines/<name>`，独立 unit 为 `viorka-engine-<name>.service`。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
+支持范围为 Linux + systemd + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v2`。运行目录 `/var/lib/viorka-engines/<name>`，独立 unit 为 `viorka-engine-<name>.service`。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
 
 安装不启动。配置以结构化任务为输入，不接受任意 Shell、URL 或原生配置。sing-box 执行 `check -C`，Xray 执行 `run -test -c`；Realm 2.9.6 没有原生配置检查命令，使用严格结构化渲染校验和启动后的本地检查。修改运行配置可能重启整个引擎。停止意愿会 disable/stop，停止时应用配置不启动。
 
@@ -35,3 +35,5 @@
 旧安装在下一次 `engine.apply` 时迁移并更新 unit；单纯升级 Agent 不改写正在运行的配置。迁移失败恢复原链接与 unit，旧 `config.json` 保留作为迁移前备份，但新 unit 不再读取它。已迁移安装支持整组回滚，成功后清理被替换的版本目录；回滚失败保留现场并返回 degraded。进程中断可能留下 staging 版本目录，现有 journal 将中断任务标为 unknown，不自动重放或清理这些目录，需人工核查。Observed Revision 仍只在部署操作和必要健康检查成功后保存。
 
 文件系统测试覆盖分片、停用/删除、旧配置迁移、校验拒绝、回滚、权限与链接边界。当前未在实际 sing-box 1.14.4 / Linux systemd 环境验证目录合并和业务连通性；本地模拟 supervisor 的测试不代表实机验收通过。
+
+引擎任务使用 Panel 权威 Schema 的 `EngineService.short_ids` 数组，VLESS 为 1 至 8 个不重复（忽略大小写）的偶数位十六进制值，每项 2 至 16 位，Realm 为空数组。sing-box 的 `reality.short_id` 与 Xray 的 `realitySettings.shortIds` 原样接收完整列表。旧单值 `short_id` 不再接受；仅声明 `engine.manage.v2`，需要匹配的新 Panel，不回退 `engine.manage.v1`。本次在本地同步协议与渲染，未发布 Agent 制品。
