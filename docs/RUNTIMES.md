@@ -45,3 +45,5 @@
 `00-egress.json` 渲染出口、顺序规则及默认动作。不同条件使用 logical AND，HTTP 仅用于明确 TCP 规则，默认拒绝以末尾 reject 动作实现；代理不可用不会自动直连。域名嗅探可关闭，有 IP 条件时通过本地 DNS 解析。DNS 查询和出口服务器域名使用本地解析器。整组文件复用原生检查、原子切换和失败回滚。
 
 已在 macOS arm64 上对官方 sing-box 1.14.4 发行包核验 SHA-256，并实际通过 `check -C`；`VIORKA_TEST_SINGBOX=/path/to/sing-box go test ./internal/runtime -run TestSingboxNative -v` 验证配置及本地 HTTP/SOCKS 夹具流量（规则、直连、代理、代理失效不降级、默认拒绝）。这不是 Linux/systemd、远端 TLS 或 UDP 实机验收；未发布或部署到真实节点。未设置环境变量时原生测试明确 skip，普通渲染和文件回滚测试仍执行。
+
+2026-11-06：EngineOutbound 支持普通 VLESS TCP：type=vless、tls=false（或省略），仅使用服务器、端口和 UUID，禁止 REALITY/TLS 字段和 Flow。tls=true 仍要求完整 REALITY 参数。字段及 engine.manage.v3 不变；旧实现明确拒绝普通 TCP，需配套更新 Agent 校验。本次仅本地实现，未发布或部署。
