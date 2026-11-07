@@ -10,7 +10,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -22,6 +24,21 @@ const maxArchive = 128 << 20
 const maxBinary = 256 << 20
 
 func Download(ctx context.Context, r v1.EngineRelease) ([]byte, error) {
+	return downloadLogged(ctx, r, slog.New(slog.DiscardHandler))
+}
+
+func downloadLogged(ctx context.Context, r v1.EngineRelease, logger *slog.Logger) (binary []byte, resultErr error) {
+	started := time.Now()
+	stage := "request"
+	logger.Debug("Engine download started")
+	defer func() {
+		if resultErr != nil {
+			logger.Error("Engine download failed", "stage", stage, "error", resultErr, "duration", time.Since(started))
+		} else {
+			logger.Debug("Engine download completed", "binary_bytes", len(binary), "duration", time.Since(started))
+		}
+	}()
+
 	client := &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) > 5 || req.URL.Scheme != "https" || (req.URL.Hostname() != "github.com" && req.URL.Hostname() != "release-assets.githubusercontent.com" && req.URL.Hostname() != "objects.githubusercontent.com") {
 			return errors.New("untrusted redirect")
@@ -34,20 +51,34 @@ func Download(ctx context.Context, r v1.EngineRelease) ([]byte, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		// Strip URL-bearing wrappers: signed redirect queries must not enter logs.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		logger.Error("Engine HTTP request failed", "error", err)
 		return nil, errors.New("engine_download_failed")
 	}
 	defer resp.Body.Close()
+	logger.Debug("Engine download response", "http_status", resp.StatusCode, "content_length", resp.ContentLength)
 	if resp.StatusCode != 200 {
+		logger.Error("Engine download HTTP status rejected", "http_status", resp.StatusCode)
 		return nil, errors.New("engine_download_failed")
 	}
+	stage = "body"
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxArchive+1))
 	if err != nil || len(data) > maxArchive {
+		logger.Error("Engine archive read failed", "error", err, "bytes", len(data), "limit", maxArchive)
 		return nil, errors.New("engine_download_failed")
 	}
+	stage = "checksum"
+	logger.Debug("Engine archive downloaded; verifying checksum", "bytes", len(data))
 	sum := sha256.Sum256(data)
 	if hex.EncodeToString(sum[:]) != r.SHA256 {
 		return nil, errors.New("engine_checksum")
 	}
+	stage = "extract"
+	logger.Debug("Engine archive checksum verified; extracting")
 	return extractBinary(data, r.Name, strings.HasSuffix(r.URL, ".zip"))
 }
 func extractBinary(data []byte, name string, zipped bool) ([]byte, error) {

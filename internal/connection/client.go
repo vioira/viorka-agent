@@ -193,6 +193,7 @@ func (c *Client) Run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return err
 	}
+	exec.Logger = c.log()
 	runCtx, stopSampling := context.WithCancel(ctx)
 	c.runCtx = runCtx
 	defer func() { stopSampling(); runErr = errors.Join(runErr, c.waitCollectors()) }()

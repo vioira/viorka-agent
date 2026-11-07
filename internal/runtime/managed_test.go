@@ -112,3 +112,50 @@ func TestManagedInstallApplyAndManualStop(t *testing.T) {
 		t.Fatalf("takeover %+v %v", result, err)
 	}
 }
+
+func TestManagedInspectNotInstalled(t *testing.T) {
+	for _, saved := range []bool{false, true} {
+		t.Run(strconv.FormatBool(saved), func(t *testing.T) {
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := NewManaged()
+			m.root = filepath.Join(root, "engines")
+			m.units = filepath.Join(root, "units")
+			m.supported = func() bool { return true }
+			m.run = func(context.Context, string, ...string) error {
+				t.Fatal("inspect of absent engine must not invoke supervisor")
+				return nil
+			}
+			c := v1.EngineCommand{Name: "sing-box", Version: v1.EngineVersion("sing-box"), Revision: 2, RunIntent: "stopped"}
+			if saved {
+				if err := privateDirectory(filepath.Join(m.root, c.Name)); err != nil {
+					t.Fatal(err)
+				}
+				previous := c
+				previous.Revision = 1
+				if err := m.save(c.Name, managedState{"engine", previous, false}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := m.Execute(context.Background(), "engine", "engine.inspect", c)
+			if err != nil || result.ErrorCode != "" || result.Status != "not_installed" {
+				t.Fatalf("inspect: %+v %v", result, err)
+			}
+			// Inspect must not turn an absent engine into an installed one.
+			actual, err := m.state(c.Name)
+			if saved {
+				if err != nil || actual.Installed || actual.Command.Revision != 1 {
+					t.Fatalf("state changed: %+v %v", actual, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("unexpected state: %+v %v", actual, err)
+			}
+			result, err = m.Execute(context.Background(), "engine", "engine.start", c)
+			if err != nil || result.ErrorCode != "engine_unsupported" {
+				t.Fatalf("start without installation: %+v %v", result, err)
+			}
+		})
+	}
+}

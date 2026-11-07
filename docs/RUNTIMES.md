@@ -55,3 +55,9 @@ OpenRC 使用固定路径的 rc-service、rc-update 和 supervise-daemon；能�
 sing-box 分文件配置切换及失败回滚保留 OpenRC 脚本的 0755 权限。探测到第三方 /etc/init.d/<引擎名> 时拒绝接管。任务协议和 engine.manage.v3 不变，更新 Agent 并重连后上报能力，Panel 按该能力放行安装。
 
 回归测试覆盖探测依赖、控制命令及错误、安装/卸载、配置回滚、权限和第三方脚本拒绝。CI 新增 Alpine 3.21 amd64/arm64 的真实 OpenRC 生命周期测试，使用本地进程夹具验证启停、崩溃恢复与开机自启链接；该测试不验证真实 sing-box 的代理流量。
+
+### 引擎任务诊断日志
+
+引擎任务沿用节点动态 log_level，关联 task_id、resource_id、operation、attempt、engine、version、revision。info 记录任务开始和完成；error 记录失败、执行阶段及耗时；debug 记录 Journal 重投、意图/结果持久化、下载响应状态与大小、校验/解压、二进制和服务写入、配置准备及命令执行。中断记录重投时明确记录拒绝重复副作用。
+
+服务管理命令的诊断输出上限为 8 KiB，超出标记截断；失败时为 error，正常结果及未启动状态探测为 debug。引擎配置校验器只记录命令名、退出错误和耗时，不输出原始 stdout/stderr、参数或配置内容。下载错误剥离 URL 包装，避免记录签名下载链接。代理进程的持续业务日志仍按服务模板输出到 /dev/null。

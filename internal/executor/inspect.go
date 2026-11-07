@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/vioira/viorka-agent/internal/state"
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
+	"log/slog"
 	"os"
 	"reflect"
 	"runtime"
@@ -19,6 +20,7 @@ type entry struct {
 	Reply       v1.TaskReply           `json:"reply"`
 }
 type Executor struct {
+	Logger    *slog.Logger
 	Calibrate func(context.Context, string, v1.TrafficCalibration, time.Time) (*v1.TrafficCalibration, error)
 	store     *state.Store
 	node      string

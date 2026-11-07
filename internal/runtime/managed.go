@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -28,6 +29,7 @@ type managedState struct {
 	Installed bool             `json:"installed"`
 }
 type Managed struct {
+	logger         *slog.Logger
 	supported      func() bool
 	detectExternal func(string) bool
 	root, units    string
@@ -37,12 +39,20 @@ type Managed struct {
 	download       func(context.Context, v1.EngineRelease) ([]byte, error)
 }
 
-func NewManaged() *Managed {
+func NewManaged(loggers ...*slog.Logger) *Managed {
 	m := &Managed{root: managedRoot, units: unitRoot, run: runControlled, download: Download, supported: Supported}
 	m.openrc = serviceManager("/") == "openrc"
 	if m.openrc {
 		m.units = "/etc/init.d"
 		m.runlevels = "/etc/runlevels"
+	}
+	m.logger = slog.New(slog.DiscardHandler)
+	if len(loggers) > 0 && loggers[0] != nil {
+		m.logger = loggers[0]
+	}
+	m.run = m.runLogged
+	m.download = func(ctx context.Context, release v1.EngineRelease) ([]byte, error) {
+		return downloadLogged(ctx, release, m.logger)
 	}
 	m.detectExternal = m.external
 	return m
@@ -156,7 +166,12 @@ func (m *Managed) save(name string, s managedState) error {
 	if err != nil {
 		return err
 	}
-	return atomicEngineFile(filepath.Join(m.root, name, "state.json"), b, 0600)
+	m.logger.Debug("Engine state persist", "installed", s.Installed, "observed_revision", s.Command.Revision)
+	err = atomicEngineFile(filepath.Join(m.root, name, "state.json"), b, 0600)
+	if err != nil {
+		m.logger.Error("Engine state persist failed", "error", err)
+	}
+	return err
 }
 func (m *Managed) external(name string) bool {
 	for _, dir := range []string{"/usr/bin", "/usr/local/bin", "/bin", "/opt"} {
@@ -207,7 +222,11 @@ func (m *Managed) unit(name, dir string) []byte {
 }
 func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.EngineCommand) (v1.EngineResult, error) {
 	r := v1.EngineResult{Name: c.Name, Version: c.Version, Revision: c.Revision, Status: "unknown"}
-	fail := func(code string) (v1.EngineResult, error) { r.ErrorCode = code; return r, nil }
+	fail := func(code string) (v1.EngineResult, error) {
+		m.logger.Error("Engine operation failed", "error_code", code, "status", r.Status)
+		r.ErrorCode = code
+		return r, nil
+	}
 	if c.Validate(operation) != nil || !m.supported() {
 		return fail("engine_unsupported")
 	}
@@ -256,10 +275,14 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 			}
 			return fail(code)
 		}
+		m.logger.Debug("Engine binary install", "bytes", len(binary))
 		if err = atomicEngineFile(filepath.Join(dir, c.Name), binary, 0700); err != nil {
+			m.logger.Error("Engine binary install failed", "error", err)
 			return fail("engine_io_failed")
 		}
+		m.logger.Debug("Engine service install", "openrc", m.openrc)
 		if err = atomicEngineFile(unitPath, m.unit(c.Name, dir), m.unitMode()); err != nil {
+			m.logger.Error("Engine service install failed", "error", err)
 			return fail("engine_io_failed")
 		}
 		if err = m.ctl(ctx, c.Name, "daemon-reload"); err != nil {
@@ -272,6 +295,9 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		return r, nil
 	}
 	if !old.Installed {
+		if operation == "engine.inspect" {
+			return r, nil
+		}
 		return fail("engine_unsupported")
 	}
 	if operation == "engine.upgrade" {
@@ -490,11 +516,16 @@ func (m *Managed) healthy(ctx context.Context, c v1.EngineCommand) error {
 	return errors.New("health failed")
 }
 func (m *Managed) apply(ctx context.Context, id string, c v1.EngineCommand, old managedState, r v1.EngineResult) (v1.EngineResult, error) {
-	fail := func(code string) (v1.EngineResult, error) { r.ErrorCode = code; return r, nil }
+	fail := func(code string) (v1.EngineResult, error) {
+		m.logger.Error("Engine operation failed", "error_code", code, "status", r.Status)
+		r.ErrorCode = code
+		return r, nil
+	}
 	dir := filepath.Join(m.root, c.Name)
 	if err := preflight(ctx, c, old.Command, r.Status == "running"); err != nil {
 		return fail(err.Error())
 	}
+	m.logger.Debug("Engine configuration prepare")
 	rollbackConfig, cleanup, code := m.prepareConfig(ctx, dir, c)
 	if cleanup != nil {
 		defer func() {
@@ -528,6 +559,7 @@ func (m *Managed) apply(ctx context.Context, id string, c v1.EngineCommand, old 
 	if err != nil {
 		recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		m.logger.Warn("Engine configuration rollback started")
 		rollback := rollbackConfig(recovery)
 		if rollback == nil && r.Status == "running" {
 			rollback = m.ctl(recovery, c.Name, "restart")
