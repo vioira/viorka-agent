@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -19,6 +20,14 @@ func TestOpenRCNativeLifecycle(t *testing.T) {
 		t.Skip("requires disposable root OpenRC environment")
 	}
 	m := NewManaged()
+	// Keep the production environment, arguments and deadline while exposing
+	// fixture command diagnostics in CI. No real engine credentials are used.
+	m.run = func(ctx context.Context, path string, args ...string) error {
+		var output bytes.Buffer
+		err := runControlledOutput(ctx, &output, path, args...)
+		t.Logf("command: %s %q; error: %v\n%s", path, args, err, output.String())
+		return err
+	}
 	if !m.openrc || !Supported() {
 		t.Fatal("OpenRC capability unavailable")
 	}

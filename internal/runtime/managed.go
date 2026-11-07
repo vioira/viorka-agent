@@ -54,12 +54,16 @@ func Supported() bool {
 	return serviceManager("/") != ""
 }
 func runControlled(ctx context.Context, path string, args ...string) error {
+	return runControlledOutput(ctx, io.Discard, path, args...)
+}
+
+func runControlledOutput(ctx context.Context, output io.Writer, path string, args ...string) error {
 	timeout, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	c := exec.CommandContext(timeout, path, args...)
 	c.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C", "HOME=/"}
-	c.Stdout = io.Discard
-	c.Stderr = io.Discard
+	c.Stdout = output
+	c.Stderr = output
 	return c.Run()
 }
 func systemctl() string {
