@@ -19,7 +19,8 @@ jobs:
           docker run --rm -v "$PWD:/src:ro" -w /src alpine:3.22 sh -ec '
             # The minimal Alpine image needs BusyBox service scripts for syslog.
             apk add --no-cache openrc busybox-openrc
-            mkdir -p /run/openrc
+            # rc-service needs the lock directory normally created during boot.
+            mkdir -p /run/openrc/exclusive
             touch /run/openrc/softlevel
             sed -i "s/^#rc_sys=.*/rc_sys=\"docker\"/" /etc/rc.conf
             rc-service syslog start
@@ -43,7 +44,8 @@ jobs:
         run: |
           docker run --rm --platform linux/${{ matrix.arch }} -v /tmp/runtime.test:/runtime.test:ro alpine:3.21 sh -ec '
             apk add --no-cache openrc
-            mkdir -p /run/openrc
+            # rc-service needs the lock directory normally created during boot.
+            mkdir -p /run/openrc/exclusive
             touch /run/openrc/softlevel
             sed -i "s/^#rc_sys=.*/rc_sys=\"docker\"/" /etc/rc.conf
             VIORKA_DISPOSABLE_SERVICE_TEST=yes /runtime.test -test.run "^TestOpenRCNativeLifecycle$" -test.v

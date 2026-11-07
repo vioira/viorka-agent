@@ -19,6 +19,11 @@ func TestOpenRCNativeLifecycle(t *testing.T) {
 	if os.Getenv("VIORKA_DISPOSABLE_SERVICE_TEST") != "yes" {
 		t.Skip("requires disposable root OpenRC environment")
 	}
+	// A container does not run OpenRC boot initialization. Check its lock
+	// directory explicitly: OpenRC reports ENOENT here as "already starting".
+	if info, err := os.Stat("/run/openrc/exclusive"); err != nil || !info.IsDir() {
+		t.Fatalf("OpenRC test environment requires /run/openrc/exclusive: %v", err)
+	}
 	m := NewManaged()
 	// Keep the production environment, arguments and deadline while exposing
 	// fixture command diagnostics in CI. No real engine credentials are used.
