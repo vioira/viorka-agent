@@ -161,7 +161,7 @@ func TestManagedInspectNotInstalled(t *testing.T) {
 				}
 				previous := c
 				previous.Revision = 1
-				if err := m.save(c.Name, managedState{"engine", previous, false}); err != nil {
+				if err := m.save(context.Background(), c.Name, managedState{"engine", previous, false}); err != nil {
 					t.Fatal(err)
 				}
 			}

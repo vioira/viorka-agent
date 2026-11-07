@@ -55,6 +55,7 @@ func (m *Managed) runLogged(ctx context.Context, path string, args ...string) er
 			attrs = append(attrs, "context_error", ctx.Err())
 		}
 		if !probe {
+			reportFailure(ctx, err)
 			m.logger.Error("Engine command failed", attrs...)
 			return err
 		}

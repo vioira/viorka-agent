@@ -32,13 +32,16 @@ func TestEngineJournalDoesNotReplayInterruptedEffects(t *testing.T) {
 	raw, _ := json.Marshal(command)
 	hash := sha256.Sum256(raw)
 	d := v1.TaskDispatch{TaskID: "task", Operation: "engine.install", ResourceKind: "engine", ResourceID: "engine", IdempotencyKey: "key", Attempt: &attempt, DeadlineAt: time.Now().Add(time.Minute), Engine: command, ConfigSHA256: hex.EncodeToString(hash[:])}
-	entry := engineEntry{TaskID: d.TaskID, ResourceID: d.ResourceID, Operation: d.Operation, Hash: d.ConfigSHA256, Deadline: d.DeadlineAt, Reply: v1.TaskReply{TaskID: d.TaskID, ResourceID: d.ResourceID, State: "running", Attempt: 1}}
+	entry := engineEntry{Stage: "extract", TaskID: d.TaskID, ResourceID: d.ResourceID, Operation: d.Operation, Hash: d.ConfigSHA256, Deadline: d.DeadlineAt, Reply: v1.TaskReply{TaskID: d.TaskID, ResourceID: d.ResourceID, State: "running", Attempt: 1}}
 	if err = store.Write("engine-tasks.json", map[string]engineEntry{"key": entry}); err != nil {
 		t.Fatal(err)
 	}
 	reply, err := e.ExecuteEngine(context.Background(), d)
 	if err != nil || reply.State != "failed" || reply.ErrorCode != "engine_result_unknown" {
 		t.Fatalf("%+v %v", reply, err)
+	}
+	if reply.Engine.Diagnostic == nil || reply.Engine.Diagnostic.Stage != "extract" || !reply.Engine.Diagnostic.Interrupted || strings.Contains(reply.Engine.Diagnostic.Message, "内存") {
+		t.Fatalf("missing or invented recovery diagnosis: %+v", reply.Engine.Diagnostic)
 	}
 	for _, want := range []string{"task_id=task", "operation=engine.install", "attempt=1", "Engine task journal replay", "Engine task interrupted", "engine_result_unknown", "stage=journal_replay"} {
 		if !strings.Contains(logs.String(), want) {

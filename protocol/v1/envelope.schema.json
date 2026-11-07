@@ -1430,6 +1430,9 @@
         "error_code": {
           "type": "string",
           "maxLength": 64
+        },
+        "diagnostic": {
+          "$ref": "#/$defs/EngineDiagnostic"
         }
       }
     },
@@ -1630,6 +1633,59 @@
         "final",
         "sniff"
       ]
+    },
+    "EngineDiagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "message",
+        "interrupted"
+      ],
+      "properties": {
+        "stage": {
+          "type": "string",
+          "enum": [
+            "prepare",
+            "download",
+            "checksum",
+            "extract",
+            "install_binary",
+            "install_service",
+            "backup",
+            "validate",
+            "preflight",
+            "apply_config",
+            "start",
+            "stop",
+            "enable",
+            "disable",
+            "inspect",
+            "health",
+            "rollback",
+            "persist_state",
+            "persist_result"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "interrupted": {
+          "type": "boolean"
+        },
+        "http_status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "exit_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      }
     }
   }
 }

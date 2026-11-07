@@ -226,7 +226,7 @@ func TestSingboxFailedApplyRestoresLegacy(t *testing.T) {
 	c.Services = nil
 	c.RunIntent = "stopped"
 	old := managedState{EngineID: "engine", Command: c, Installed: true}
-	if err := m.save(c.Name, old); err != nil {
+	if err := m.save(context.Background(), c.Name, old); err != nil {
 		t.Fatal(err)
 	}
 	c.Revision++

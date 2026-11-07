@@ -211,6 +211,9 @@ func (m *Managed) prepareConfig(ctx context.Context, dir string, c v1.EngineComm
 		}
 		return m.ctl(recovery, c.Name, "daemon-reload")
 	}
+	if err := checkpoint(ctx, "apply_config"); err != nil {
+		return nil, cleanup, "engine_io_failed"
+	}
 	err = switchSingbox(dir, next)
 	if err == nil {
 		err = atomicEngineFile(unitPath, m.unit(c.Name, dir), m.unitMode())
@@ -219,7 +222,7 @@ func (m *Managed) prepareConfig(ctx context.Context, dir string, c v1.EngineComm
 		err = m.ctl(ctx, c.Name, "daemon-reload")
 	}
 	if err != nil {
-		recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if rollback(recovery) != nil {
 			return nil, nil, "engine_rollback_failed"

@@ -4,7 +4,7 @@
 
 `internal/runtime/managed.go` 实现类型化任务运行时，`render.go` 生成 sing-box/Xray 的 VLESS REALITY 配置和 Realm TCP 配置，`download.go` 下载校验固定发行资源，`preflight.go` 进行端口和目标预检。旧 `Engine` 接口仅为接口定义，实际任务通过 `Managed.Execute` 路径执行。
 
-支持范围为 Linux + systemd/OpenRC + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v3`。运行目录 `/var/lib/viorka-engines/<name>`，systemd unit 为 `viorka-engine-<name>.service`；OpenRC 服务脚本为 `/etc/init.d/viorka-engine-<name>`（0755）。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
+支持范围为 Linux + systemd/OpenRC + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v4`。运行目录 `/var/lib/viorka-engines/<name>`，systemd unit 为 `viorka-engine-<name>.service`；OpenRC 服务脚本为 `/etc/init.d/viorka-engine-<name>`（0755）。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
 
 安装不启动。配置以结构化任务为输入，不接受任意 Shell、URL 或原生配置。sing-box 执行 `check -C`，Xray 执行 `run -test -c`；Realm 2.9.6 没有原生配置检查命令，使用严格结构化渲染校验和启动后的本地检查。修改运行配置可能重启整个引擎。停止意愿会 disable/stop，停止时应用配置不启动。
 
@@ -71,3 +71,9 @@ sing-box 分文件配置切换及失败回滚保留 OpenRC 脚本的 0755 权限
 升级的旧二进制备份和失败恢复也改为流式原子写入，不将旧、新二进制读入 Go 堆。磁盘须容纳压缩包、解压后的新二进制及升级备份；原有校验、下载大小限制、服务启停和健康检查语义保持不变。
 
 2026-11-07 在 macOS arm64 上运行 `go test ./internal/runtime -run '^$' -bench BenchmarkExtractBinaryStream -benchmem -benchtime=1x`：4 MiB 与 96 MiB 的 tar.gz 二进制解压落盘均分配 121,616 字节（约 119 KiB），40 次分配。该数据为解压函数的 Go 分配量，不是整个 Agent 的 RSS。回归覆盖 tar.gz/zip、校验拒绝、截断归档、下载中断、任务取消、写入失败、临时文件清理、备份恢复和链接拒绝。
+
+### 面板任务诊断（engine.manage.v4）
+
+失败回执通过 EngineResult.diagnostic 携带固定阶段、脱敏中文原因、可选 HTTP 状态和退出码。执行器在下载、校验、解压、文件切换、服务命令、健康检查和状态持久化前更新 Journal；重投未完成任务时保留最后阶段并标记 interrupted，不重复执行副作用。面板任务详情和节点任务的失败提示直接展示这些字段，不依赖日志等级。消息只由固定分类生成，不携带原始命令输出、配置、凭据或 URL。
+
+Panel 权威 Schema 与两个仓库生成模型同步为 engine.manage.v4，需配套发布和更新。旧任务缺失阶段时回报 prepare，不猜测 OOM 或具体退出信号。

@@ -16,6 +16,7 @@ import (
 )
 
 type engineEntry struct {
+	Stage      string       `json:"stage,omitempty"`
 	TaskID     string       `json:"task_id"`
 	ResourceID string       `json:"resource_id"`
 	Operation  string       `json:"operation"`
@@ -73,7 +74,11 @@ func (e *Executor) ExecuteEngine(ctx context.Context, d v1.TaskDispatch) (reply 
 			logger.Warn("Engine task interrupted; refusing to repeat side effects")
 			r.State = "failed"
 			r.ErrorCode = "engine_result_unknown"
-			r.Engine = &v1.EngineResult{Name: d.Engine.Name, Version: d.Engine.Version, Revision: d.Engine.Revision, Status: "unknown", ErrorCode: r.ErrorCode}
+			lastStage := old.Stage
+			if lastStage == "" {
+				lastStage = "prepare"
+			}
+			r.Engine = &v1.EngineResult{Diagnostic: &v1.EngineDiagnostic{Stage: lastStage, Message: "上次执行异常中断，未重复执行有副作用的操作", Interrupted: true}, Name: d.Engine.Name, Version: d.Engine.Version, Revision: d.Engine.Revision, Status: "unknown", ErrorCode: r.ErrorCode}
 		}
 		return r, nil
 	}
@@ -86,7 +91,7 @@ func (e *Executor) ExecuteEngine(ctx context.Context, d v1.TaskDispatch) (reply 
 		return v1.TaskReply{}, fmt.Errorf("engine journal full")
 	}
 	reply = v1.TaskReply{TaskID: d.TaskID, ResourceID: d.ResourceID, Attempt: *d.Attempt, State: "running"}
-	item := engineEntry{TaskID: d.TaskID, ResourceID: d.ResourceID, Operation: d.Operation, Hash: hash, Deadline: d.DeadlineAt, Reply: reply}
+	item := engineEntry{Stage: "prepare", TaskID: d.TaskID, ResourceID: d.ResourceID, Operation: d.Operation, Hash: hash, Deadline: d.DeadlineAt, Reply: reply}
 	journal[d.IdempotencyKey] = item
 	stage = "journal_intent"
 	if err = e.store.Write("engine-tasks.json", journal); err != nil {
@@ -96,6 +101,11 @@ func (e *Executor) ExecuteEngine(ctx context.Context, d v1.TaskDispatch) (reply 
 	stage = "runtime"
 	bounded, cancel := context.WithDeadline(ctx, d.DeadlineAt)
 	defer cancel()
+	bounded, diagnostics := managed.TrackDiagnostics(bounded, func(next string) error {
+		item.Stage = next
+		journal[d.IdempotencyKey] = item
+		return e.store.Write("engine-tasks.json", journal)
+	})
 	var result v1.EngineResult
 	if bounded.Err() != nil {
 		result = v1.EngineResult{Name: d.Engine.Name, Version: d.Engine.Version, Revision: d.Engine.Revision, Status: "unknown", ErrorCode: "deadline_exceeded"}
@@ -110,6 +120,7 @@ func (e *Executor) ExecuteEngine(ctx context.Context, d v1.TaskDispatch) (reply 
 	if result.ErrorCode != "" {
 		reply.State = "failed"
 		reply.ErrorCode = result.ErrorCode
+		result.Diagnostic = diagnostics.Result(result.ErrorCode)
 	}
 	stage = "journal_result"
 	item.Reply = reply

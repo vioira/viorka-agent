@@ -83,6 +83,18 @@ func systemctl() string {
 	return "/bin/systemctl"
 }
 func (m *Managed) ctl(ctx context.Context, name, operation string) error {
+	stage := operation
+	if operation == "restart" {
+		stage = "start"
+	}
+	if operation == "daemon-reload" {
+		stage = "install_service"
+	}
+	if operation != "is-active" {
+		if err := checkpoint(ctx, stage); err != nil {
+			return err
+		}
+	}
 	if m.openrc {
 		return m.openrcCtl(ctx, name, operation)
 	}
@@ -164,7 +176,10 @@ func (m *Managed) state(name string) (managedState, error) {
 	err := readPrivate(filepath.Join(m.root, name, "state.json"), &s)
 	return s, err
 }
-func (m *Managed) save(name string, s managedState) error {
+func (m *Managed) save(ctx context.Context, name string, s managedState) error {
+	if err := checkpoint(ctx, "persist_state"); err != nil {
+		return err
+	}
 	b, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -233,19 +248,27 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 	if c.Validate(operation) != nil || !m.supported() {
 		return fail("engine_unsupported")
 	}
+	if operation == "engine.inspect" {
+		if err := checkpoint(ctx, "inspect"); err != nil {
+			return fail("engine_io_failed")
+		}
+	}
 	release, ok := v1.EngineReleaseFor(c.Name, c.Version, goruntime.GOARCH)
 	if !ok {
 		return fail("engine_unsupported")
 	}
 	if err := privateDirectory(m.root); err != nil {
+		reportFailure(ctx, err)
 		return fail("engine_io_failed")
 	}
 	dir := filepath.Join(m.root, c.Name)
 	if err := privateDirectory(dir); err != nil {
+		reportFailure(ctx, err)
 		return fail("engine_io_failed")
 	}
 	old, err := m.state(c.Name)
 	if err != nil && !os.IsNotExist(err) {
+		reportFailure(ctx, err)
 		return fail("engine_io_failed")
 	}
 	if old.EngineID != "" && old.EngineID != id {
@@ -279,20 +302,30 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 			return fail(code)
 		}
 		defer os.Remove(binary)
+		if err := checkpoint(ctx, "install_binary"); err != nil {
+			return fail("engine_io_failed")
+		}
 		m.logger.Debug("Engine binary install", "storage", "disk")
 		if err = publishEngineBinary(filepath.Join(dir, c.Name), binary); err != nil {
 			m.logger.Error("Engine binary install failed", "error", err)
+			reportFailure(ctx, err)
+			return fail("engine_io_failed")
+		}
+		if err := checkpoint(ctx, "install_service"); err != nil {
 			return fail("engine_io_failed")
 		}
 		m.logger.Debug("Engine service install", "openrc", m.openrc)
 		if err = atomicEngineFile(unitPath, m.unit(c.Name, dir), m.unitMode()); err != nil {
 			m.logger.Error("Engine service install failed", "error", err)
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
 		if err = m.ctl(ctx, c.Name, "daemon-reload"); err != nil {
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
-		if err = m.save(c.Name, managedState{id, c, true}); err != nil {
+		if err = m.save(ctx, c.Name, managedState{id, c, true}); err != nil {
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
 		r.Status = "installed"
@@ -315,10 +348,18 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		defer os.Remove(binary)
 		path := filepath.Join(dir, c.Name)
 		previous := filepath.Join(dir, "previous-binary")
+		if err := checkpoint(ctx, "backup"); err != nil {
+			return fail("engine_io_failed")
+		}
 		if err = copyEngineBinary(ctx, previous, path); err != nil {
+			reportFailure(ctx, err)
+			return fail("engine_io_failed")
+		}
+		if err := checkpoint(ctx, "install_binary"); err != nil {
 			return fail("engine_io_failed")
 		}
 		if err = publishEngineBinary(path, binary); err != nil {
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
 		next := old.Command
@@ -334,9 +375,15 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 			}
 		}
 		if err != nil {
-			recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
-			rollback := copyEngineBinary(recovery, path, previous)
+			rollback := checkpoint(recovery, "rollback")
+			if rollback == nil {
+				rollback = copyEngineBinary(recovery, path, previous)
+			}
+			if rollback != nil {
+				reportFailure(recovery, rollback)
+			}
 			if rollback == nil && r.Status == "running" {
 				rollback = m.ctl(recovery, c.Name, "restart")
 				if rollback == nil {
@@ -349,26 +396,32 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 			}
 			return fail("engine_start_failed")
 		}
-		if err = m.save(c.Name, managedState{id, next, true}); err != nil {
+		if err = m.save(ctx, c.Name, managedState{id, next, true}); err != nil {
 			r.Status = "unknown"
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
 		return r, nil
 	}
 	if operation == "engine.uninstall" {
 		if m.ctl(ctx, c.Name, "stop") != nil || m.ctl(ctx, c.Name, "disable") != nil {
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
 		if err = os.Remove(unitPath); err != nil {
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
 		if m.ctl(ctx, c.Name, "daemon-reload") != nil {
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
 		if err = os.Remove(filepath.Join(dir, c.Name)); err != nil {
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
-		if err = m.save(c.Name, managedState{id, c, false}); err != nil {
+		if err = m.save(ctx, c.Name, managedState{id, c, false}); err != nil {
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
 		r.Status = "not_installed"
@@ -406,6 +459,7 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 	current.RunIntent = c.RunIntent
 	if operation == "engine.stop" {
 		if m.ctl(ctx, c.Name, "disable") != nil || m.ctl(ctx, c.Name, "stop") != nil {
+			reportFailure(ctx, err)
 			return fail("engine_io_failed")
 		}
 		r.Status = "stopped"
@@ -414,7 +468,7 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 			return fail("engine_invalid_config")
 		}
 		if m.ctl(ctx, c.Name, "enable") != nil || m.ctl(ctx, c.Name, "start") != nil || m.healthy(ctx, current) != nil {
-			recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
 			if m.ctl(recovery, c.Name, "disable") != nil || m.ctl(recovery, c.Name, "stop") != nil {
 				r.Status = "degraded"
@@ -425,7 +479,8 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		}
 		r.Status = "running"
 	}
-	if err = m.save(c.Name, managedState{id, current, true}); err != nil {
+	if err = m.save(ctx, c.Name, managedState{id, current, true}); err != nil {
+		reportFailure(ctx, err)
 		return fail("engine_io_failed")
 	}
 	return r, nil
@@ -446,6 +501,9 @@ func configName(name string) string {
 	return "config.json"
 }
 func (m *Managed) validate(ctx context.Context, dir string, c v1.EngineCommand, path string) error {
+	if err := checkpoint(ctx, "validate"); err != nil {
+		return err
+	}
 	binary := filepath.Join(dir, c.Name)
 	switch c.Name {
 	case "sing-box":
@@ -480,6 +538,9 @@ func (m *Managed) validate(ctx context.Context, dir string, c v1.EngineCommand, 
 	return errors.New("unsupported engine")
 }
 func (m *Managed) healthy(ctx context.Context, c v1.EngineCommand) error {
+	if err := checkpoint(ctx, "health"); err != nil {
+		return err
+	}
 	for attempt := 0; attempt < 10; attempt++ {
 		good := m.ctl(ctx, c.Name, "is-active") == nil
 		for _, s := range c.Services {
@@ -512,6 +573,7 @@ func (m *Managed) healthy(ctx context.Context, c v1.EngineCommand) error {
 		case <-timer.C:
 		}
 	}
+	reportReason(ctx, "引擎进程或监听端口未通过健康检查", nil)
 	return errors.New("health failed")
 }
 func (m *Managed) apply(ctx context.Context, id string, c v1.EngineCommand, old managedState, r v1.EngineResult) (v1.EngineResult, error) {
@@ -521,8 +583,14 @@ func (m *Managed) apply(ctx context.Context, id string, c v1.EngineCommand, old 
 		return r, nil
 	}
 	dir := filepath.Join(m.root, c.Name)
+	if err := checkpoint(ctx, "preflight"); err != nil {
+		return fail("engine_io_failed")
+	}
 	if err := preflight(ctx, c, old.Command, r.Status == "running"); err != nil {
 		return fail(err.Error())
+	}
+	if err := checkpoint(ctx, "apply_config"); err != nil {
+		return fail("engine_io_failed")
 	}
 	m.logger.Debug("Engine configuration prepare")
 	rollbackConfig, cleanup, code := m.prepareConfig(ctx, dir, c)
@@ -556,10 +624,16 @@ func (m *Managed) apply(ctx context.Context, id string, c v1.EngineCommand, old 
 		}
 	}
 	if err != nil {
-		recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		m.logger.Warn("Engine configuration rollback started")
-		rollback := rollbackConfig(recovery)
+		rollback := checkpoint(recovery, "rollback")
+		if rollback == nil {
+			rollback = rollbackConfig(recovery)
+		}
+		if rollback != nil {
+			reportFailure(recovery, rollback)
+		}
 		if rollback == nil && r.Status == "running" {
 			rollback = m.ctl(recovery, c.Name, "restart")
 			if rollback == nil {
@@ -581,8 +655,9 @@ func (m *Managed) apply(ctx context.Context, id string, c v1.EngineCommand, old 
 		}
 		return fail("engine_start_failed")
 	}
-	if err = m.save(c.Name, managedState{id, c, true}); err != nil {
+	if err = m.save(ctx, c.Name, managedState{id, c, true}); err != nil {
 		r.Status = "unknown"
+		reportFailure(ctx, err)
 		return fail("engine_io_failed")
 	}
 	r.Status = "stopped"
@@ -605,6 +680,9 @@ func (m *Managed) prepareSingle(ctx context.Context, dir string, c v1.EngineComm
 	defer os.Remove(staging)
 	if enabled(c) > 0 && m.validate(ctx, dir, c, staging) != nil {
 		return nil, nil, "engine_invalid_config"
+	}
+	if err := checkpoint(ctx, "apply_config"); err != nil {
+		return nil, nil, "engine_io_failed"
 	}
 	previous, readErr := os.ReadFile(target)
 	if readErr != nil && !os.IsNotExist(readErr) {

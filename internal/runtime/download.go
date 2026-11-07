@@ -31,12 +31,18 @@ func Download(ctx context.Context, r v1.EngineRelease, dir string) (string, erro
 }
 
 func downloadLogged(ctx context.Context, r v1.EngineRelease, dir string, logger *slog.Logger) (binary string, resultErr error) {
+	if err := checkpoint(ctx, "download"); err != nil {
+		return "", err
+	}
 	started := time.Now()
 	stage := "request"
 	var binaryBytes int64
 	logger.Debug("Engine download started", "storage", "disk")
 	defer func() {
 		if resultErr != nil {
+			if d, _ := ctx.Value(diagnosticKey{}).(*Diagnostics); d != nil && d.failure == nil {
+				reportFailure(ctx, resultErr)
+			}
 			logger.Error("Engine download failed", "stage", stage, "error", resultErr, "duration", time.Since(started))
 		} else {
 			logger.Debug("Engine download completed", "binary_bytes", binaryBytes, "duration", time.Since(started))
@@ -60,12 +66,19 @@ func downloadLogged(ctx context.Context, r v1.EngineRelease, dir string, logger 
 		if errors.As(err, &urlErr) {
 			err = urlErr.Err
 		}
+		reportFailure(ctx, err)
 		logger.Error("Engine HTTP request failed", "error", err)
 		return "", errors.New("engine_download_failed")
 	}
 	defer resp.Body.Close()
 	logger.Debug("Engine download response", "http_status", resp.StatusCode, "content_length", resp.ContentLength)
 	if resp.StatusCode != 200 || resp.ContentLength > maxArchive {
+		status := uint64(resp.StatusCode)
+		if resp.StatusCode != 200 {
+			reportReason(ctx, "下载服务器返回错误状态", &status)
+		} else {
+			reportReason(ctx, "安装包超过允许的大小", nil)
+		}
 		logger.Error("Engine download response rejected", "http_status", resp.StatusCode, "content_length", resp.ContentLength)
 		return "", errors.New("engine_download_failed")
 	}
@@ -80,15 +93,27 @@ func downloadLogged(ctx context.Context, r v1.EngineRelease, dir string, logger 
 	hash := sha256.New()
 	n, err := copyEngineStream(ctx, io.MultiWriter(archive, hash), io.LimitReader(resp.Body, maxArchive+1))
 	if err != nil || n > maxArchive {
+		if err != nil {
+			reportFailure(ctx, err)
+		} else {
+			reportReason(ctx, "安装包超过允许的大小", nil)
+		}
 		logger.Error("Engine archive read failed", "error", err, "bytes", n, "limit", maxArchive)
 		return "", errors.New("engine_download_failed")
 	}
 	stage = "checksum"
+	if err := checkpoint(ctx, "checksum"); err != nil {
+		return "", err
+	}
 	logger.Debug("Engine archive downloaded; verifying checksum", "bytes", n)
 	if hex.EncodeToString(hash.Sum(nil)) != r.SHA256 {
+		reportReason(ctx, "下载文件的 SHA-256 与发行清单不一致", nil)
 		return "", errors.New("engine_checksum")
 	}
 	stage = "extract"
+	if err := checkpoint(ctx, "extract"); err != nil {
+		return "", err
+	}
 	logger.Debug("Engine archive checksum verified; extracting")
 	staged, err := os.CreateTemp(dir, ".binary-")
 	if err != nil {
@@ -102,6 +127,11 @@ func downloadLogged(ctx context.Context, r v1.EngineRelease, dir string, logger 
 	}()
 	binaryBytes, err = extractBinary(ctx, archive, n, r.Name, strings.HasSuffix(r.URL, ".zip"), staged)
 	if err != nil {
+		message := safeFailure(err)
+		if message == "操作失败，请查看节点运行日志" {
+			message = "安装包解压失败，归档内容或二进制格式无效"
+		}
+		reportReason(ctx, message, nil)
 		return "", err
 	}
 	if err = staged.Chmod(0700); err != nil {
