@@ -274,11 +274,7 @@ RC
                 ;;
         esac
         printf '\n更新 Agent（保留配置和身份，无需注册令牌）：\n'
-        if [ -z "$panel_url" ]; then
-            printf '  请将下面的 https://panel.example.com 替换为面板地址。\n'
-        fi
-        # panel_url is a validated HTTPS origin; never include enrollment credentials.
-        printf "  curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- install --url='%s'" "${panel_url:-https://panel.example.com}"
+        printf "  curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- install"
         [ "$foreground" -eq 0 ] || printf ' --foreground'
         printf '\n  默认更新至最新正式版；指定版本可在命令末尾追加 --version=vX.Y.Z。\n'
         if [ "$foreground" -eq 0 ]; then
@@ -373,7 +369,9 @@ RC
         [ "${#reenroll_node}" -le 128 ] || fail '重新注册节点 ID 过长。'
     fi
     # Only an HTTPS origin, never a WebSocket path or credentials.
-    printf '%s\n' "$panel_url" | grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?$' || fail '请提供 HTTPS Origin，不含路径、凭证、查询或片段。'
+    if [ -n "$panel_url" ]; then
+        printf '%s\n' "$panel_url" | grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?$' || fail '请提供 HTTPS Origin，不含路径、凭证、查询或片段。'
+    fi
     if [ -n "$release_tag" ]; then
         printf '%s\n' "$release_tag" | grep -Eq '^v[0-9][0-9A-Za-z._-]*$' || fail '版本格式无效。'
     fi
@@ -417,6 +415,13 @@ RC
             case "$mode" in *[2367][0-7]|*[0-7][2367]) fail '安装文件权限不安全。' ;; esac
         fi
     done
+    if [ -z "$panel_url" ]; then
+        [ -f "$install_dir/agent.json" ] && [ -f "$install_dir/state/identity.json" ] &&
+            grep -Eq '"node_id"[[:space:]]*:[[:space:]]*"[a-zA-Z0-9_-]+"' "$install_dir/state/identity.json" ||
+            fail '首次安装或注册未完成，请提供 --url=https://面板地址。'
+        [ "$token_supplied" -eq 0 ] && [ -z "$reenroll_node" ] ||
+            fail '使用令牌重新安装或重新注册时，请提供 --url=https://面板地址。'
+    fi
     if [ -z "$release_tag" ]; then
         release_url=$(download --output /dev/null --write-out '%{url_effective}' https://github.com/vioira/viorka-agent/releases/latest) || fail '查询正式 Release 失败，请检查 GitHub 访问及发布状态；尚未创建安装目录。'
         case "$release_url" in

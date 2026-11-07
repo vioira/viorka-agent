@@ -24,7 +24,7 @@ TOKEN = "a" * 64
 
 
 class InstallerTests(unittest.TestCase):
-    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False, replacement=False, choice=None, locked_state=False):
+    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False, replacement=False, choice=None, locked_state=False, omit_url=False, retry_omit_url=False):
         with tempfile.TemporaryDirectory(prefix="viorka-install-") as tmp:
             home = pathlib.Path(tmp) / 'home "quote" \\ slash'
             home.mkdir()
@@ -100,6 +100,8 @@ else:
                     (install / "state").mkdir()
                     (install / "state/identity.json").write_text("preserve")
             args = ["sh", str(ROOT / "install.sh"), "install", "--foreground", "--url=https://localhost:8143", *extra]
+            if omit_url:
+                args.remove("--url=https://localhost:8143")
             if pinned:
                 args.append("--version=v0.1.0")
             if token_arg:
@@ -159,7 +161,7 @@ else:
                 self.assertIn('安装前检查：未检测到正在运行的 Agent 进程。'.encode(), output)
                 self.assertIn('运行方式：前台'.encode(), output)
                 self.assertIn(b'Ctrl+C', output)
-                self.assertIn(b"--url='https://localhost:8143' --foreground", output)
+                self.assertIn(b"| sh -s -- install --foreground", output)
                 self.assertIn(b'"$HOME/.viorka-agent/viorka-agent" run --config "$HOME/.viorka-agent/agent.json"', output)
                 self.assertNotIn(b'--token=', output)
                 self.assertNotIn(b'systemctl', output)
@@ -214,6 +216,8 @@ else:
                     held_lock = (install / "state/agent.lock").open("a")
                     fcntl.flock(held_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 retry_args = ["sh", str(retry_script), "install", "--foreground", "--url=https://localhost:8143", "--version=v0.1.0", *((["--token=" + TOKEN, "--reenroll-node=node-1"] if reenroll else (["--token=" + TOKEN] if replacement else [])) if before and failure != "enroll" else ["--token=" + TOKEN])]
+                if retry_omit_url:
+                    retry_args.remove("--url=https://localhost:8143")
                 if choice is None:
                     result = subprocess.run(retry_args, env=env, capture_output=True, start_new_session=True, timeout=15)
                 else:
@@ -260,9 +264,9 @@ else:
                 expected = ["config-check"] if running else (["config-check", "run"] if before and failure != "enroll" and not reenroll else ["config-check", "enroll", "run"])
                 if replacement:
                     expected = ["config-check"] if choice == "1" else []
-                    if choice is None:
+                    if choice is None and not retry_omit_url:
                         self.assertIn("没有交互终端".encode(), result.stderr)
-                    elif choice != "1":
+                    elif choice != "1" and not retry_omit_url:
                         self.assertIn("已退出".encode(), result.stderr)
                     if replaced:
                         expected = ["config-check", "enroll", "run"]
@@ -287,7 +291,7 @@ else:
                         self.assertIn("重新安装未完成".encode(), result.stderr)
                     self.assertEqual((install / "viorka-agent").read_bytes(), old_binary)
                 self.assertEqual(after_calls, expected)
-                if before and failure == "enroll":
+                if before and failure == "enroll" and not retry_failure:
                     self.assertIn("检测到未完成注册".encode(), result.stdout)
                     self.assertEqual(json.loads((install / "state/identity.json").read_bytes())["private_key"], json.loads(before)["private_key"])
                 if before and failure != "enroll" and not replaced and not (replacement and retry_failure == "enroll"):
@@ -295,6 +299,21 @@ else:
                 if config:
                     self.assertEqual((install / "agent.json").read_bytes(), config)
                 self.assertFalse(list(install.glob(".install-*")))
+
+    def test_update_without_url_or_token(self):
+        self.run_install(token_arg=True, retry=True, retry_omit_url=True)
+        self.run_install(token_arg=True, retry=True, retry_omit_url=True, running=True)
+        for failure in ("download", "checksum", "config"):
+            with self.subTest(failure=failure):
+                self.run_install(token_arg=True, retry=True, retry_omit_url=True, retry_failure=failure)
+
+    def test_missing_url_requires_registered_install(self):
+        self.run_install(failure="missing_url", token_arg=True, omit_url=True)
+        self.run_install(failure="missing_config", token_arg=True, omit_url=True)
+        self.run_install(failure="enroll", token_arg=True, retry=True,
+                         retry_omit_url=True, retry_failure="missing_url")
+        self.run_install(token_arg=True, retry=True, replacement=True,
+                         retry_omit_url=True, retry_failure="missing_url")
 
     def test_new_token_does_not_silently_reuse_old_identity(self):
         self.run_install(token_arg=True, retry=True, replacement=True)

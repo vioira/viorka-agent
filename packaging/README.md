@@ -24,10 +24,16 @@ curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubuserconten
 安装到当前用户 `$HOME/.viorka-agent`，新目录 0700，配置 0600。可重复执行同一条安装命令：
 
 - 通过 Linux `/proc/PID/exe` 检查本安装路径的 Agent 进程；空目录或下载残留不再视为安装成功，下载 404 后修正 `--version` 即可重试，无需删除目录。
-- 已存在 `state/identity.json` 时保留身份和配置，跳过注册，不需要令牌；本次 URL、CA 不会改动已有节点；若同时传入 `--token`，安装器通过 `/dev/tty` 提供「覆盖重新安装 / 退出并查看恢复说明」选择，默认退出；无终端时退出，不自动覆盖。覆盖需要 `flock`，停止本安装器管理的 Agent 后备份旧配置和整个 `state`，按本次 URL、CA 和令牌创建新配置及身份；前台或外部 supervisor 进程需先手动停止。删除旧节点后新建节点的恢复步骤见 [身份生命周期](../docs/ENROLLMENT.md#删除旧节点后注册新节点)。已注册但停止的 Agent 同样复用身份。身份存在但配置缺失时拒绝重新注册，需恢复原配置。
+- 已存在 `state/identity.json` 时保留身份和配置，跳过注册，无需提供 `--url` 和 `--token`；本次 URL、CA 不会改动已有节点；若同时传入 `--token`，安装器通过 `/dev/tty` 提供「覆盖重新安装 / 退出并查看恢复说明」选择，默认退出；无终端时退出，不自动覆盖。覆盖需要 `flock`，停止本安装器管理的 Agent 后备份旧配置和整个 `state`，按本次 URL、CA 和令牌创建新配置及身份；前台或外部 supervisor 进程需先手动停止。删除旧节点后新建节点的恢复步骤见 [身份生命周期](../docs/ENROLLMENT.md#删除旧节点后注册新节点)。已注册但停止的 Agent 同样复用身份。身份存在但配置缺失时拒绝重新注册，需恢复原配置。
 - 二进制和校验文件下载到独立临时目录，SHA-256 和新二进制 `config-check` 成功后才原子替换。下载或校验失败不替换旧二进制，退出时清理本次临时文件。
 - 现有服务必须与安装器模板完全匹配且权限安全（systemd 不允许 drop-in），才能复用并重启。自定义或第三方服务拒绝接管。更新前保留 `viorka-agent.previous`；服务重启失败返回非零并尝试恢复旧二进制和服务，恢复失败明确提示人工处理。
 - 已运行的前台 Agent 不重复启动；只更新磁盘二进制，提示通过原 supervisor 或终端重启。未运行时启动前台 Agent。进程状态和服务状态不代表 Panel 握手成功。
+
+已安装的服务器可直接升级并重启后台 Agent：
+
+```bash
+curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- install --version=v0.1.0-bate.9
+```
 
 每次更新仍按 `--version` 精确下载指定 Release，省略时使用最新正式 Release；这不是定时自动更新。`v0.1.0-beta2` 与 `v0.1.0-beta.2` 是两个不同标签，不自动纠正版本。404 提示检查标签及对应架构资产是否已发布。
 
@@ -64,7 +70,7 @@ logread -f | grep 'viorka-agent'
 
 安装和更新成功后，安装器会按实际使用的 systemd、OpenRC 或前台模式输出管理及日志命令。开头的进程检查明确标注为「安装前检查」，不代表安装后的状态。OpenRC 日志文件位置取决于系统 syslog 配置。
 
-输出中的更新命令不含注册令牌，复用现有配置和身份，默认选择最新正式版，也可追加 `--version=vX.Y.Z`。后台模式更新成功后自动重启 Agent；前台模式保留 `--foreground`，已有进程需自行重启。单独执行 `sh install.sh service` 时未提供面板地址，输出的更新命令使用 `https://panel.example.com` 占位并提示替换。请使用原安装用户执行这些命令；后台模式为 root。
+输出中的更新命令不含注册令牌，复用现有配置和身份，默认选择最新正式版，也可追加 `--version=vX.Y.Z`。后台模式更新成功后自动重启 Agent；前台模式保留 `--foreground`，已有进程需自行重启。更新命令无需提供 `--url` 和 `--token`；首次安装、注册未完成或使用令牌重新安装时仍需提供 `--url`。请使用原安装用户执行这些命令；后台模式为 root。
 
 日志轮转和保留上限由系统 journald/syslog 配置负责；安装器不创建无界追加日志文件。服务启动失败保留身份及服务文件并返回非零状态，排查后通过上述管理命令恢复，不要重新注册。支持手动重复安装更新，无定时自动更新功能。
 
