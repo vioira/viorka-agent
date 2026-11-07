@@ -354,9 +354,6 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		return r, nil
 	}
 	if operation == "engine.uninstall" {
-		if len(old.Command.Services) > 0 {
-			return fail("engine_invalid_config")
-		}
 		if m.ctl(ctx, c.Name, "stop") != nil || m.ctl(ctx, c.Name, "disable") != nil {
 			return fail("engine_io_failed")
 		}

@@ -111,6 +111,30 @@ func TestManagedInstallApplyAndManualStop(t *testing.T) {
 	if err != nil || result.ErrorCode != "engine_external" {
 		t.Fatalf("takeover %+v %v", result, err)
 	}
+
+	// Uninstall a running engine with applied services, without an empty apply first.
+	start := c
+	start.Services = nil
+	start.RunIntent = "running"
+	result, err = m.Execute(ctx, "engine", "engine.start", start)
+	if err != nil || result.ErrorCode != "" || listener == nil || !boot {
+		t.Fatalf("restart before uninstall: %+v %v", result, err)
+	}
+	start.Revision++
+	result, err = m.Execute(ctx, "engine", "engine.uninstall", start)
+	if err != nil || result.ErrorCode != "" || result.Status != "not_installed" || listener != nil || boot {
+		t.Fatalf("uninstall with services: %+v %v", result, err)
+	}
+	for _, path := range []string{m.unitPath(c.Name), filepath.Join(m.root, c.Name, c.Name)} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("uninstall retained %s: %v", path, err)
+		}
+	}
+	actual, err = m.state(c.Name)
+	if err != nil || actual.Installed || len(actual.Command.Services) != 0 {
+		t.Fatalf("uninstalled state: %+v %v", actual, err)
+	}
+
 }
 
 func TestManagedInspectNotInstalled(t *testing.T) {
