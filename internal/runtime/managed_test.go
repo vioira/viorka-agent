@@ -25,7 +25,9 @@ func TestManagedInstallApplyAndManualStop(t *testing.T) {
 	m.units = units
 	m.supported = func() bool { return true }
 	m.detectExternal = func(string) bool { return false }
-	m.download = func(context.Context, v1.EngineRelease) ([]byte, error) { return []byte("test executable fixture"), nil }
+	m.download = func(_ context.Context, _ v1.EngineRelease, dir string) (string, error) {
+		return stageBinaryFixture(dir, []byte("test executable fixture"))
+	}
 	var listener net.Listener
 	var starts int
 	var boot bool

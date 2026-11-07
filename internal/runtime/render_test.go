@@ -4,11 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
+	"io"
 	"strings"
 	"testing"
 )
@@ -96,7 +98,7 @@ func TestExtractRejectsLinksAndDuplicateBinaries(t *testing.T) {
 		}
 		tw.Close()
 		gz.Close()
-		_, err := extractBinary(out.Bytes(), "realm", false)
+		_, err := extractBinary(context.Background(), bytes.NewReader(out.Bytes()), int64(out.Len()), "realm", false, io.Discard)
 		if (err == nil) != (kind == "valid") {
 			t.Fatalf("%s %v", kind, err)
 		}

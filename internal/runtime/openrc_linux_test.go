@@ -45,8 +45,8 @@ func TestOpenRCNativeLifecycle(t *testing.T) {
 	}
 	m.detectExternal = func(string) bool { return false }
 	pidPath := filepath.Join(m.root, "engine.pid")
-	m.download = func(context.Context, v1.EngineRelease) ([]byte, error) {
-		return []byte("#!/bin/sh\n[ \"$1\" = check ] && exit 0\necho $$ > " + pidPath + "\nexec /bin/sleep 600\n"), nil
+	m.download = func(_ context.Context, _ v1.EngineRelease, dir string) (string, error) {
+		return stageBinaryFixture(dir, []byte("#!/bin/sh\n[ \"$1\" = check ] && exit 0\necho $$ > "+pidPath+"\nexec /bin/sleep 600\n"))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

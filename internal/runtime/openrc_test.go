@@ -85,7 +85,9 @@ func TestOpenRCInstallAndConfigRollback(t *testing.T) {
 	}
 	m.supported = func() bool { return true }
 	m.detectExternal = func(string) bool { return false }
-	m.download = func(context.Context, v1.EngineRelease) ([]byte, error) { return []byte("fixture"), nil }
+	m.download = func(_ context.Context, _ v1.EngineRelease, dir string) (string, error) {
+		return stageBinaryFixture(dir, []byte("fixture"))
+	}
 	m.runlevels = t.TempDir()
 	c.Services = nil
 	c.Revision = 1

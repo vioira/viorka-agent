@@ -36,7 +36,7 @@ type Managed struct {
 	openrc         bool
 	runlevels      string
 	run            func(context.Context, string, ...string) error
-	download       func(context.Context, v1.EngineRelease) ([]byte, error)
+	download       func(context.Context, v1.EngineRelease, string) (string, error)
 }
 
 func NewManaged(loggers ...*slog.Logger) *Managed {
@@ -51,8 +51,8 @@ func NewManaged(loggers ...*slog.Logger) *Managed {
 		m.logger = loggers[0]
 	}
 	m.run = m.runLogged
-	m.download = func(ctx context.Context, release v1.EngineRelease) ([]byte, error) {
-		return downloadLogged(ctx, release, m.logger)
+	m.download = func(ctx context.Context, release v1.EngineRelease, dir string) (string, error) {
+		return downloadLogged(ctx, release, dir, m.logger)
 	}
 	m.detectExternal = m.external
 	return m
@@ -109,6 +109,9 @@ func privateDirectory(path string) error {
 	return nil
 }
 func atomicEngineFile(path string, data []byte, mode os.FileMode) error {
+	return atomicEngineWrite(path, mode, func(f *os.File) error { _, err := f.Write(data); return err })
+}
+func atomicEngineWrite(path string, mode os.FileMode, write func(*os.File) error) error {
 	if i, err := os.Lstat(path); err == nil && !i.Mode().IsRegular() {
 		return errors.New("unsafe managed file")
 	} else if err != nil && !os.IsNotExist(err) {
@@ -123,7 +126,7 @@ func atomicEngineFile(path string, data []byte, mode os.FileMode) error {
 	if err = f.Chmod(mode); err != nil {
 		return err
 	}
-	if _, err = f.Write(data); err != nil {
+	if err = write(f); err != nil {
 		return err
 	}
 	if err = f.Sync(); err != nil {
@@ -267,7 +270,7 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		if old.Installed || m.detectExternal(c.Name) {
 			return fail("engine_external")
 		}
-		binary, err := m.download(ctx, release)
+		binary, err := m.download(ctx, release, dir)
 		if err != nil {
 			code := err.Error()
 			if code != "engine_checksum" {
@@ -275,8 +278,9 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 			}
 			return fail(code)
 		}
-		m.logger.Debug("Engine binary install", "bytes", len(binary))
-		if err = atomicEngineFile(filepath.Join(dir, c.Name), binary, 0700); err != nil {
+		defer os.Remove(binary)
+		m.logger.Debug("Engine binary install", "storage", "disk")
+		if err = publishEngineBinary(filepath.Join(dir, c.Name), binary); err != nil {
 			m.logger.Error("Engine binary install failed", "error", err)
 			return fail("engine_io_failed")
 		}
@@ -304,19 +308,17 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		if old.Command.Version == c.Version {
 			return fail("engine_unsupported")
 		}
-		binary, err := m.download(ctx, release)
+		binary, err := m.download(ctx, release, dir)
 		if err != nil {
 			return fail("engine_download_failed")
 		}
+		defer os.Remove(binary)
 		path := filepath.Join(dir, c.Name)
-		previous, err := os.ReadFile(path)
-		if err != nil {
+		previous := filepath.Join(dir, "previous-binary")
+		if err = copyEngineBinary(ctx, previous, path); err != nil {
 			return fail("engine_io_failed")
 		}
-		if err = atomicEngineFile(filepath.Join(dir, "previous-binary"), previous, 0700); err != nil {
-			return fail("engine_io_failed")
-		}
-		if err = atomicEngineFile(path, binary, 0700); err != nil {
+		if err = publishEngineBinary(path, binary); err != nil {
 			return fail("engine_io_failed")
 		}
 		next := old.Command
@@ -334,7 +336,7 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		if err != nil {
 			recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			rollback := atomicEngineFile(path, previous, 0700)
+			rollback := copyEngineBinary(recovery, path, previous)
 			if rollback == nil && r.Status == "running" {
 				rollback = m.ctl(recovery, c.Name, "restart")
 				if rollback == nil {
