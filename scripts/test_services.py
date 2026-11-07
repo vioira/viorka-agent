@@ -22,7 +22,7 @@ class Services(unittest.TestCase):
             install = home / '.viorka-agent'
             install.mkdir(parents=True)
             (install / 'state').mkdir()
-            identity = '{"node_id":""}' if failure == 'pending' else 'preserve identity'
+            identity = '{"node_id":""}' if failure == 'pending' else '{"node_id":"node-1"}'
             (install / 'state/identity.json').write_text(identity)
             (install / 'agent.json').write_text('{}')
             agent = install / 'viorka-agent'
@@ -96,7 +96,6 @@ exit 0
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 self.assertIn('后台服务已启动'.encode(), result.stdout)
                 self.assert_commands(result.stdout, manager)
-                self.assertIn('替换为面板地址'.encode(), result.stdout)
                 self.assertTrue(service.exists())
                 self.assertIn(str(install), service.read_text())
                 self.assertEqual(service.stat().st_mode & 0o777, 0o644 if manager == 'systemd' else 0o755)
@@ -117,7 +116,7 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                 curl.chmod(0o700)
                 initial_service = service.read_bytes()
                 initial_config = (install / 'agent.json').read_bytes()
-                command = ['sh', str(local), 'install', '--url=https://localhost', '--version=v0.1.0']
+                command = ['sh', str(local), 'install', '--version=v0.1.0']
                 for upgrade_failure in ('download', 'upgrade', '', ''):
                     old_binary = agent.read_bytes()
                     result = subprocess.run(command, env=dict(env, FAILURE=upgrade_failure), capture_output=True, timeout=15)
@@ -131,7 +130,6 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                     else:
                         self.assertIn(b'new release', agent.read_bytes())
                         self.assert_commands(result.stdout, manager)
-                        self.assertIn(b"--url='https://localhost'", result.stdout)
 
     def assert_commands(self, output, manager):
         for action in ('start', 'stop', 'restart', 'status'):
@@ -145,7 +143,8 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
             self.assertIn(b"tail -f /var/log/messages | grep 'viorka-agent'", output)
             self.assertIn(b"logread -f | grep 'viorka-agent'", output)
             self.assertNotIn(b'systemctl', output)
-        self.assertIn(b'install.sh\' | sh -s -- install --url=', output)
+        self.assertIn(b'install.sh\' | sh -s -- install\n', output)
+        self.assertNotIn(b'--url=', output)
         self.assertNotIn(b'--token=', output)
         self.assertNotIn(b'--foreground', output)
         self.assertIn(b'Panel connected; session established', output)
