@@ -167,9 +167,9 @@ func (m *Managed) prepareConfig(ctx context.Context, dir string, c v1.EngineComm
 	if err != nil {
 		return nil, nil, "engine_io_failed"
 	}
-	unitPath := filepath.Join(m.units, "viorka-engine-sing-box.service")
+	unitPath := m.unitPath(c.Name)
 	oldUnit, err := os.ReadFile(unitPath)
-	if err != nil || !bytes.HasPrefix(oldUnit, []byte(unitMarker)) {
+	if err != nil || !m.ownsUnit(oldUnit) {
 		return nil, nil, "engine_io_failed"
 	}
 	stage, err := os.MkdirTemp(dir, ".conf-")
@@ -206,14 +206,14 @@ func (m *Managed) prepareConfig(ctx context.Context, dir string, c v1.EngineComm
 		if err := switchSingbox(dir, previous); err != nil {
 			return err
 		}
-		if err := atomicEngineFile(unitPath, oldUnit, 0644); err != nil {
+		if err := atomicEngineFile(unitPath, oldUnit, m.unitMode()); err != nil {
 			return err
 		}
 		return m.ctl(recovery, c.Name, "daemon-reload")
 	}
 	err = switchSingbox(dir, next)
 	if err == nil {
-		err = atomicEngineFile(unitPath, m.unit(c.Name, dir), 0644)
+		err = atomicEngineFile(unitPath, m.unit(c.Name, dir), m.unitMode())
 	}
 	if err == nil {
 		err = m.ctl(ctx, c.Name, "daemon-reload")

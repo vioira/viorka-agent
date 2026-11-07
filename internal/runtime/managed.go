@@ -31,12 +31,19 @@ type Managed struct {
 	supported      func() bool
 	detectExternal func(string) bool
 	root, units    string
+	openrc         bool
+	runlevels      string
 	run            func(context.Context, string, ...string) error
 	download       func(context.Context, v1.EngineRelease) ([]byte, error)
 }
 
 func NewManaged() *Managed {
 	m := &Managed{root: managedRoot, units: unitRoot, run: runControlled, download: Download, supported: Supported}
+	m.openrc = serviceManager("/") == "openrc"
+	if m.openrc {
+		m.units = "/etc/init.d"
+		m.runlevels = "/etc/runlevels"
+	}
 	m.detectExternal = m.external
 	return m
 }
@@ -44,8 +51,7 @@ func Supported() bool {
 	if goruntime.GOOS != "linux" || os.Geteuid() != 0 || (goruntime.GOARCH != "amd64" && goruntime.GOARCH != "arm64") {
 		return false
 	}
-	_, e := os.Stat("/run/systemd/system")
-	return e == nil
+	return serviceManager("/") != ""
 }
 func runControlled(ctx context.Context, path string, args ...string) error {
 	timeout, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -63,6 +69,9 @@ func systemctl() string {
 	return "/bin/systemctl"
 }
 func (m *Managed) ctl(ctx context.Context, name, operation string) error {
+	if m.openrc {
+		return m.openrcCtl(ctx, name, operation)
+	}
 	if operation == "daemon-reload" {
 		return m.run(ctx, systemctl(), operation)
 	}
@@ -151,6 +160,9 @@ func (m *Managed) external(name string) bool {
 			return true
 		}
 	}
+	if _, err := os.Lstat(filepath.Join("/etc/init.d", name)); err == nil {
+		return true
+	}
 	for _, unit := range []string{name + ".service", name + "@.service"} {
 		for _, dir := range []string{"/etc/systemd/system", "/usr/lib/systemd/system", "/lib/systemd/system"} {
 			if _, err := os.Lstat(filepath.Join(dir, unit)); err == nil {
@@ -183,6 +195,9 @@ func (m *Managed) unit(name, dir string) []byte {
 	if name == "realm" {
 		config = filepath.Join(dir, "config.toml")
 		args = "-c " + config
+	}
+	if m.openrc {
+		return []byte(openrcHeader + "description=\"Viorka managed " + name + "\"\nsupervisor=supervise-daemon\ncommand=" + binary + "\ncommand_args=\"" + args + "\"\npidfile=/run/viorka-engine-" + name + ".pid\numask=0077\nrespawn_delay=10\nrespawn_max=3\nrespawn_period=120\nretry=\"TERM/10/KILL/5\"\noutput_log=/dev/null\nerror_log=/dev/null\ndepend() {\n    use net\n}\n")
 	}
 	return []byte(unitMarker + "[Unit]\nDescription=Viorka managed " + name + "\nAfter=network-online.target\nWants=network-online.target\nStartLimitIntervalSec=120\nStartLimitBurst=3\n[Service]\nType=simple\nExecStart=" + binary + " " + args + "\nRestart=on-failure\nRestartSec=10\nTimeoutStopSec=15\nUMask=0077\nNoNewPrivileges=true\nLimitNOFILE=65536\nStandardOutput=null\nStandardError=null\n[Install]\nWantedBy=multi-user.target\n")
 }
@@ -221,8 +236,8 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 	if old.Command.Revision >= c.Revision {
 		return fail("engine_result_unknown")
 	}
-	unitPath := filepath.Join(m.units, "viorka-engine-"+c.Name+".service")
-	if unit, err := os.ReadFile(unitPath); err == nil && !strings.HasPrefix(string(unit), unitMarker) {
+	unitPath := m.unitPath(c.Name)
+	if unit, err := os.ReadFile(unitPath); err == nil && !m.ownsUnit(unit) {
 		return fail("engine_external")
 	}
 	if operation == "engine.install" {
@@ -240,7 +255,7 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		if err = atomicEngineFile(filepath.Join(dir, c.Name), binary, 0700); err != nil {
 			return fail("engine_io_failed")
 		}
-		if err = atomicEngineFile(unitPath, m.unit(c.Name, dir), 0644); err != nil {
+		if err = atomicEngineFile(unitPath, m.unit(c.Name, dir), m.unitMode()); err != nil {
 			return fail("engine_io_failed")
 		}
 		if err = m.ctl(ctx, c.Name, "daemon-reload"); err != nil {

@@ -25,3 +25,26 @@ jobs:
             rc-service syslog start
             VIORKA_DISPOSABLE_SERVICE_TEST=yes sh scripts/test_services_linux.sh
           '
+
+  engine-openrc:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: docker/setup-qemu-action@v3
+      - name: Build engine service tests
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} go test -c -o /tmp/runtime.test ./internal/runtime
+      - name: Real OpenRC engine lifecycle (Alpine 3.21)
+        run: |
+          docker run --rm --platform linux/${{ matrix.arch }} -v /tmp/runtime.test:/runtime.test:ro alpine:3.21 sh -ec '
+            apk add --no-cache openrc
+            mkdir -p /run/openrc
+            touch /run/openrc/softlevel
+            sed -i "s/^#rc_sys=.*/rc_sys=\"docker\"/" /etc/rc.conf
+            VIORKA_DISPOSABLE_SERVICE_TEST=yes /runtime.test -test.run "^TestOpenRCNativeLifecycle$" -test.v
+          '

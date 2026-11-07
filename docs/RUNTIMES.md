@@ -4,7 +4,7 @@
 
 `internal/runtime/managed.go` 实现类型化任务运行时，`render.go` 生成 sing-box/Xray 的 VLESS REALITY 配置和 Realm TCP 配置，`download.go` 下载校验固定发行资源，`preflight.go` 进行端口和目标预检。旧 `Engine` 接口仅为接口定义，实际任务通过 `Managed.Execute` 路径执行。
 
-支持范围为 Linux + systemd + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v2`。运行目录 `/var/lib/viorka-engines/<name>`，独立 unit 为 `viorka-engine-<name>.service`。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
+支持范围为 Linux + systemd/OpenRC + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v3`。运行目录 `/var/lib/viorka-engines/<name>`，systemd unit 为 `viorka-engine-<name>.service`；OpenRC 服务脚本为 `/etc/init.d/viorka-engine-<name>`（0755）。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
 
 安装不启动。配置以结构化任务为输入，不接受任意 Shell、URL 或原生配置。sing-box 执行 `check -C`，Xray 执行 `run -test -c`；Realm 2.9.6 没有原生配置检查命令，使用严格结构化渲染校验和启动后的本地检查。修改运行配置可能重启整个引擎。停止意愿会 disable/stop，停止时应用配置不启动。
 
@@ -47,3 +47,11 @@
 已在 macOS arm64 上对官方 sing-box 1.14.4 发行包核验 SHA-256，并实际通过 `check -C`；`VIORKA_TEST_SINGBOX=/path/to/sing-box go test ./internal/runtime -run TestSingboxNative -v` 验证配置及本地 HTTP/SOCKS 夹具流量（规则、直连、代理、代理失效不降级、默认拒绝）。这不是 Linux/systemd、远端 TLS 或 UDP 实机验收；未发布或部署到真实节点。未设置环境变量时原生测试明确 skip，普通渲染和文件回滚测试仍执行。
 
 2026-11-06：EngineOutbound 支持普通 VLESS TCP：type=vless、tls=false（或省略），仅使用服务器、端口和 UUID，禁止 REALITY/TLS 字段和 Flow。tls=true 仍要求完整 REALITY 参数。字段及 engine.manage.v3 不变；旧实现明确拒绝普通 TCP，需配套更新 Agent 校验。本次仅本地实现，未发布或部署。
+
+## 2026-11-07 Alpine / OpenRC 引擎管理
+
+OpenRC 使用固定路径的 rc-service、rc-update 和 supervise-daemon；能力探测要求 /run/openrc 存在且上述工具及 /sbin/openrc-run 可执行。服务通过 supervise-daemon 托管，崩溃后间隔 10 秒恢复，120 秒内最多重启 3 次。输出沿用 systemd 的丢弃策略。安装只写入引擎和服务脚本；启动加入 default runlevel，停止和卸载移除实际存在的 runlevel 成员关系。Agent 退出不停止引擎。
+
+sing-box 分文件配置切换及失败回滚保留 OpenRC 脚本的 0755 权限。探测到第三方 /etc/init.d/<引擎名> 时拒绝接管。任务协议和 engine.manage.v3 不变，更新 Agent 并重连后上报能力，Panel 按该能力放行安装。
+
+回归测试覆盖探测依赖、控制命令及错误、安装/卸载、配置回滚、权限和第三方脚本拒绝。CI 新增 Alpine 3.21 amd64/arm64 的真实 OpenRC 生命周期测试，使用本地进程夹具验证启停、崩溃恢复与开机自启链接；该测试不验证真实 sing-box 的代理流量。
