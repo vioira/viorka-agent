@@ -1664,7 +1664,9 @@
             "health",
             "rollback",
             "persist_state",
-            "persist_result"
+            "persist_result",
+            "verify_binary",
+            "install_dependencies"
           ]
         },
         "message": {

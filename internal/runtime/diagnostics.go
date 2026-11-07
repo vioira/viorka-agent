@@ -101,18 +101,21 @@ func (d *Diagnostics) Result(code string) *v1.EngineDiagnostic {
 		return d.failure
 	}
 	message := map[string]string{
-		"engine_unsupported":        "当前环境或引擎状态不支持此操作",
-		"engine_external":           "发现第三方实例或资源归属不一致",
-		"engine_download_failed":    "引擎下载或解压失败",
-		"engine_checksum":           "下载文件的 SHA-256 与发行清单不一致",
-		"engine_invalid_config":     "配置校验失败",
-		"engine_target_unreachable": "目标地址、端口或 TLS 预检失败",
-		"engine_port_conflict":      "本地监听端口已被占用",
-		"engine_start_failed":       "引擎启动或健康检查失败",
-		"engine_rollback_failed":    "恢复上一版本失败",
-		"engine_io_failed":          "文件或服务操作失败",
-		"engine_result_unknown":     "执行结果无法确认",
-		"deadline_exceeded":         "任务已超过截止时间",
+		"engine_dependency_missing":        "引擎缺少系统依赖，请查看诊断",
+		"engine_dependency_install_failed": "系统依赖安装失败",
+		"engine_binary_unusable":           "引擎程序无法执行",
+		"engine_unsupported":               "当前环境或引擎状态不支持此操作",
+		"engine_external":                  "发现第三方实例或资源归属不一致",
+		"engine_download_failed":           "引擎下载或解压失败",
+		"engine_checksum":                  "下载文件的 SHA-256 与发行清单不一致",
+		"engine_invalid_config":            "配置校验失败",
+		"engine_target_unreachable":        "目标地址、端口或 TLS 预检失败",
+		"engine_port_conflict":             "本地监听端口已被占用",
+		"engine_start_failed":              "引擎启动或健康检查失败",
+		"engine_rollback_failed":           "恢复上一版本失败",
+		"engine_io_failed":                 "文件或服务操作失败",
+		"engine_result_unknown":            "执行结果无法确认",
+		"deadline_exceeded":                "任务已超过截止时间",
 	}[code]
 	if message == "" {
 		message = "任务执行失败"

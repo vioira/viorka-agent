@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -257,5 +258,139 @@ func BenchmarkExtractBinaryStream(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// A real ELF program header exercises interpreter parsing on any development OS.
+func interpreterFixture(t *testing.T, dir, loader string) string {
+	t.Helper()
+	b := make([]byte, 120+len(loader)+1)
+	copy(b, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+	binary.LittleEndian.PutUint16(b[16:], 2)
+	binary.LittleEndian.PutUint16(b[18:], 183)
+	binary.LittleEndian.PutUint32(b[20:], 1)
+	binary.LittleEndian.PutUint64(b[32:], 64)
+	binary.LittleEndian.PutUint16(b[52:], 64)
+	binary.LittleEndian.PutUint16(b[54:], 56)
+	binary.LittleEndian.PutUint16(b[56:], 1)
+	binary.LittleEndian.PutUint32(b[64:], 3)
+	binary.LittleEndian.PutUint64(b[72:], 120)
+	binary.LittleEndian.PutUint64(b[96:], uint64(len(loader)+1))
+	copy(b[120:], loader)
+	p, err := stageBinaryFixture(dir, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestInterpreterDependencyRepair(t *testing.T) {
+	for _, tc := range []struct {
+		name                                       string
+		allow, installFails, stillBroken, canceled bool
+		want                                       string
+	}{
+		{name: "read only", want: "engine_dependency_missing"},
+		{name: "automatic repair", allow: true},
+		{name: "install failed", allow: true, installFails: true, want: "engine_dependency_install_failed"},
+		{name: "still broken", allow: true, stillBroken: true, want: "engine_binary_unusable"},
+		{name: "canceled", allow: true, canceled: true, want: "engine_binary_unusable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, "etc"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "etc/alpine-release"), []byte("3.21.9\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			loader := "/lib/ld-linux-aarch64.so.1"
+			path := interpreterFixture(t, root, loader)
+			m := NewManaged()
+			m.hostRoot = root
+			installed := false
+			m.run = func(ctx context.Context, executable string, args ...string) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if executable == "/sbin/apk" {
+					if !tc.allow {
+						t.Fatal("read-only check installed packages")
+					}
+					data, err := os.ReadFile(args[2])
+					if err != nil {
+						t.Fatal(err)
+					}
+					if string(data) != "https://dl-cdn.alpinelinux.org/alpine/v3.21/main\n" || args[4] != "gcompat=1.1.0-r4" {
+						t.Fatalf("untrusted package source: %v %s", args, data)
+					}
+					if tc.installFails {
+						return os.ErrPermission
+					}
+					installed = true
+					return nil
+				}
+				if installed && !tc.stillBroken {
+					return nil
+				}
+				return &os.PathError{Op: "fork/exec", Path: executable, Err: os.ErrNotExist}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.canceled {
+				cancel()
+			}
+			ctx, diag := TrackDiagnostics(ctx, func(string) error { return nil })
+			code := m.verifyBinary(ctx, path, v1.EngineCommand{Name: "sing-box"}, tc.allow)
+			if code != tc.want {
+				t.Fatalf("code=%q diagnostic=%+v", code, diag.failure)
+			}
+			if code == "" && (!installed || diag.failure != nil) {
+				t.Fatalf("repair failed: %+v", diag.failure)
+			}
+			if !tc.allow && !strings.Contains(diag.Result(code).Message, loader) {
+				t.Fatal("missing loader not reported")
+			}
+			files, _ := filepath.Glob(filepath.Join(root, ".repositories-*"))
+			if len(files) != 0 {
+				t.Fatal("repository file leaked")
+			}
+			if err := os.MkdirAll(filepath.Join(root, "lib"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, loader), []byte("loader"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if missing, err := missingInterpreter(path, root); err != nil || missing != "" {
+				t.Fatalf("existing loader: %s %v", missing, err)
+			}
+		})
+	}
+}
+
+func TestInstallUnusableBinaryDoesNotPublish(t *testing.T) {
+	m := NewManaged()
+	var rootErr error
+	m.root, rootErr = filepath.EvalSymlinks(t.TempDir())
+	if rootErr != nil {
+		t.Fatal(rootErr)
+	}
+	m.root = filepath.Join(m.root, "engines")
+	m.units = t.TempDir()
+	m.supported = func() bool { return true }
+	m.detectExternal = func(string) bool { return false }
+	m.download = func(_ context.Context, _ v1.EngineRelease, dir string) (string, error) {
+		return stageBinaryFixture(dir, []byte("unusable"))
+	}
+	m.run = func(context.Context, string, ...string) error { return os.ErrPermission }
+	c := v1.EngineCommand{Name: "sing-box", Version: v1.EngineVersion("sing-box"), Revision: 1, RunIntent: "stopped"}
+	r, err := m.Execute(context.Background(), "engine", "engine.install", c)
+	if err != nil || r.ErrorCode != "engine_binary_unusable" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	for _, name := range []string{"sing-box", "state.json"} {
+		if _, err := os.Stat(filepath.Join(m.root, c.Name, name)); !os.IsNotExist(err) {
+			t.Fatalf("published %s: %v", name, err)
+		}
 	}
 }

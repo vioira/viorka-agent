@@ -33,6 +33,7 @@ type Managed struct {
 	supported      func() bool
 	detectExternal func(string) bool
 	root, units    string
+	hostRoot       string
 	openrc         bool
 	runlevels      string
 	run            func(context.Context, string, ...string) error
@@ -40,7 +41,7 @@ type Managed struct {
 }
 
 func NewManaged(loggers ...*slog.Logger) *Managed {
-	m := &Managed{root: managedRoot, units: unitRoot, run: runControlled, download: Download, supported: Supported}
+	m := &Managed{hostRoot: "/", root: managedRoot, units: unitRoot, run: runControlled, download: Download, supported: Supported}
 	m.openrc = serviceManager("/") == "openrc"
 	if m.openrc {
 		m.units = "/etc/init.d"
@@ -302,6 +303,9 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 			return fail(code)
 		}
 		defer os.Remove(binary)
+		if code := m.verifyBinary(ctx, binary, c, true); code != "" {
+			return fail(code)
+		}
 		if err := checkpoint(ctx, "install_binary"); err != nil {
 			return fail("engine_io_failed")
 		}
@@ -346,6 +350,9 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 			return fail("engine_download_failed")
 		}
 		defer os.Remove(binary)
+		if code := m.verifyBinary(ctx, binary, c, true); code != "" {
+			return fail(code)
+		}
 		path := filepath.Join(dir, c.Name)
 		previous := filepath.Join(dir, "previous-binary")
 		if err := checkpoint(ctx, "backup"); err != nil {
@@ -426,6 +433,11 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 		}
 		r.Status = "not_installed"
 		return r, nil
+	}
+	if operation == "engine.apply" || operation == "engine.start" || operation == "engine.inspect" {
+		if code := m.verifyBinary(ctx, filepath.Join(dir, c.Name), c, operation != "engine.inspect"); code != "" {
+			return fail(code)
+		}
 	}
 	if operation == "engine.inspect" {
 		splitConfig := c.Name == "sing-box" && activeConfig(dir, c.Name) == filepath.Join(dir, "conf.d")
