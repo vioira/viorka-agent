@@ -33,7 +33,18 @@ def version_label(value):
     return style("v" + value.removeprefix("v"), "version")
 
 
-def run(*args, capture=False, env=None, log=None):
+def run(*args, capture=False, env=None, log=None, progress=False):
+    if progress:
+        with subprocess.Popen(args, cwd=ROOT, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, env=env) as process:
+            for line in process.stdout:
+                log.write(line.encode())
+                log.flush()
+                if line.startswith('[validate] '):
+                    print('    ' + line.removeprefix('[validate] ').rstrip(), flush=True)
+            if process.wait():
+                raise subprocess.CalledProcessError(process.returncode, args)
+        return None
     result = subprocess.run(args, cwd=ROOT, check=True, text=True,
                             stdout=log if log is not None else subprocess.PIPE if capture else None,
                             stderr=subprocess.STDOUT if log is not None else None,
@@ -41,14 +52,14 @@ def run(*args, capture=False, env=None, log=None):
     return result.stdout.strip() if capture else None
 
 
-def run_stage(label, *args, env=None):
+def run_stage(label, *args, env=None, progress=False):
     """Keep test subprocess chatter off the release screen; retain failures."""
     print(style(f"  {label}  检查中…", "muted"), flush=True)
     started = time.monotonic()
     with tempfile.NamedTemporaryFile(prefix="viorka-release-", suffix=".log", delete=False) as log:
         path = Path(log.name)
         try:
-            run(*args, env=env, log=log)
+            run(*args, env=env, log=log, progress=progress)
         except (OSError, subprocess.CalledProcessError, KeyboardInterrupt):
             log.flush()
             print(style(f"  ✗ {label} 未完成，发布已停止。", "error", stream=sys.stderr),
@@ -213,7 +224,7 @@ def main():
     path.write_text(updated)
     heading("发布前检查")
     print(style("  详细日志仅在失败时展示。", "muted"), flush=True)
-    run_stage("[1/3] 完整验证", "sh", "scripts/validate.sh")
+    run_stage("[1/3] 完整验证", "sh", "scripts/validate.sh", progress=True)
     with tempfile.TemporaryDirectory(prefix="viorka-release-") as directory:
         for step, arch in enumerate(("amd64", "arm64"), start=2):
             env = dict(os.environ, CGO_ENABLED="0", GOOS="linux", GOARCH=arch)
