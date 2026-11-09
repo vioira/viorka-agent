@@ -45,7 +45,8 @@ func Open(dir string) (*Store, error) {
 	if info.Mode().Perm()&0077 != 0 {
 		return nil, fmt.Errorf("state directory must have mode 0700")
 	}
-	fd, err := syscall.Open(filepath.Join(absolute, "agent.lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	// Engine and supervisor processes must not retain the lock after Agent exits.
+	fd, err := syscall.Open(filepath.Join(absolute, "agent.lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
 	if err != nil {
 		return nil, err
 	}
