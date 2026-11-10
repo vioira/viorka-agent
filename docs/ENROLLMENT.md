@@ -103,3 +103,7 @@ rc-service viorka-agent status
 随后执行 Panel 新节点的有效安装命令。原 `agent.json` 保留，因此此流程要求仍连接同一 Panel；跨 Panel 迁移需另行核对配置。新安装会创建独立状态和密钥，不触碰代理服务。备份含私钥，须保持受限权限；旧身份已失效，恢复备份不能恢复其 Panel 认证权限。注册失败时保留新建的待注册状态，按首次注册恢复流程重试，不反复移动状态目录。
 
 成功以日志 `Panel connected; session established` 和 Panel 新节点在线为准，不能只看服务已启动。此处不迁移旧节点历史和流量基线。
+
+## 托管引擎复用
+
+原节点 `--replace-node` 换钥保留引擎和本地配置。删除原节点后使用新令牌注册时，Agent 核对 `/var/lib/viorka-engines` 中的 Viorka 托管引擎，随注册请求提交有效配置和原引擎 ID；Panel 原子恢复服务、凭证、修订与管理归属。此过程不重装或重启代理。第三方服务、配置不一致或旧节点仍持有引擎时拒绝恢复，失败保留本地数据和待注册身份供重试。需配套支持 `EngineRecovery` 的 Panel。

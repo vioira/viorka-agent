@@ -151,3 +151,28 @@ func ValidEngineDiagnostic(d *EngineDiagnostic) bool {
 	}
 	return (d.HttpStatus == nil || *d.HttpStatus >= 100 && *d.HttpStatus <= 599) && (d.ExitCode == nil || *d.ExitCode <= 255)
 }
+
+// ValidateEngineRecovery validates the enrollment-only snapshot boundary.
+func ValidateEngineRecovery(items []*EngineRecovery) error {
+	bad := errors.New("invalid engine recovery")
+	if len(items) > 3 {
+		return bad
+	}
+	names, ids := map[string]bool{}, map[string]bool{}
+	for _, item := range items {
+		if item == nil || item.Command == nil || len(item.EngineID) < 1 || len(item.EngineID) > 64 || ids[item.EngineID] || names[item.Command.Name] || (item.Status != "running" && item.Status != "stopped") {
+			return bad
+		}
+		for _, c := range item.EngineID {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+				return bad
+			}
+		}
+		if item.Command.Validate("engine.apply") != nil {
+			return bad
+		}
+		names[item.Command.Name] = true
+		ids[item.EngineID] = true
+	}
+	return nil
+}

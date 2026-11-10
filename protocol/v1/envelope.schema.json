@@ -1688,6 +1688,33 @@
           "maximum": 255
         }
       }
+    },
+    "EngineRecovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "engine_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "command": {
+          "$ref": "#/$defs/EngineCommand"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "stopped"
+          ]
+        }
+      },
+      "required": [
+        "engine_id",
+        "command",
+        "status"
+      ]
     }
   }
 }

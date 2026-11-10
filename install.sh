@@ -473,7 +473,7 @@ RC
             printf '检测到未完成注册，将保留原配置和密钥，使用本次令牌继续注册（忽略本次 URL 和 CA）。\n'
         elif [ -z "$reenroll_node" ]; then
             if [ "$token_supplied" -eq 1 ]; then
-                printf '检测到历史节点数据。\n1) 覆盖重新安装（备份旧配置和状态，使用新令牌注册）\n2) 退出并查看恢复说明（默认）\n'
+                printf '检测到历史节点数据。\n1) 覆盖重新安装（备份旧配置和状态，使用新令牌注册并恢复本机托管引擎）\n2) 退出并查看恢复说明（默认）\n'
                 # Script stdin may be curl's pipe. Never read confirmation there.
                 if ! (exec 3<>/dev/tty) 2>/dev/null; then
                     reinstall_help

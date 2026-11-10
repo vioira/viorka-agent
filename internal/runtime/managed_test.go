@@ -107,6 +107,10 @@ func TestManagedInstallApplyAndManualStop(t *testing.T) {
 	if err != nil || actual.Command.Revision != 4 || actual.Command.RunIntent != "stopped" {
 		t.Fatal("state", err)
 	}
+	snapshots, err := m.RecoverySnapshots(ctx)
+	if err != nil || len(snapshots) != 1 || snapshots[0].EngineID != "engine" || snapshots[0].Command.Services[0].Name != "edited" || snapshots[0].Command.Revision != 4 || snapshots[0].Command.RunIntent != "stopped" || starts != 1 {
+		t.Fatal("recovery lost applied config or restarted engine", err)
+	}
 	// A second identity cannot take over the same managed directory.
 	c.Revision = 5
 	result, err = m.Execute(ctx, "other", "engine.apply", c)

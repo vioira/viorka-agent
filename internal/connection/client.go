@@ -121,7 +121,17 @@ func (c *Client) Enroll(ctx context.Context, token string) error {
 		NodeID          string `json:"node_id"`
 		ProtocolVersion string `json:"protocol_version"`
 	}
-	if err = c.post(ctx, "/api/v1/agents/enroll", map[string]string{"token": token, "public_key": base64.StdEncoding.EncodeToString(key), "protocol_version": v1.Version}, &result); err != nil {
+	engines, err := managed.NewManaged(c.log()).RecoverySnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	request := struct {
+		Token           string               `json:"token"`
+		PublicKey       string               `json:"public_key"`
+		ProtocolVersion string               `json:"protocol_version"`
+		Engines         []*v1.EngineRecovery `json:"engines,omitempty"`
+	}{token, base64.StdEncoding.EncodeToString(key), v1.Version, engines}
+	if err = c.post(ctx, "/api/v1/agents/enroll", request, &result); err != nil {
 		return err
 	}
 	if result.NodeID == "" || len(result.NodeID) > 128 || result.ProtocolVersion != v1.Version {
