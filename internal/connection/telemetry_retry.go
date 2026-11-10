@@ -131,7 +131,8 @@ func (r *telemetryRetry) finish(attempt telemetryAttempt, now time.Time, code st
 }
 
 // sessionChanged abandons the old attempt but preserves throttles and refusal
-// history. Reconnection cannot bypass a circuit or the POST attempt interval.
+// history. Credential refresh alone does not clear transport cooldowns; a
+// successfully renegotiated management connection calls reconnect separately.
 func (r *telemetryRetry) sessionChanged(generation uint64) error {
 	if generation <= r.generation {
 		return fmt.Errorf("stale telemetry session generation")
@@ -147,4 +148,15 @@ func (r *telemetryRetry) negotiated(generation uint64) bool {
 	}
 	r.unsupported = false
 	return true
+}
+
+// reconnect discards transport cooldowns and allows a fresh snapshot immediately.
+// Keep explicit server throttles and permanent identity failures. Fence the old
+// attempt even when the new management connection reuses the same token.
+func (r *telemetryRetry) reconnect() {
+	r.active = nil
+	r.lastPOST = time.Time{}
+	r.httpCooldown = time.Time{}
+	r.wssCooldown = time.Time{}
+	r.degraded = false
 }

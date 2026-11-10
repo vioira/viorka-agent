@@ -242,11 +242,14 @@ func (s *telemetrySchedule) reconnected(generation uint64, serverGeneration stri
 		s.lease = newTelemetryLease(serverGeneration)
 	}
 	s.retry.negotiated(generation)
+	if reconnected {
+		s.retry.reconnect()
+	}
 	s.mode(now)
 	if reconnected {
 		// Restore the Panel's volatile snapshot without waiting for the next
-		// cadence tick. take still enforces in-flight ownership and all retry
-		// budgets; cached groups keep their original observation identities.
+		// cadence tick. take still enforces in-flight ownership and explicit
+		// server throttles; cached groups keep their observation identities.
 		s.postWanted = true
 	}
 	return nil

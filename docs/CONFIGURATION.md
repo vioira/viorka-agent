@@ -126,7 +126,7 @@ C 只保存供退出实时后生效。修改 R 不重排 HTTP fast，跳过的�
 
 `telemetry_v3` 省略或 `true` 时声明 `node.telemetry.v3`，必须经 Panel ready 和设置确认后才能上报。`false` 明确停用监控，不恢复旧采集。Panel 默认启用，可用 `VIORKA_TELEMETRY_V3=false` 停用；两端启动配置修改需要重启。
 
-旧 `metrics_seconds` 已删除，严格配置解析会拒绝该字段；升级时从 bootstrap JSON 移除。旧 `node-settings.json` 不再读取或写入，不自动删除用户状态目录中的文件。没有 ready 的管理连接在 10 秒后报不支持错误并重连，不回退旧协议；正常 v3 重连保留采集运行代次。此行为不修改代理服务。
+旧 `metrics_seconds` 已删除，严格配置解析会拒绝该字段；升级时从 bootstrap JSON 移除。旧 `node-settings.json` 不再读取或写入，不自动删除用户状态目录中的文件。没有 ready 的管理连接在 10 秒后报不支持错误并重连，不回退旧协议；正常 v3 重连保留采集运行代次。监控重新协商成功后清除 HTTP/WSS 错误冷却和上次 POST 的间隔等待，立即补报缓存的最新指标；已有上传先结束，旧连接的迟到结果不会重新设置冷却。服务端明确的限流、Retry-After 和永久身份拒绝仍然有效。此行为不修改代理服务。
 
 ### v3 本地运行诊断
 

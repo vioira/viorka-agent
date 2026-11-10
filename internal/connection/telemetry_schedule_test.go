@@ -190,8 +190,8 @@ func TestTelemetryScheduleCooldownAndGenerationFence(t *testing.T) {
 		t.Fatal("new generation overlapped old POST")
 	}
 	s.finish(probe, at, "", 0)
-	if !s.retry.degraded {
-		t.Fatal("old success cleared new generation state")
+	if s.retry.degraded {
+		t.Fatal("reconnect retained degraded state")
 	}
 	if err := s.reconnected(1, "generation-1", at); err == nil {
 		t.Fatal("old credentials accepted")
@@ -303,7 +303,7 @@ func TestTelemetryReconnectRestoresCachedGroupsBeforeNextTick(t *testing.T) {
 }
 
 func TestTelemetryReconnectSnapshotRespectsRetryBudget(t *testing.T) {
-	for _, code := range []string{"", "rate_limited", "session_invalid"} {
+	for _, code := range []string{"rate_limited", "session_invalid"} {
 		t.Run(code, func(t *testing.T) {
 			s, start := scheduleFixture(t, v1.DefaultTelemetrySettings())
 			if err := s.window.add(windowFixture(t).Fast[0]); err != nil {
@@ -337,5 +337,55 @@ func TestTelemetryReconnectSnapshotRespectsRetryBudget(t *testing.T) {
 				t.Fatal("snapshot waited for a cadence tick after budget became available")
 			}
 		})
+	}
+}
+
+func TestTelemetryReconnectClearsCooldownAndPacing(t *testing.T) {
+	for _, generation := range []uint64{1, 2} {
+		for _, code := range []string{"", "stale_session", "session_expired", "invalid_batch", "invalid_response"} {
+			t.Run(code, func(t *testing.T) {
+				s, start := scheduleFixture(t, v1.DefaultTelemetrySettings())
+				if err := s.window.add(windowFixture(t).Fast[0]); err != nil {
+					t.Fatal(err)
+				}
+				s.postWanted = true
+				first := s.take(start)
+				s.finish(first, start, code, 0)
+				s.disconnect(start)
+				at := start.Add(time.Second)
+				if err := s.reconnected(generation, "new-panel", at); err != nil {
+					t.Fatal(err)
+				}
+				send := s.take(at)
+				if send == nil || !send.attempt.HTTP || len(send.flight.samples) == 0 {
+					t.Fatal("reconnect did not upload immediately")
+				}
+				s.finish(send, at, "", 0)
+			})
+		}
+	}
+}
+
+func TestTelemetryReconnectFencesLateCooldown(t *testing.T) {
+	s, start := scheduleFixture(t, v1.DefaultTelemetrySettings())
+	if err := s.window.add(windowFixture(t).Fast[0]); err != nil {
+		t.Fatal(err)
+	}
+	s.postWanted = true
+	old := s.take(start)
+	s.disconnect(start)
+	at := start.Add(time.Second)
+	if err := s.reconnected(1, "new-panel", at); err != nil {
+		t.Fatal(err)
+	}
+	if s.take(at) != nil {
+		t.Fatal("reconnect overlapped old upload")
+	}
+	s.finish(old, at, "stale_session", 0)
+	if s.retry.degraded || !s.retry.httpCooldown.IsZero() || !s.retry.wssCooldown.IsZero() {
+		t.Fatal("old response reinstated cooldown")
+	}
+	if s.take(at) == nil {
+		t.Fatal("snapshot did not follow old upload completion")
 	}
 }
