@@ -1385,6 +1385,10 @@
         },
         "routing": {
           "$ref": "#/$defs/EngineRouting"
+        },
+        "include_config": {
+          "type": "boolean",
+          "description": "Only engine.inspect: return redacted native configuration after ownership and active-file verification."
         }
       }
     },
@@ -1433,6 +1437,9 @@
         },
         "diagnostic": {
           "$ref": "#/$defs/EngineDiagnostic"
+        },
+        "configuration": {
+          "$ref": "#/$defs/EngineConfiguration"
         }
       }
     },
@@ -1715,6 +1722,49 @@
         "command",
         "status"
       ]
+    },
+    "EngineConfiguration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "files"
+      ],
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 34,
+          "items": {
+            "$ref": "#/$defs/EngineConfigFile"
+          }
+        }
+      }
+    },
+    "EngineConfigFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "content"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32768
+        }
+      }
     }
   }
 }

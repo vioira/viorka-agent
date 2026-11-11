@@ -4,7 +4,7 @@
 
 `internal/runtime/managed.go` 实现类型化任务运行时，`render.go` 生成 sing-box/Xray 的 VLESS REALITY 配置和 Realm TCP 配置，`download.go` 下载校验固定发行资源，`preflight.go` 进行端口和目标预检。旧 `Engine` 接口仅为接口定义，实际任务通过 `Managed.Execute` 路径执行。
 
-支持范围为 Linux + systemd/OpenRC + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v5`。运行目录 `/var/lib/viorka-engines/<name>`，systemd unit 为 `viorka-engine-<name>.service`；OpenRC 服务脚本为 `/etc/init.d/viorka-engine-<name>`（0755）。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
+支持范围为 Linux + systemd/OpenRC + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v6`。运行目录 `/var/lib/viorka-engines/<name>`，systemd unit 为 `viorka-engine-<name>.service`；OpenRC 服务脚本为 `/etc/init.d/viorka-engine-<name>`（0755）。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
 
 安装不启动。配置以结构化任务为输入，不接受任意 Shell、URL 或原生配置。sing-box 执行 `check -C`，Xray 执行 `run -test -c`；Realm 2.9.6 没有原生配置检查命令，使用严格结构化渲染校验和启动后的本地检查。修改运行配置可能重启整个引擎。停止意愿会 disable/stop，停止时应用配置不启动。
 
@@ -85,3 +85,7 @@ Panel 权威 Schema 与两个仓库生成模型同步为 engine.manage.v5，需�
 engine.manage.v5 的安装、升级、应用和启动默认自动修复白名单系统依赖，无额外确认选项；只读检查不安装。仅 Alpine 3.21、标准 amd64/arm64 glibc 加载器缺失时支持修复，使用独立 repositories 文件指定官方 HTTPS main 仓库，以 APK 签名验证安装 gcompat=1.1.0-r4 及其必要依赖。没有任意包名/仓库参数，不使用第三方仓库，不关闭签名校验。APK 命令受 20 秒执行期限与任务 deadline 限制。
 
 修复后必须再次执行引擎验证；失败不发布新二进制或切换配置。安装的兼容包保留，配置回滚和卸载引擎不会移除系统依赖；需要回退时由管理员确认后通过 APK 管理。Journal 在安装包之前写入阶段，中断任务不盲目重放。Panel 和 Agent 必须配套更新到 v5 能力。此前 jp-arm Alpine 3.21 arm64 已手动验证 gcompat 可修复 sing-box 1.14.4，自动流程的验证以本次测试为准。
+
+## 读取运行配置
+
+`engine.manage.v6` 支持 `engine.inspect` 的 `include_config=true`。完成托管归属、活动文件一致性和运行健康检查后，读取本机原生配置并脱敏：sing-box 返回活动 `conf.d` 文件列表，Xray 返回 `config.json`，Realm 返回 `config.toml`。读取不会应用配置、启停或重启服务；返回配置修订号来自本地持久状态。配置缺失、被修改或超出 32 KiB 时拒绝返回，敏感字段不写入结果 Journal。Panel 必须配套升级。

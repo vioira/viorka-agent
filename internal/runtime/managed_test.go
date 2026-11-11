@@ -88,6 +88,14 @@ func TestManagedInstallApplyAndManualStop(t *testing.T) {
 	if err != nil || result.Status != "running" || result.ErrorCode != "" || !boot {
 		t.Fatalf("apply %+v %v", result, err)
 	}
+	inspect := c
+	inspect.Services = nil
+	inspect.Revision = 3
+	inspect.IncludeConfig = true
+	readResult, readErr := m.Execute(ctx, "engine", "engine.inspect", inspect)
+	if readErr != nil || readResult.ErrorCode != "" || readResult.Configuration == nil || starts != 1 || readResult.Configuration.Revision != c.Revision {
+		t.Fatalf("configuration read restarted engine or lost revision: %+v %v", readResult, readErr)
+	}
 	stop := c
 	stop.Revision = 3
 	stop.Services = nil

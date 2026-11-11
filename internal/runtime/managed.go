@@ -337,6 +337,9 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 	}
 	if !old.Installed {
 		if operation == "engine.inspect" {
+			if c.IncludeConfig {
+				return fail("engine_config_unavailable")
+			}
 			return r, nil
 		}
 		return fail("engine_unsupported")
@@ -460,6 +463,13 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 				r.Status = "degraded"
 				return fail("engine_result_unknown")
 			}
+		}
+		if c.IncludeConfig {
+			config, err := m.readEngineConfiguration(dir, old.Command)
+			if err != nil {
+				return fail("engine_config_unavailable")
+			}
+			r.Configuration = config
 		}
 		return r, nil
 	}

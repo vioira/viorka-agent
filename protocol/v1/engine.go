@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-const EngineCapability = "engine.manage.v5"
+const EngineCapability = "engine.manage.v6"
 
 func EngineOperation(op string) bool {
 	switch op {
@@ -22,6 +22,9 @@ func EngineOperation(op string) bool {
 }
 func (c EngineCommand) Validate(operation string) error {
 	bad := errors.New("invalid engine command")
+	if c.IncludeConfig && operation != "engine.inspect" {
+		return bad
+	}
 	if err := c.ValidateRouting(operation); err != nil {
 		return err
 	}
@@ -125,7 +128,7 @@ func engineHost(s string) bool {
 
 func EngineErrorCode(code string) bool {
 	switch code {
-	case "engine_dependency_missing", "engine_dependency_install_failed", "engine_binary_unusable", "engine_unsupported", "engine_external", "engine_download_failed", "engine_checksum", "engine_invalid_config", "engine_target_unreachable", "engine_port_conflict", "engine_start_failed", "engine_rollback_failed", "engine_io_failed", "engine_result_unknown", "deadline_exceeded":
+	case "engine_config_unavailable", "engine_dependency_missing", "engine_dependency_install_failed", "engine_binary_unusable", "engine_unsupported", "engine_external", "engine_download_failed", "engine_checksum", "engine_invalid_config", "engine_target_unreachable", "engine_port_conflict", "engine_start_failed", "engine_rollback_failed", "engine_io_failed", "engine_result_unknown", "deadline_exceeded":
 		return true
 	}
 	return false
