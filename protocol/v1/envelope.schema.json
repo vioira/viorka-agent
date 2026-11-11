@@ -1388,7 +1388,7 @@
         },
         "include_config": {
           "type": "boolean",
-          "description": "Only engine.inspect: return redacted native configuration after ownership and active-file verification."
+          "description": "Only engine.inspect: return complete native configuration after ownership and active-file verification."
         }
       }
     },

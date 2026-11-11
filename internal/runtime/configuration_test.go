@@ -3,7 +3,6 @@ package runtime
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -45,8 +44,8 @@ func TestReadNativeConfigurationFiles(t *testing.T) {
 				t.Fatalf("read: %+v %v", result, err)
 			}
 			for _, file := range result.Files {
-				if name != "realm" && (strings.Contains(file.Content, c.Services[0].Uuid) || strings.Contains(file.Content, c.Services[0].PrivateKey)) {
-					t.Fatal("credential leaked")
+				if file.Content != string(files[file.Name]) {
+					t.Fatal("native configuration changed")
 				}
 			}
 			for filename := range files {

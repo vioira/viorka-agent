@@ -66,7 +66,7 @@ func (m *Managed) readEngineConfiguration(dir string, command v1.EngineCommand) 
 		}
 		result.Files = append(result.Files, &v1.EngineConfigFile{Name: name, Content: string(data)})
 	}
-	if err := v1.RedactEngineConfiguration(command.Name, result); err != nil {
+	if err := v1.ValidateEngineConfiguration(command.Name, result); err != nil {
 		return nil, err
 	}
 	return result, nil

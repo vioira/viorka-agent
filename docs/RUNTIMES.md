@@ -88,4 +88,4 @@ engine.manage.v5 的安装、升级、应用和启动默认自动修复白名单
 
 ## 读取运行配置
 
-`engine.manage.v6` 支持 `engine.inspect` 的 `include_config=true`。完成托管归属、活动文件一致性和运行健康检查后，读取本机原生配置并脱敏：sing-box 返回活动 `conf.d` 文件列表，Xray 返回 `config.json`，Realm 返回 `config.toml`。读取不会应用配置、启停或重启服务；返回配置修订号来自本地持久状态。配置缺失、被修改或超出 32 KiB 时拒绝返回，敏感字段不写入结果 Journal。Panel 必须配套升级。
+`engine.manage.v6` 支持 `engine.inspect` 的 `include_config=true`。完成托管归属、活动文件一致性和运行健康检查后，读取本机完整原生配置：sing-box 返回活动 `conf.d` 文件列表，Xray 返回 `config.json`，Realm 返回 `config.toml`。读取不会应用配置、启停或重启服务；返回配置修订号来自本地持久状态。配置缺失、被修改或超出 32 KiB 时拒绝返回，结果 Journal 沿用 0600 文件权限，Panel 加密保存配置正文并要求节点管理授权查看。Panel 必须配套升级。
