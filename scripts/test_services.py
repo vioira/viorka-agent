@@ -38,7 +38,7 @@ class Services(unittest.TestCase):
             executable('id', 'echo ' + ('1000' if failure == 'nonroot' else '0') + '\n')
             # macOS stat differs; the Linux integration uses the actual GNU/BusyBox stat.
             executable('stat', 'case "$2" in %u) echo 0;; %a) echo 700;; esac\n')
-            executable('timeout', 'shift\nexec "$@"\n')
+            executable('timeout', '[ "$1" != -k ] || shift 2\nshift\nexec "$@"\n')
             executable('systemctl', '''printf '%s\n' "$*" >> "$CALLS"
 if [ "$1" = show ]; then
  case "$4" in
@@ -47,12 +47,14 @@ if [ "$1" = show ]; then
  DropInPaths) :;;
  esac
 fi
+if [ "$FAILURE" = rollback ] && [ "$1" = restart ]; then exit 1; fi
 if [ "$FAILURE" = upgrade ] && [ "$1" = restart ] && [ ! -e "$MARKER" ]; then touch "$MARKER"; exit 1; fi
 if [ "$FAILURE" = start ] && [ "$1" = enable ]; then exit 1; fi
 if [ "$FAILURE" = status ] && [ "$1" = is-active ]; then exit 1; fi
 exit 0
 ''')
             executable('rc-service', '''printf '%s\n' "$*" >> "$CALLS"
+if [ "$FAILURE" = rollback ] && [ "$2" = restart ]; then exit 1; fi
 if [ "$FAILURE" = upgrade ] && [ "$2" = restart ] && [ ! -e "$MARKER" ]; then touch "$MARKER"; exit 1; fi
 if [ "$FAILURE" = start ] && [ "$2" = start ]; then exit 1; fi
 if [ "$FAILURE" = status ] && [ "$2" = status ]; then exit 1; fi
@@ -117,8 +119,9 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                 initial_service = service.read_bytes()
                 initial_config = (install / 'agent.json').read_bytes()
                 command = ['sh', str(local), 'install', '--version=v0.1.0']
-                for upgrade_failure in ('download', 'upgrade', '', ''):
+                for upgrade_failure in ('download', 'upgrade', 'rollback', '', ''):
                     old_binary = agent.read_bytes()
+                    prior_calls = calls.read_text()
                     result = subprocess.run(command, env=dict(env, FAILURE=upgrade_failure), capture_output=True, timeout=15)
                     self.assertEqual(result.returncode == 0, not upgrade_failure, result.stderr.decode())
                     self.assertEqual(service.read_bytes(), initial_service)
@@ -127,10 +130,12 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                     self.assertFalse(list(install.glob('.install-*')))
                     if upgrade_failure:
                         self.assertEqual(agent.read_bytes(), old_binary)
-                        if upgrade_failure == 'upgrade':
+                        if upgrade_failure in ('upgrade', 'rollback'):
                             self.assertIn('已恢复旧 Agent 二进制'.encode(), result.stderr)
                             restart = 'restart viorka-agent.service' if manager == 'systemd' else 'viorka-agent restart'
-                            self.assertEqual(calls.read_text().count(restart), 2)
+                            self.assertEqual(calls.read_text().count(restart) - prior_calls.count(restart), 2)
+                            if upgrade_failure == 'rollback':
+                                self.assertIn('旧 Agent 服务恢复失败'.encode(), result.stderr)
                     self.assertNotIn('sing-box', calls.read_text())
                     self.assertNotIn('xray', calls.read_text())
                     if not upgrade_failure:

@@ -82,8 +82,8 @@ func TestTCPProbeMedianCapacityAndTargetChange(t *testing.T) {
 	for i := 1; i <= 200; i++ {
 		p.Sample(context.Background(), at.Add(time.Duration(i)*30*time.Second))
 	}
-	if len(h.observations) != 120 {
-		t.Fatalf("unbounded window %d", len(h.observations))
+	if n := len(p.histories["example.com:443"].observations); n != 120 {
+		t.Fatalf("unbounded window %d", n)
 	}
 	cfg := p.settings
 	cfg.Targets = []string{"example.net:443"}
@@ -121,7 +121,7 @@ func TestTCPProbeCancellationAndAddressBoundary(t *testing.T) {
 	if _, err := p.Sample(ctx, time.Now()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel: %v", err)
 	}
-	if len(p.histories["example.com:443"].observations) != 0 {
+	if len(p.histories) != 0 {
 		t.Fatal("cancel counted as failure")
 	}
 	p = probeForTest()
@@ -130,5 +130,35 @@ func TestTCPProbeCancellationAndAddressBoundary(t *testing.T) {
 	rows, err := p.Sample(context.Background(), time.Now())
 	if err != nil || rows[0].Failures != 1 || *rows[0].FailurePercent != 100 || rows[0].MedianMs != nil {
 		t.Fatalf("timeout: %+v %v", rows, err)
+	}
+}
+
+func TestTCPProbeCanceledTickRetriesAllTargets(t *testing.T) {
+	p := probeForTest()
+	p.settings.Targets = []string{"example.com:443", "example.net:443"}
+	at := time.Now()
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	p.dial = func(context.Context, string, string) (net.Conn, error) {
+		calls++
+		if calls == 2 {
+			cancel()
+		}
+		return nil, errors.New("refused")
+	}
+	if _, err := p.Sample(ctx, at); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if len(p.histories) != 0 || !p.next.IsZero() {
+		t.Fatal("partial tick committed")
+	}
+	rows, err := p.Sample(context.Background(), at.Add(time.Second))
+	if err != nil || calls != 4 {
+		t.Fatal(err, calls)
+	}
+	for _, row := range rows {
+		if row.SampledAt.IsZero() || row.Samples != 1 || row.Failures != 1 {
+			t.Fatalf("invalid retry: %+v", row)
+		}
 	}
 }

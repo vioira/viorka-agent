@@ -27,20 +27,26 @@ func NewDNS(servers []string) *DNS {
 	return d
 }
 
-func (d *DNS) attempt(ctx context.Context) (context.Context, context.CancelFunc) {
+func (d *DNS) attempt(ctx context.Context, remaining int) (context.Context, context.CancelFunc) {
 	if len(d.resolvers) == 1 {
 		return context.WithCancel(ctx)
 	}
-	return context.WithTimeout(ctx, d.attemptTimeout)
+	budget := d.attemptTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		// Share a short caller budget across the remaining resolvers instead of
+		// allowing the system lookup to consume the entire probe timeout.
+		budget = min(budget, time.Until(deadline)/time.Duration(remaining))
+	}
+	return context.WithTimeout(ctx, budget)
 }
 
 func (d *DNS) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
 	var last error
-	for _, resolver := range d.resolvers {
+	for i, resolver := range d.resolvers {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		attempt, cancel := d.attempt(ctx)
+		attempt, cancel := d.attempt(ctx, len(d.resolvers)-i)
 		addresses, err := resolver.LookupIPAddr(attempt, host)
 		cancel()
 		if err == nil {

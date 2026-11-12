@@ -40,11 +40,23 @@ import os, sys
 s=os.stat(sys.argv[-1])
 print(s.st_uid if sys.argv[2]=='%u' else format(s.st_mode & 0o777, 'o'))
 ''')
+            executable("timeout", f'''#!{sys.executable}
+import os, subprocess, sys
+args=sys.argv[1:]
+if args[0]=='-k': args=args[2:]
+seconds=float(args.pop(0))
+if os.environ.get('FAILURE')=='version_timeout': seconds=0.1
+try:
+    sys.exit(subprocess.run(args, timeout=seconds).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+''')
             executable("flock", f'#!{sys.executable}\nimport fcntl, sys\nfcntl.flock(int(sys.argv[-1]), fcntl.LOCK_EX | fcntl.LOCK_NB)\n')
             fixture = b'''#!/bin/sh
 set -eu
 if [ "$1" = version ]; then
   case "$FAILURE" in
+    version_timeout) exec sleep 30 ;;
     version) echo 'viorka-agent 9.9.9 (linux/amd64)' ;;
     platform) echo 'viorka-agent 0.1.0 (darwin/arm64)' ;;
     *) echo "viorka-agent 0.1.0 (linux/$TEST_ARCH)" ;;
@@ -348,7 +360,7 @@ else:
         self.run_install(token_arg=True, retry=True, running=True)
 
     def test_failed_update_preserves_install(self):
-        for failure in ("download", "checksum", "manifest", "missing_checksum", "version", "platform", "config"):
+        for failure in ("download", "checksum", "manifest", "missing_checksum", "version", "platform", "version_timeout", "config"):
             with self.subTest(failure=failure):
                 self.run_install(token_arg=True, retry=True, retry_failure=failure)
 

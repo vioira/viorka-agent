@@ -53,16 +53,17 @@ func (p *TCPProbes) Sample(ctx context.Context, at time.Time) ([]*v1.TelemetryTC
 		return nil, err
 	}
 	due := !at.Before(p.next)
-	if due {
-		p.next = at.Add(time.Duration(p.settings.IntervalSeconds) * time.Second)
-	}
+	// Commit a complete tick together; cancellation must not advance cadence or
+	// leave partially sampled targets in the next protocol observation.
+	histories := make(map[string]*tcpHistory, len(p.settings.Targets))
 	out := make([]*v1.TelemetryTCPProbe, 0, len(p.settings.Targets))
 	for _, target := range p.settings.Targets {
-		h := p.histories[target]
-		if h == nil {
-			h = &tcpHistory{}
-			p.histories[target] = h
+		h := &tcpHistory{}
+		if previous := p.histories[target]; previous != nil {
+			*h = *previous
+			h.observations = slices.Clone(previous.observations)
 		}
+		histories[target] = h
 		if due {
 			ms, attempted, code := p.measure(ctx, target)
 			if err := ctx.Err(); err != nil {
@@ -102,6 +103,10 @@ func (p *TCPProbes) Sample(ctx context.Context, at time.Time) ([]*v1.TelemetryTC
 			result.MedianMs = &median
 		}
 		out = append(out, result)
+	}
+	p.histories = histories
+	if due {
+		p.next = at.Add(time.Duration(p.settings.IntervalSeconds) * time.Second)
 	}
 	return out, nil
 }

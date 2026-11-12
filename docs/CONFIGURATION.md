@@ -185,7 +185,7 @@ viorka-agent doctor --public-ip --panel
 
 省略或空列表时保留系统 DNS 行为。设置后仍先使用系统解析，只有真实 DNS 查询错误
 或超时才按配置顺序查询备用服务器；每次 DNS 解析最多 1 秒，受调用方整体 deadline
-和取消约束。备用查询固定使用标准库 DNS over TCP，不要求 UDP，不修改系统 DNS。
+和取消约束。独立解析会按剩余服务器数分配短时限，避免 TCP 探测的系统查询耗尽全部预算。备用查询固定使用标准库 DNS over TCP，不要求 UDP，不修改系统 DNS。
 系统解析成功后不会因 TCP 连接失败改用备用 DNS，也不自动添加公共 DNS。
 
 配置同时用于 Panel HTTP/WSS、资产与监控公网 IP 探测，以及

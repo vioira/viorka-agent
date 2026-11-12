@@ -119,7 +119,7 @@ func TestDNSFailureAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	silent, _ := dnsServer(t, "silent")
-	d = fixtureDNS(t, silent, second)
+	d = fixtureDNS(t, silent, silent)
 	for _, dial := range []bool{false, true} {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 		if dial {
@@ -215,5 +215,21 @@ func TestBackupQueryTimeoutAdvancesServer(t *testing.T) {
 	ips, err := d.LookupIPAddr(context.Background(), "panel.test.")
 	if err != nil || len(ips) == 0 || queried.Load() == 0 || answered.Load() == 0 {
 		t.Fatal(ips, err)
+	}
+}
+
+func TestLookupFallbackWithinShortProbeBudget(t *testing.T) {
+	first, _ := dnsServer(t, "silent")
+	backup, calls := dnsServer(t, "ok")
+	d := fixtureDNS(t, first, backup)
+	d.attemptTimeout = time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	ips, err := d.LookupIPAddr(ctx, "probe.test.")
+	if err != nil || len(ips) != 1 || calls.Load() == 0 {
+		t.Fatalf("backup starved: %v %v", ips, err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("no budget left for TCP connection")
 	}
 }

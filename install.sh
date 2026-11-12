@@ -389,7 +389,7 @@ RC
         aarch64|arm64) arch=arm64 ;;
         *) fail '仅支持 Linux amd64/arm64。' ;;
     esac
-    for tool in curl sha256sum stat readlink cmp mktemp; do
+    for tool in curl sha256sum stat readlink cmp mktemp timeout; do
         command -v "$tool" >/dev/null || fail "请先安装 $tool。"
     done
     case "${HOME:-}" in /*) ;; *) fail 'HOME 必须为绝对路径。' ;; esac
@@ -534,7 +534,7 @@ RC
     checksum=$(printf '%s' "$checksum" | tr 'A-F' 'a-f')
     [ "$actual" = "$checksum" ] || fail '安装包 SHA-256 校验失败。'
     chmod 700 "$staging/viorka-agent"
-    binary_version=$("$staging/viorka-agent" version) || fail '无法执行下载的 Agent。'
+    binary_version=$(timeout -k 2 10 "$staging/viorka-agent" version) || fail '无法执行下载的 Agent。'
     [ "$binary_version" = "viorka-agent ${release_tag#v} (linux/$arch)" ] || fail '下载的 Agent 版本或平台与指定 Release 不符。'
     if [ "$reinstall" -eq 1 ]; then
         printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"warn","ca_file":"%s"}\n' \

@@ -15,7 +15,7 @@ curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubuserconten
 
 面板生成的命令携带 `--token`，复制执行后自动注册，无需再次输入。令牌仅可使用一次且有效期为 15 分钟；参数方式可能出现在 shell 历史和安装进程参数中，因此不要分享完整命令。安装器不打印或持久保存令牌，传给 Agent 时仍使用标准输入。省略 `--token` 时回退到终端隐藏输入。节点 ID、名称和类型由 Panel 令牌绑定，无需传入 `-id` 或名称。`--url`（兼容 `-url`）仅接受 HTTPS Origin，不是 `/wss` 地址。未实现的 `-secret`、`-auto_update` 等参数明确拒绝。
 
-需要 Linux amd64/arm64、POSIX sh、curl、sha256sum，以及 stat、readlink、cmp、mktemp 等基础工具。默认后台安装要求 root、HOME=/root、timeout，以及运行中的 systemd 或 OpenRC（需 supervise-daemon、logger）。后台模式拒绝可由非 root 写入或含符号链接的安装路径。无 root 或无受支持服务管理器时，显式添加 `--foreground` 前台运行。仅隐藏输入模式额外需要 stty 和交互终端。可选 `--version=vX.Y.Z` 固定安装版本；默认解析最新正式 Release，再从同一版本下载二进制和 SHA-256。私有 CA 可追加 `--ca-file=/absolute/path/ca.pem`，仍验证主机名。
+需要 Linux amd64/arm64、POSIX sh、curl、sha256sum，以及 stat、readlink、cmp、mktemp、timeout 等基础工具。默认后台安装要求 root、HOME=/root，以及运行中的 systemd 或 OpenRC（需 supervise-daemon、logger）。后台模式拒绝可由非 root 写入或含符号链接的安装路径。无 root 或无受支持服务管理器时，显式添加 `--foreground` 前台运行。仅隐藏输入模式额外需要 stty 和交互终端。可选 `--version=vX.Y.Z` 固定安装版本；默认解析最新正式 Release，再从同一版本下载二进制和 SHA-256。私有 CA 可追加 `--ca-file=/absolute/path/ca.pem`，仍验证主机名。
 
 入口脚本来自 GitHub main，通过 HTTPS 获取；运行前可先下载并审阅，或将 URL 中 main 替换为审核过且包含安装器的提交/tag。SHA-256 验证的是发行二进制，不是入口脚本的独立签名。必须先将 `install.sh` 发布到对应 Git 引用，并发布正式 Release 资产；本地有文件不代表线上命令已经可用。
 
@@ -125,3 +125,5 @@ sh install.sh install --version=v1.2.3 --foreground
 必须使用输出的精确版本；省略 `--version` 的旧入口仍跟随 GitHub Latest，可能与按 SemVer 排序的候选不同。指定预发布无需额外安装参数。安装器严格接受 v 开头的 SemVer；二进制下载上限 128 MiB，摘要文件上限 128 字节，缺失、格式错误或 SHA-256 不匹配均拒绝切换；校验通过后执行 `version`，其版本及平台必须与指定产物一致，再执行配置检查。后台安装升级会重启 Agent，失败恢复旧二进制并尝试重启旧 Agent；身份、配置和代理服务保持原状。前台已有进程继续运行旧版本，需通过原终端或 supervisor 重启；未运行时进入前台运行。
 
 实现参考了 [cfsm-agent 的版本筛选流程](https://github.com/huilang-me/cfsm-agent/blob/main/internal/cfprobe/update.go)，保留显式检查和用户执行安装的方式。没有周期更新任务；发布产物使用 SHA-256，未增加签名体系。
+
+安装时需要 `timeout`；下载后二进制的版本/平台检查限时 10 秒，超时后最多再等待 2 秒强制终止，失败时保留已有二进制、配置和身份。
