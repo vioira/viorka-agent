@@ -49,17 +49,16 @@
           "processes_unavailable",
           "os_unavailable"
         ],
-        "tcp_probes": [
-          {
-            "target": "example.com:443",
-            "sampled_at": "2026-11-02T00:00:00Z",
-            "window_seconds": 600,
-            "samples": 4,
-            "failures": 1,
-            "failure_percent": 25,
-            "median_ms": 12.5
-          }
-        ]
+        "tcp_probes": {
+          "sampled_at": "2026-11-02T00:00:00Z",
+          "targets": [
+            {
+              "target": "example.com:443",
+              "loss": 25,
+              "ping": 12.5
+            }
+          ]
+        }
       }
     ],
     "public_ip": []

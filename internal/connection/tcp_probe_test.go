@@ -11,9 +11,9 @@ import (
 
 func TestTCPProbeTransportNegotiation(t *testing.T) {
 	fixture := uploadFixture(t)
-	percent, median := 0.0, 12.0
+	median := 12.0
 	full := fixture.Full[0]
-	full.TcpProbes = []*v1.TelemetryTCPProbe{{Target: "example.com:443", SampledAt: full.SampledAt, WindowSeconds: 600, Samples: 1, FailurePercent: &percent, MedianMs: &median}}
+	full.TcpProbes = &v1.TelemetryTCPProbeBatch{SampledAt: full.SampledAt, Targets: []*v1.TelemetryTCPProbe{{Target: "example.com:443", Ping: median, Loss: 0}}}
 	var window telemetryWindow
 	if err := window.add(full); err != nil {
 		t.Fatal(err)

@@ -3,17 +3,15 @@ package v1
 import (
 	"errors"
 	"math"
-	"net"
 	"net/netip"
 	"regexp"
-	"strconv"
 	"time"
 )
 
 // TelemetryCapability is a contract identifier, not an advertisement of support.
 // Neither peer advertises it until storage, transport and scheduling are ready.
 const TelemetryCapability = "node.telemetry.v3"
-const TCPProbeCapability = "node.tcp_probe.v1"
+const TCPProbeCapability = "node.tcp_probe.v2"
 const TCPProbeSettingsCapability = "node.tcp_probe.settings.v2"
 const (
 	TelemetryMaxBodyBytes   = 1 << 20
@@ -99,22 +97,22 @@ func (b TelemetryBatch) ValidateIdentity(node string, now time.Time, reportSecon
 			return errors.New("invalid full observation identity")
 		}
 
-		seen := map[string]bool{}
-		for _, p := range f.TcpProbes {
-			if p == nil {
-				return errors.New("nil TCP probe")
+		if batch := f.TcpProbes; batch != nil {
+			if batch.SampledAt.IsZero() || batch.SampledAt.After(f.SampledAt) || f.SampledAt.Sub(batch.SampledAt) >= 120*time.Second {
+				return errors.New("invalid TCP probe batch time")
 			}
-			host, port, err := net.SplitHostPort(p.Target)
-			n, portErr := strconv.Atoi(port)
-			if err != nil || host == "" || portErr != nil || n < 1 || n > 65535 || seen[p.Target] || p.SampledAt.IsZero() || p.SampledAt.After(f.SampledAt) || p.Failures > p.Samples {
-				return errors.New("invalid TCP probe observation")
-			}
-			seen[p.Target] = true
-			if (p.Samples == 0) != (p.FailurePercent == nil) || (p.Samples == p.Failures) != (p.MedianMs == nil) {
-				return errors.New("invalid TCP probe unknown values")
-			}
-			if p.Samples > 0 && math.Abs(*p.FailurePercent-float64(p.Failures)*100/float64(p.Samples)) > 0.000001 {
-				return errors.New("invalid TCP probe failure ratio")
+			seen := map[string]bool{}
+			for _, p := range batch.Targets {
+				if p == nil {
+					return errors.New("nil TCP probe")
+				}
+				if err := ValidateTCPProbeTargets([]string{p.Target}); err != nil {
+					return err
+				}
+				if seen[p.Target] || (p.Ping < 0 && p.Ping != -1) || (p.Ping == -1) != (p.Loss == 100) {
+					return errors.New("invalid TCP probe observation")
+				}
+				seen[p.Target] = true
 			}
 		}
 		previous = f.Sequence

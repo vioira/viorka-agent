@@ -3,15 +3,14 @@ package collector
 import (
 	"context"
 	"errors"
+	"github.com/vioira/viorka-agent/internal/config"
 	"net"
 	"testing"
 	"time"
-
-	"github.com/vioira/viorka-agent/internal/config"
 )
 
 func probeForTest() *TCPProbes {
-	p := NewTCPProbes(&config.TCPProbe{Targets: []string{"example.com:443"}, IntervalSeconds: 30, TimeoutMS: 1000, WindowSeconds: 120}, nil)
+	p := NewTCPProbes(&config.TCPProbe{Targets: []string{"example.com:443"}, TimeoutMS: 1000}, nil)
 	p.lookup = func(context.Context, string) ([]net.IPAddr, error) {
 		return []net.IPAddr{{IP: net.ParseIP("1.1.1.1")}}, nil
 	}
@@ -26,13 +25,14 @@ func TestTCPProbeConnectionAndWindow(t *testing.T) {
 	accepted := make(chan struct{})
 	go func() {
 		defer close(accepted)
-		conn, err := listener.Accept()
+		c, err := listener.Accept()
 		if err == nil {
-			conn.Close()
+			c.Close()
 		}
 	}()
 	p := probeForTest()
-	clock := time.Now()
+	at := time.Now()
+	clock := at
 	p.now = func() time.Time { return clock }
 	p.lookup = func(context.Context, string) ([]net.IPAddr, error) {
 		clock = clock.Add(500 * time.Millisecond)
@@ -40,62 +40,94 @@ func TestTCPProbeConnectionAndWindow(t *testing.T) {
 	}
 	p.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
 		if address != "1.1.1.1:443" {
-			t.Errorf("not pinned to resolved IP: %s", address)
+			t.Errorf("not pinned: %s", address)
 		}
-		conn, err := (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
+		c, e := (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
 		clock = clock.Add(12 * time.Millisecond)
-		return conn, err
+		return c, e
 	}
-	at := time.Now()
-	rows, err := p.Sample(context.Background(), at)
-	if err != nil || len(rows) != 1 || rows[0].Samples != 1 || rows[0].MedianMs == nil || *rows[0].MedianMs != 12 || *rows[0].FailurePercent != 0 {
-		t.Fatalf("success/DNS timing: %+v %v", rows, err)
+	batch, err := p.Sample(context.Background(), at)
+	if err != nil || batch.Targets[0].Ping != 12 || batch.Targets[0].Loss != 0 || !batch.SampledAt.Equal(clock) {
+		t.Fatalf("DNS timer/batch time: %+v %v", batch, err)
 	}
 	<-accepted
 	p.dial = func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("refused") }
-	rows, _ = p.Sample(context.Background(), at.Add(30*time.Second))
-	if rows[0].Failures != 1 || *rows[0].FailurePercent != 50 || *rows[0].MedianMs != 12 {
-		t.Fatalf("failed window: %+v", rows[0])
+	clock = at.Add(20 * time.Second)
+	batch, _ = p.Sample(context.Background(), clock)
+	if batch.Targets[0].Loss != 50 || batch.Targets[0].Ping != 12 {
+		t.Fatal(batch.Targets[0])
 	}
-	rows, _ = p.Sample(context.Background(), at.Add(31*time.Second))
-	if rows[0].Samples != 2 {
-		t.Fatal("probed before interval")
+	original := batch
+	clock = at.Add(21 * time.Second)
+	batch, _ = p.Sample(context.Background(), clock)
+	if batch != original || len(p.histories["example.com:443"].observations) != 2 {
+		t.Fatal("extra attempt before 20s")
 	}
 	p.lookup = func(context.Context, string) ([]net.IPAddr, error) { return nil, errors.New("dns") }
-	rows, _ = p.Sample(context.Background(), at.Add(151*time.Second))
-	if rows[0].Samples != 0 || rows[0].FailurePercent != nil || rows[0].MedianMs != nil || rows[0].LastError != "dns_failed" {
-		t.Fatalf("expired or DNS treated as TCP loss: %+v", rows[0])
+	clock = at.Add(141 * time.Second)
+	batch, _ = p.Sample(context.Background(), clock)
+	if batch.Targets[0].Loss != 100 || batch.Targets[0].Ping != -1 || len(p.histories["example.com:443"].observations) != 1 {
+		t.Fatal("expiry/DNS failure", batch)
+	}
+	if p.Snapshot(clock.Add(120*time.Second)) != nil {
+		t.Fatal("expired snapshot reported")
 	}
 }
 func TestTCPProbeMedianCapacityAndTargetChange(t *testing.T) {
 	p := probeForTest()
-	p.settings.WindowSeconds = 3600
 	at := time.Now()
-	h := &tcpHistory{at: at, observations: []tcpObservation{{at, 40, false}, {at, 10, false}, {at, 20, false}, {at, 30, false}, {at, 0, true}}}
-	p.histories["example.com:443"] = h
-	p.next = at.Add(time.Minute)
-	rows, _ := p.Sample(context.Background(), at)
-	if *rows[0].MedianMs != 25 || *rows[0].FailurePercent != 20 {
-		t.Fatalf("median: %+v", rows[0])
+	clock := at
+	p.now = func() time.Time { return clock }
+	durations := []time.Duration{10, 20, 30, 40, 1000, 0}
+	calls := 0
+	p.dial = func(context.Context, string, string) (net.Conn, error) {
+		ms := durations[calls%len(durations)]
+		calls++
+		if ms == 0 {
+			return nil, errors.New("failed")
+		}
+		clock = clock.Add(ms * time.Millisecond)
+		a, b := net.Pipe()
+		b.Close()
+		return a, nil
 	}
-	p.dial = func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("refused") }
-	for i := 1; i <= 200; i++ {
-		p.Sample(context.Background(), at.Add(time.Duration(i)*30*time.Second))
+	for i := 0; i < 6; i++ {
+		clock = at.Add(time.Duration(i) * 20 * time.Second)
+		batch, err := p.Sample(context.Background(), clock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 && batch.Targets[0].Ping != 15 {
+			t.Fatal("even median")
+		}
 	}
-	if n := len(p.histories["example.com:443"].observations); n != 120 {
-		t.Fatalf("unbounded window %d", n)
+	batch := p.snapshot.Load()
+	if batch.Targets[0].Ping != 30 || batch.Targets[0].Loss != 16 || calls != 6 {
+		t.Fatal("spike/integer loss", batch.Targets[0], calls)
+	}
+	// Fixed timing ignores old local overrides, and count never exceeds six.
+	p.settings.WindowSeconds = 3600
+	for i := 6; i < 200; i++ {
+		clock = at.Add(time.Duration(i) * 20 * time.Second)
+		p.Sample(context.Background(), clock)
+	}
+	if len(p.histories["example.com:443"].observations) != 6 {
+		t.Fatal("unbounded window")
 	}
 	cfg := p.settings
-	cfg.Targets = []string{"example.net:443"}
+	cfg.Targets = []string{"example.net:443", "example.com:443"}
 	p.Configure(&cfg)
-	rows, _ = p.Sample(context.Background(), at.Add(201*30*time.Second))
-	if rows[0].Target != "example.net:443" || rows[0].Samples != 1 || rows[0].MedianMs != nil {
-		t.Fatal("target change retained old history")
+	if len(p.histories["example.com:443"].observations) != 6 || p.histories["example.net:443"] != nil || p.snapshot.Load() != nil {
+		t.Fatal("target histories not isolated")
+	}
+	cfg.Targets = []string{"example.com:443", "example.net:443"}
+	p.Configure(&cfg)
+	if len(p.histories["example.com:443"].observations) != 6 {
+		t.Fatal("reorder reset history")
 	}
 	p.Configure(nil)
-	rows, err := p.Sample(context.Background(), at.Add(202*30*time.Second))
-	if err != nil || len(rows) != 0 {
-		t.Fatal("disabled probe")
+	if b, e := p.Sample(context.Background(), clock); e != nil || b != nil {
+		t.Fatal("disabled", b, e)
 	}
 }
 func TestTCPProbeCancellationAndAddressBoundary(t *testing.T) {
@@ -109,30 +141,20 @@ func TestTCPProbeCancellationAndAddressBoundary(t *testing.T) {
 				t.Fatal("dialed blocked address")
 				return nil, nil
 			}
-			rows, err := p.Sample(context.Background(), time.Now())
-			if err != nil || rows[0].LastError != "address_blocked" || rows[0].Samples != 0 {
-				t.Fatalf("address boundary: %+v %v", rows, err)
+			batch, err := p.Sample(context.Background(), time.Now())
+			if err != nil || batch.Targets[0].Loss != 100 || batch.Targets[0].Ping != -1 {
+				t.Fatal(batch, err)
 			}
 		})
 	}
 	p := probeForTest()
-	ctx, cancel := context.WithCancel(context.Background())
-	p.dial = func(ctx context.Context, _, _ string) (net.Conn, error) { cancel(); return nil, ctx.Err() }
-	if _, err := p.Sample(ctx, time.Now()); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancel: %v", err)
-	}
-	if len(p.histories) != 0 {
-		t.Fatal("cancel counted as failure")
-	}
-	p = probeForTest()
 	p.settings.TimeoutMS = 100
 	p.dial = func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }
-	rows, err := p.Sample(context.Background(), time.Now())
-	if err != nil || rows[0].Failures != 1 || *rows[0].FailurePercent != 100 || rows[0].MedianMs != nil {
-		t.Fatalf("timeout: %+v %v", rows, err)
+	b, err := p.Sample(context.Background(), time.Now())
+	if err != nil || b.Targets[0].Loss != 100 || b.Targets[0].Ping != -1 {
+		t.Fatal("timeout", b, err)
 	}
 }
-
 func TestTCPProbeCanceledTickRetriesAllTargets(t *testing.T) {
 	p := probeForTest()
 	p.settings.Targets = []string{"example.com:443", "example.net:443"}
@@ -149,39 +171,16 @@ func TestTCPProbeCanceledTickRetriesAllTargets(t *testing.T) {
 	if _, err := p.Sample(ctx, at); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if len(p.histories) != 0 || !p.next.IsZero() {
+	if len(p.histories) != 0 || !p.next.IsZero() || p.snapshot.Load() != nil {
 		t.Fatal("partial tick committed")
 	}
-	rows, err := p.Sample(context.Background(), at.Add(time.Second))
-	if err != nil || calls != 4 {
-		t.Fatal(err, calls)
+	batch, err := p.Sample(context.Background(), at.Add(time.Second))
+	if err != nil || calls != 4 || len(batch.Targets) != 2 {
+		t.Fatal(batch, err, calls)
 	}
-	for _, row := range rows {
-		if row.SampledAt.IsZero() || row.Samples != 1 || row.Failures != 1 {
-			t.Fatalf("invalid retry: %+v", row)
+	for _, row := range batch.Targets {
+		if row.Loss != 100 || row.Ping != -1 {
+			t.Fatal(row)
 		}
-	}
-}
-
-func TestTCPProbeUnchangedConfigurationPreservesWindow(t *testing.T) {
-	p := probeForTest()
-	p.dial = func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("refused") }
-	at := time.Now()
-	p.Sample(context.Background(), at)
-	cfg := p.settings
-	p.Configure(&cfg)
-	rows, err := p.Sample(context.Background(), at.Add(30*time.Second))
-	if err != nil || rows[0].Samples != 2 {
-		t.Fatal("unchanged target reset history", err)
-	}
-	cfg.Targets = []string{}
-	p.Configure(&cfg)
-	p.lookup = func(context.Context, string) ([]net.IPAddr, error) {
-		t.Fatal("disabled target resolved")
-		return nil, nil
-	}
-	rows, err = p.Sample(context.Background(), at.Add(time.Minute))
-	if err != nil || len(rows) != 0 {
-		t.Fatal("empty managed targets not disabled")
 	}
 }

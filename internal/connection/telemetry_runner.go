@@ -40,8 +40,8 @@ type telemetryTransmissionResult struct {
 type telemetryTransmit func(context.Context, telemetryTransmission) error
 
 type telemetryDiagnostics struct {
-	Completed [4]uint64
-	Errors    [4]error
+	Completed [5]uint64
+	Errors    [5]error
 }
 type telemetryRunner struct {
 	diagnostics chan telemetryDiagnostics

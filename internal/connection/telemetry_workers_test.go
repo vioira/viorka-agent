@@ -183,3 +183,46 @@ func TestTelemetrySourcesPreserveCorruptTraffic(t *testing.T) {
 		t.Fatal("corrupt ledger overwritten")
 	}
 }
+
+func TestTCPWorkerIndependentCadenceAndShutdown(t *testing.T) {
+	changes := make(chan struct{}, 1)
+	probes := make(chan time.Time, 3)
+	fullStarted := make(chan struct{})
+	sources := telemetrySources{
+		fast: func(context.Context, time.Time) (any, error) { return nil, nil },
+		full: func(ctx context.Context, _ time.Time) (any, error) {
+			close(fullStarted)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+		ip:           func(context.Context, time.Time) (any, error) { return nil, nil },
+		save:         func(context.Context, time.Time, bool) error { return nil },
+		probeChanged: changes,
+		probe:        func(ctx context.Context, at time.Time) error { probes <- at; return nil },
+	}
+	w := startTelemetryWorkers(context.Background(), sources)
+	defer w.cancel()
+	w.submit(1, time.Now())
+	<-fullStarted
+	select {
+	case <-probes:
+	case <-time.After(time.Second):
+		t.Fatal("initial TCP round blocked on full")
+	}
+	select {
+	case <-probes:
+		t.Fatal("extra TCP round before interval")
+	case <-time.After(30 * time.Millisecond):
+	}
+	changes <- struct{}{}
+	select {
+	case <-probes:
+	case <-time.After(time.Second):
+		t.Fatal("target change did not trigger TCP round")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := w.stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -22,6 +22,8 @@ type telemetrySources struct {
 	validate       func(v1.TelemetryTrafficSettings) error
 	configure      func(v1.TelemetryTrafficSettings) error
 	calibrate      func(context.Context, string, v1.TrafficCalibration, time.Time) (*v1.TrafficCalibration, error)
+	probe          func(context.Context, time.Time) error
+	probeChanged   <-chan struct{}
 	trafficError   error // startup diagnostic; a blocked ledger does not disable other groups
 	fast, full, ip func(context.Context, time.Time) (any, error)
 	save           func(context.Context, time.Time, bool) error
@@ -49,12 +51,20 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 				probes.Configure(cfg.TCPProbe)
 				return
 			}
-			local := config.TCPProbe{IntervalSeconds: 60, TimeoutMS: 1000, WindowSeconds: 600}
+			local := config.TCPProbe{IntervalSeconds: 20, TimeoutMS: 1000, WindowSeconds: 120}
 			if cfg.TCPProbe != nil {
 				local = *cfg.TCPProbe
 			}
 			local.Targets = next.Targets
 			probes.Configure(&local)
+		},
+		probeChanged: probes.Changes(),
+		probe: func(ctx context.Context, at time.Time) error {
+			if len(probeEnabled) == 0 || !probeEnabled[0]() {
+				return nil
+			}
+			_, err := probes.Sample(ctx, at)
+			return err
 		},
 		trafficError: ledgerErr,
 		configure:    fast.ApplyTraffic,
@@ -62,9 +72,13 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 		calibrate:    ledger.CalibrateWithReceipt,
 		fast:         func(ctx context.Context, at time.Time) (any, error) { v, _, err := fast.Sample(ctx, at); return v, err },
 		full: func(ctx context.Context, at time.Time) (any, error) {
+			var snapshot *v1.TelemetryTCPProbeBatch
+			if len(probeEnabled) > 0 && probeEnabled[0]() {
+				snapshot = probes.Snapshot(at)
+			}
 			value, err := full.Sample(ctx, at)
-			if err == nil && len(probeEnabled) > 0 && probeEnabled[0]() {
-				value.TcpProbes, err = probes.Sample(ctx, at)
+			if err == nil {
+				value.TcpProbes = snapshot
 			}
 			return value, err
 		},
@@ -73,7 +87,7 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 	}, nil
 }
 
-// Four fixed workers, one outstanding operation each. The scheduler owns busy
+// Fixed workers and an independent TCP round worker. The scheduler owns busy
 // and must consume complete before submitting the next operation of that kind.
 // Slow full/IP/disk persistence cannot queue or block fast sampling.
 type telemetryWorkers struct {
@@ -91,6 +105,34 @@ func startTelemetryWorkers(parent context.Context, s telemetrySources) *telemetr
 	w := &telemetryWorkers{results: make(chan telemetryWorkResult, 4), cancel: cancel, done: make(chan struct{}), stopping: ctx.Done()}
 	var collectors sync.WaitGroup
 	collectors.Add(3)
+	if s.probe != nil {
+		collectors.Add(1)
+		go func() {
+			defer collectors.Done()
+			timer := time.NewTimer(0)
+			defer timer.Stop()
+			<-timer.C
+			for {
+				at := time.Now()
+				round, stop := context.WithTimeout(ctx, 5*time.Second)
+				err := s.probe(round, at)
+				stop()
+				select {
+				case <-ctx.Done():
+					return
+				case w.results <- telemetryWorkResult{kind: 4, err: err}:
+				}
+				timer.Reset(time.Until(at.Add(collector.TCPProbeInterval)))
+				select {
+				case <-ctx.Done():
+					return
+				case <-timer.C:
+				case <-s.probeChanged:
+					timer.Stop()
+				}
+			}
+		}()
+	}
 	functions := []func(context.Context, time.Time) (any, error){s.fast, s.full, s.ip}
 	for kind := 0; kind < 4; kind++ {
 		w.requests[kind] = make(chan time.Time, 1)

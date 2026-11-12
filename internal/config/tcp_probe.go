@@ -9,15 +9,16 @@ import (
 
 // TCPProbe supplies local timing and targets for Panels without managed settings.
 type TCPProbe struct {
-	Targets         []string `json:"targets"`
-	IntervalSeconds uint64   `json:"interval_seconds"`
-	TimeoutMS       uint64   `json:"timeout_ms"`
-	WindowSeconds   uint64   `json:"window_seconds"`
+	Targets []string `json:"targets"`
+	// Deprecated: timing is fixed at 20s / 120s; accepted for existing local config.
+	IntervalSeconds uint64 `json:"interval_seconds"`
+	TimeoutMS       uint64 `json:"timeout_ms"`
+	WindowSeconds   uint64 `json:"window_seconds"`
 }
 
 func (p TCPProbe) Validate() error {
-	if len(p.Targets) > 3 || p.IntervalSeconds < 30 || p.IntervalSeconds > 3600 || p.TimeoutMS < 100 || p.TimeoutMS > 1000 || p.WindowSeconds < 60 || p.WindowSeconds > 3600 || p.WindowSeconds < p.IntervalSeconds {
-		return fmt.Errorf("tcp_probe requires at most 3 targets, interval 30–3600s, timeout 100–1000ms, window 60–3600s and window >= interval")
+	if len(p.Targets) > 3 || p.TimeoutMS < 100 || p.TimeoutMS > 1000 {
+		return fmt.Errorf("tcp_probe requires at most 3 targets and timeout 100–1000ms")
 	}
 	return v1.ValidateTCPProbeTargets(p.Targets)
 }

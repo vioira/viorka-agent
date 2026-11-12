@@ -17,9 +17,7 @@ func TestTCPProbeValidation(t *testing.T) {
 	for _, change := range []func(*TCPProbe){
 		func(p *TCPProbe) { p.Targets = append(p.Targets, "example.net:443") },
 		func(p *TCPProbe) { p.Targets = []string{"example.com:443", "EXAMPLE.COM.:443"} },
-		func(p *TCPProbe) { p.IntervalSeconds = 29 }, func(p *TCPProbe) { p.TimeoutMS = 1001 },
-		func(p *TCPProbe) { p.WindowSeconds = 3601 }, func(p *TCPProbe) { p.WindowSeconds = 59 },
-		func(p *TCPProbe) { p.IntervalSeconds = 601 },
+		func(p *TCPProbe) { p.TimeoutMS = 1001 },
 	} {
 		cfg := valid
 		change(&cfg)

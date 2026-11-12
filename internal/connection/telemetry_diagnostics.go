@@ -12,8 +12,8 @@ import (
 // arbitrary error strings are copied into operational logs.
 type telemetryLogState struct {
 	next           time.Time
-	collected      [4]time.Time
-	failed         [4]bool
+	collected      [5]time.Time
+	failed         [5]bool
 	send, accepted time.Time
 	sendFailed     bool
 	droppedFailure uint64
@@ -72,6 +72,7 @@ func (d *telemetryLogState) record(ctx context.Context, logger *slog.Logger, s *
 		slog.Time("last_ip_completed", d.collected[2]), slog.Time("last_traffic_save_completed", d.collected[3]),
 		slog.Bool("fast_error", d.failed[0]), slog.Bool("full_error", d.failed[1]),
 		slog.Bool("ip_error", d.failed[2]), slog.Bool("traffic_save_error", d.failed[3]),
+		slog.Time("last_tcp_probe_completed", d.collected[4]), slog.Bool("tcp_probe_error", d.failed[4]),
 		slog.Time("last_send_started", d.send), slog.Time("last_receipt_accepted", d.accepted), slog.Bool("last_send_error", d.sendFailed),
 		slog.Int("pending_samples", len(s.window.pending)), slog.Int("pending_sample_bytes", s.window.bytes),
 		slog.Int("inflight_samples", inflightCount), slog.Int("inflight_sample_bytes", inflightBytes),

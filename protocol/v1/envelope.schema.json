@@ -810,11 +810,7 @@
           "uniqueItems": true
         },
         "tcp_probes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TelemetryTCPProbe"
-          },
-          "maxItems": 3
+          "$ref": "#/$defs/TelemetryTCPProbeBatch"
         }
       },
       "required": [
@@ -1193,7 +1189,7 @@
         },
         "tcp_probe": {
           "type": "boolean",
-          "description": "仅在协商 node.tcp_probe.v1 能力后设为 true。"
+          "description": "仅在协商 node.tcp_probe.v2 能力后设为 true。"
         }
       },
       "required": [
@@ -1789,50 +1785,21 @@
           "minLength": 3,
           "maxLength": 259
         },
-        "sampled_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "window_seconds": {
+        "loss": {
           "type": "integer",
-          "minimum": 60,
-          "maximum": 3600
-        },
-        "samples": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 120
-        },
-        "failures": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 120
-        },
-        "failure_percent": {
-          "type": "number",
           "minimum": 0,
           "maximum": 100
         },
-        "median_ms": {
+        "ping": {
           "type": "number",
-          "minimum": 0,
+          "minimum": -1,
           "maximum": 60000
-        },
-        "last_error": {
-          "type": "string",
-          "enum": [
-            "dns_failed",
-            "address_blocked",
-            "connect_failed"
-          ]
         }
       },
       "required": [
         "target",
-        "sampled_at",
-        "window_seconds",
-        "samples",
-        "failures"
+        "loss",
+        "ping"
       ]
     },
     "TelemetryTCPProbeSettings": {
@@ -1865,6 +1832,28 @@
       "required": [
         "targets",
         "use_global"
+      ]
+    },
+    "TelemetryTCPProbeBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sampled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/TelemetryTCPProbe"
+          }
+        }
+      },
+      "required": [
+        "sampled_at",
+        "targets"
       ]
     }
   }
