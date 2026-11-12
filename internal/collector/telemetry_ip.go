@@ -35,7 +35,7 @@ func (t *TelemetryPublicIP) Sample(ctx context.Context, at time.Time) (*v1.Telem
 	// The existing fixed-source HTTP probes have TLS validation and timeouts.
 	// Bound the whole two-family refresh as well, including cancellation.
 	parent := ctx
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 22*time.Second)
 	defer cancel()
 	v := &v1.TelemetryPublicIP{SampledAt: at.UTC(), Errors: []string{}}
 	for _, ipv4 := range []bool{true, false} {

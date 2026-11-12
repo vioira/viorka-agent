@@ -113,9 +113,11 @@ func parseRelease(data string) (id, name, version string) {
 	return values["ID"], name, values["VERSION_ID"]
 }
 func lookupPublicIP(ctx context.Context, ipv4 bool) (string, error) {
-	network, endpoint := "tcp6", "https://api6.ipify.org"
+	network := "tcp6"
+	endpoints := []string{"https://api6.ipify.org", "https://ipv6.icanhazip.com", "https://cloudflare.com/cdn-cgi/trace"}
 	if ipv4 {
-		network, endpoint = "tcp4", "https://api.ipify.org"
+		network = "tcp4"
+		endpoints = []string{"https://www.visa.cn/cdn-cgi/trace", "https://www.qualcomm.cn/cdn-cgi/trace", "https://api.ipify.org"}
 	}
 	// Direct egress, never a proxy's address. No credentials, redirects or remote URLs.
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
@@ -123,13 +125,33 @@ func lookupPublicIP(ctx context.Context, ipv4 bool) (string, error) {
 	}, TLSHandshakeTimeout: 3 * time.Second, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 4 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return fetchPublicIP(ctx, client, endpoint, ipv4)
+	return lookupPublicIPFromEndpoints(ctx, client, endpoints, ipv4)
+}
+
+// Each address family has its own budget so an unavailable family cannot
+// consume the other family's discovery time.
+func lookupPublicIPFromEndpoints(ctx context.Context, client *http.Client, endpoints []string, ipv4 bool) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var lastErr error
+	for _, endpoint := range endpoints {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		value, err := fetchPublicIP(ctx, client, endpoint, ipv4)
+		if err == nil {
+			return value, nil
+		}
+		lastErr = fmt.Errorf("%s: %w", endpoint, err)
+	}
+	return "", fmt.Errorf("public address sources exhausted: %w", lastErr)
 }
 func fetchPublicIP(ctx context.Context, client *http.Client, endpoint string, ipv4 bool) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("User-Agent", "curl/8.0.1")
 	res, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -138,12 +160,29 @@ func fetchPublicIP(ctx context.Context, client *http.Client, endpoint string, ip
 	if res.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("address discovery HTTP %d", res.StatusCode)
 	}
-	b, err := io.ReadAll(io.LimitReader(res.Body, 65))
+	limit := int64(64)
+	trace := strings.HasSuffix(req.URL.Path, "/cdn-cgi/trace")
+	if trace {
+		limit = 4096
+	}
+	b, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
 	if err != nil {
 		return "", err
 	}
+	if int64(len(b)) > limit {
+		return "", fmt.Errorf("public address response too large")
+	}
 	value := strings.TrimSpace(string(b))
-	if len(b) > 64 || !v1.PublicAddress(value, ipv4) {
+	if trace {
+		value = ""
+		for _, line := range strings.Split(string(b), "\n") {
+			if ip, ok := strings.CutPrefix(line, "ip="); ok {
+				value = strings.TrimSpace(ip)
+				break
+			}
+		}
+	}
+	if !v1.PublicAddress(value, ipv4) {
 		return "", fmt.Errorf("invalid public address")
 	}
 	return value, nil

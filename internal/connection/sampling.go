@@ -23,7 +23,7 @@ func startAssets(ctx context.Context, sample func(context.Context, time.Duration
 		timer := time.NewTicker(5 * time.Minute)
 		defer timer.Stop()
 		for {
-			probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			probeCtx, cancel := context.WithTimeout(ctx, 24*time.Second)
 			value := sample(probeCtx, 5*time.Minute)
 			cancel()
 			s.mu.Lock()

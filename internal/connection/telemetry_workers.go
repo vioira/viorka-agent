@@ -88,7 +88,7 @@ func startTelemetryWorkers(parent context.Context, s telemetrySources) *telemetr
 					}
 					timeout := 5 * time.Second
 					if kind == 2 {
-						timeout = 12 * time.Second
+						timeout = 24 * time.Second
 					}
 					probe, stop := context.WithTimeout(ctx, timeout)
 					value, err := fn(probe, at)

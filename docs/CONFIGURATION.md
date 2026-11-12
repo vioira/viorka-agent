@@ -66,7 +66,7 @@ Agent 收到旧于当前 Revision 的普通 apply 指令时应拒绝；如果操
 
 Agent 与 Panel 协商 `node.inventory.v1` 后，上线及每 5 分钟发送一次 `node.inventory`。Linux 读取 `/etc/os-release`，不存在时回退 `/usr/lib/os-release`，上报 ID、PRETTY_NAME 和 VERSION_ID；非 Linux 或读取失败保留基础 OS，并报告发行版未知。
 
-公网 IPv4/IPv6 使用 [ipify 官方 API](https://www.ipify.org/) 的 `https://api.ipify.org` 与 `https://api6.ipify.org`。分别强制 TCP4/TCP6、直接出站，不使用 HTTP 代理、不携带 Panel 凭证、不跟随重定向，正常验证 TLS。每请求最长 4 秒、响应上限 64 字节；重连复用 5 分钟缓存。每族只记录该探测路径的一个公网出口地址，不表示全部网卡地址、入站可达性或 NAT 提供商端口映射。探测失败上报空值和对应 unavailable 错误，不声称没有该网络能力。
+公网 IP 使用固定 HTTPS 来源按顺序探测，成功即返回，失败自动切换，无需识别云厂商。IPv4 顺序为 `https://www.visa.cn/cdn-cgi/trace`、`https://www.qualcomm.cn/cdn-cgi/trace`、`https://api.ipify.org`；IPv6 顺序为 `https://api6.ipify.org`、`https://ipv6.icanhazip.com`、`https://cloudflare.com/cdn-cgi/trace`。分别强制 TCP4/TCP6、直接出站，不使用 HTTP 代理、不携带 Panel 凭证、不跟随重定向，正常验证 TLS。每请求最长 4 秒，每个地址族最多 10 秒；纯文本响应上限 64 字节，trace 响应上限 4096 字节且只解析 `ip=` 行，均校验公网地址和地址族。旧版资产采集复用 5 分钟缓存，新版监控公网 IP 独立每 600 秒刷新。每族只记录该探测路径的一个公网出口地址；全部来源失败则上报空值和对应 unavailable 错误。
 
 Panel 将最新快照保存在 `nodes.inventory_json`，断线后保留，页面显示采集时间。此扩展需升级双方；旧 Panel 不确认扩展时 Agent 不发资产消息，新 Panel 对旧 Agent 不添加 ACK 字段。未部署的新二进制不会改变现有节点上报。
 
