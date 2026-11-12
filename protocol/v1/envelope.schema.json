@@ -1851,6 +1851,15 @@
         },
         "use_global": {
           "type": "boolean"
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 3,
+          "description": "Display names in target order; omitted names use the target address."
         }
       },
       "required": [

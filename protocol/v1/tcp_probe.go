@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // ValidateTCPProbeTargets validates both local bootstrap and Panel settings.
@@ -57,4 +58,17 @@ func PublicProbeIP(ip netip.Addr) bool {
 		!netip.MustParsePrefix("2001::/23").Contains(ip) &&
 		!netip.MustParsePrefix("3fff::/20").Contains(ip) &&
 		!netip.MustParsePrefix("192.88.99.0/24").Contains(ip)
+}
+
+// ValidateTCPProbeNames keeps optional display names aligned with their targets.
+func ValidateTCPProbeNames(targets, names []string) error {
+	if len(names) != 0 && len(names) != len(targets) {
+		return fmt.Errorf("tcp_probe names must match targets")
+	}
+	for _, name := range names {
+		if !utf8.ValidString(name) || utf8.RuneCountInString(name) > 64 || strings.TrimSpace(name) != name {
+			return fmt.Errorf("invalid tcp_probe name")
+		}
+	}
+	return nil
 }
