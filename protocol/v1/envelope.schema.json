@@ -805,6 +805,13 @@
           },
           "maxItems": 6,
           "uniqueItems": true
+        },
+        "tcp_probes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TelemetryTCPProbe"
+          },
+          "maxItems": 3
         }
       },
       "required": [
@@ -1180,6 +1187,10 @@
         },
         "settings": {
           "$ref": "#/$defs/TelemetrySettings"
+        },
+        "tcp_probe": {
+          "type": "boolean",
+          "description": "仅在协商 node.tcp_probe.v1 能力后设为 true。"
         }
       },
       "required": [
@@ -1765,6 +1776,61 @@
           "maxLength": 32768
         }
       }
+    },
+    "TelemetryTCPProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 259
+        },
+        "sampled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "window_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 120
+        },
+        "failures": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 120
+        },
+        "failure_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "median_ms": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 60000
+        },
+        "last_error": {
+          "type": "string",
+          "enum": [
+            "dns_failed",
+            "address_blocked",
+            "connect_failed"
+          ]
+        }
+      },
+      "required": [
+        "target",
+        "sampled_at",
+        "window_seconds",
+        "samples",
+        "failures"
+      ]
     }
   }
 }

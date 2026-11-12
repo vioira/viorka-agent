@@ -12,6 +12,7 @@ import (
 )
 
 type Local struct {
+	TCPProbe           *TCPProbe     `json:"tcp_probe,omitempty"`
 	DNSFallbackServers []string      `json:"dns_fallback_servers,omitempty"`
 	TelemetryV3        bool          `json:"telemetry_v3"`
 	NetworkFilter      NetworkFilter `json:"network_filter,omitempty"`
@@ -42,6 +43,11 @@ func LoadFile(path string) (Local, error) {
 }
 
 func (c Local) Validate() error {
+	if c.TCPProbe != nil {
+		if err := c.TCPProbe.Validate(); err != nil {
+			return err
+		}
+	}
 	if len(c.DNSFallbackServers) > 3 {
 		return fmt.Errorf("dns_fallback_servers allows at most 3 servers")
 	}

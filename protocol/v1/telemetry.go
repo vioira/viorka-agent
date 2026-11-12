@@ -3,14 +3,17 @@ package v1
 import (
 	"errors"
 	"math"
+	"net"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"time"
 )
 
 // TelemetryCapability is a contract identifier, not an advertisement of support.
 // Neither peer advertises it until storage, transport and scheduling are ready.
 const TelemetryCapability = "node.telemetry.v3"
+const TCPProbeCapability = "node.tcp_probe.v1"
 const (
 	TelemetryMaxBodyBytes   = 1 << 20
 	TelemetryMaxFrameBytes  = 64 << 10
@@ -85,6 +88,25 @@ func (b TelemetryBatch) ValidateIdentity(node string, now time.Time, reportSecon
 	for _, f := range b.Full {
 		if f == nil || !check(f.Sequence, previous, f.SampledAt, time.Duration(reportSeconds+315)*time.Second) {
 			return errors.New("invalid full observation identity")
+		}
+
+		seen := map[string]bool{}
+		for _, p := range f.TcpProbes {
+			if p == nil {
+				return errors.New("nil TCP probe")
+			}
+			host, port, err := net.SplitHostPort(p.Target)
+			n, portErr := strconv.Atoi(port)
+			if err != nil || host == "" || portErr != nil || n < 1 || n > 65535 || seen[p.Target] || p.SampledAt.IsZero() || p.SampledAt.After(f.SampledAt) || p.Failures > p.Samples {
+				return errors.New("invalid TCP probe observation")
+			}
+			seen[p.Target] = true
+			if (p.Samples == 0) != (p.FailurePercent == nil) || (p.Samples == p.Failures) != (p.MedianMs == nil) {
+				return errors.New("invalid TCP probe unknown values")
+			}
+			if p.Samples > 0 && math.Abs(*p.FailurePercent-float64(p.Failures)*100/float64(p.Samples)) > 0.000001 {
+				return errors.New("invalid TCP probe failure ratio")
+			}
 		}
 		previous = f.Sequence
 	}

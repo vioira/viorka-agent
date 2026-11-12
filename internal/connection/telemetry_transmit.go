@@ -2,7 +2,9 @@ package connection
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -14,6 +16,27 @@ type telemetryFrameDelivery func(context.Context, []byte, string, uint64) error
 func (c *Client) telemetryTransport(node, run string, delivery func() telemetryFrameDelivery) telemetryTransmit {
 	return func(ctx context.Context, request telemetryTransmission) error {
 		flight := request.send.flight
+		// Buffered observations can survive a reconnect to an older Panel. Strip
+		// only the optional extension from a private copy, preserving sample identity.
+		if !c.tcpProbeSupported.Load() {
+			flight = &telemetryFlight{samples: slices.Clone(flight.samples)}
+			for i := range flight.samples {
+				sample := &flight.samples[i]
+				if sample.kind != 1 {
+					continue
+				}
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(sample.raw, &fields); err != nil {
+					return err
+				}
+				delete(fields, "tcp_probes")
+				raw, err := json.Marshal(fields)
+				if err != nil {
+					return err
+				}
+				sample.raw = raw
+			}
+		}
 		if request.send.attempt.HTTP {
 			body, err := encodeTelemetryWindow(flight.samples, node, run, ID())
 			if err != nil {

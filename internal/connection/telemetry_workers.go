@@ -28,7 +28,7 @@ type telemetrySources struct {
 
 // Production sources are instantiated once per Agent run. Reconnecting or
 // changing cadence never reconstructs CPU/network/disk/traffic baselines.
-func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity) (telemetrySources, error) {
+func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity, probeEnabled ...func() bool) (telemetrySources, error) {
 	fast, err := collector.NewTelemetryFast(cfg.NetworkFilter)
 	if err != nil {
 		return telemetrySources{}, err
@@ -41,15 +41,22 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 	}
 	fast.SetTrafficLedger(ledger)
 	full, ip := collector.NewTelemetryFull(), collector.NewTelemetryPublicIP(cfg.DNSFallbackServers...)
+	probes := collector.NewTCPProbes(cfg.TCPProbe, cfg.DNSFallbackServers)
 	return telemetrySources{
 		trafficError: ledgerErr,
 		configure:    fast.ApplyTraffic,
 		validate:     fast.ValidateTraffic,
 		calibrate:    ledger.CalibrateWithReceipt,
 		fast:         func(ctx context.Context, at time.Time) (any, error) { v, _, err := fast.Sample(ctx, at); return v, err },
-		full:         func(ctx context.Context, at time.Time) (any, error) { return full.Sample(ctx, at) },
-		ip:           func(ctx context.Context, at time.Time) (any, error) { return ip.Sample(ctx, at) },
-		save:         ledger.Save,
+		full: func(ctx context.Context, at time.Time) (any, error) {
+			value, err := full.Sample(ctx, at)
+			if err == nil && len(probeEnabled) > 0 && probeEnabled[0]() {
+				value.TcpProbes, err = probes.Sample(ctx, at)
+			}
+			return value, err
+		},
+		ip:   func(ctx context.Context, at time.Time) (any, error) { return ip.Sample(ctx, at) },
+		save: ledger.Save,
 	}, nil
 }
 

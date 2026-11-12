@@ -1,0 +1,67 @@
+{
+  "version": "1.0",
+  "message_id": "example-1",
+  "node_id": "node-demo",
+  "type": "node.metrics.v3",
+  "sent_at": "2026-11-02T00:00:00Z",
+  "payload": {
+    "node_id": "node-demo",
+    "run_id": "11111111-1111-4111-8111-111111111111",
+    "batch_id": "batch-1",
+    "fast": [
+      {
+        "sequence": 1,
+        "sampled_at": "2026-11-02T00:00:00Z",
+        "elapsed_seconds": 30,
+        "cpu_percent": 12.5,
+        "ram_total": 1073741824,
+        "ram_used": 536870912,
+        "interfaces": [
+          {
+            "name": "eth0",
+            "ifindex": 2,
+            "rx_bytes": 9007199254740993,
+            "tx_bytes": 1234,
+            "quality": [
+              "baseline"
+            ]
+          }
+        ],
+        "filter_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "errors": [
+          "uptime_unavailable",
+          "sockets_unavailable",
+          "traffic_unavailable"
+        ],
+        "swap_total": 0,
+        "swap_used": 0
+      }
+    ],
+    "full": [
+      {
+        "sequence": 1,
+        "sampled_at": "2026-11-02T00:00:00Z",
+        "elapsed_seconds": 60,
+        "errors": [
+          "disk_unavailable",
+          "disk_io_unavailable",
+          "load_unavailable",
+          "processes_unavailable",
+          "os_unavailable"
+        ],
+        "tcp_probes": [
+          {
+            "target": "example.com:443",
+            "sampled_at": "2026-11-02T00:00:00Z",
+            "window_seconds": 600,
+            "samples": 4,
+            "failures": 1,
+            "failure_percent": 25,
+            "median_ms": 12.5
+          }
+        ]
+      }
+    ],
+    "public_ip": []
+  }
+}
