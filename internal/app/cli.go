@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/vioira/viorka-agent/internal/connection"
@@ -32,18 +31,7 @@ func Main(args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "viorka-agent %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
 		return 0
 	case "doctor":
-		info := map[string]string{
-			"product": "Viorka Agent", "version": Version,
-			"os": runtime.GOOS, "arch": runtime.GOARCH,
-			"runtime": runtime.Version(), "connection": "not-checked",
-		}
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(info); err != nil {
-			fmt.Fprintln(errOut, err)
-			return 1
-		}
-		return 0
+		return doctor(args[1:], out, errOut)
 	case "config-check":
 		flags := flag.NewFlagSet("config-check", flag.ContinueOnError)
 		flags.SetOutput(errOut)
@@ -70,7 +58,7 @@ func Main(args []string, out, errOut io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: viorka-agent [version|doctor|config-check --config PATH|enroll --config PATH --token-stdin [--replace-node ID]|run --config PATH|help]")
+	fmt.Fprintln(w, "Usage: viorka-agent [version|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH|enroll --config PATH --token-stdin [--replace-node ID]|run --config PATH|help]")
 	fmt.Fprintln(w, "M0 supports enrollment, WSS and read-only node.inspect tasks.")
 }
 

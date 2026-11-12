@@ -159,3 +159,20 @@ Panel 节点设置中的日志等级随 `node.settings.v3`（首次连接为 `no
 `traffic.calibrate` 是唯一新增可变任务，参数仅包含目标周期及上下行累计字节数，不接收路径或命令。执行前保存任务意图，将校准目标与幂等记录一起原子写入账本。重复投递不会覆盖校准后增量；周期不匹配或未知账本拒绝成功，每周期最多 64 次校准。额度和计费方式仅供 Panel 展示，不执行限速或断网。
 
 本次为开发契约更新，需匹配 Panel 协议与新开发数据库，不提供历史数据转换。
+
+### 手动网络诊断
+
+`viorka-agent doctor` 只输出本机基本信息，默认不读取配置、不发起网络请求。
+显式检查使用以下选项，可同时指定：
+
+```bash
+viorka-agent doctor --public-ip
+viorka-agent doctor --panel --config ~/.viorka-agent/agent.json
+viorka-agent doctor --public-ip --panel
+```
+
+`--public-ip` 检查 IPv4/IPv6 的全部固定来源，成功后仍继续检查其余来源；复用正常采集的直连、TLS 校验、禁止重定向和响应大小限制。每来源最长 4 秒、每族最长 10 秒。JSON 的 `public_ip` 数组包含 `source`、`family`、`elapsed_ms`、`status`、成功时的 `address`，失败时的 `failure` 为 `dns`、`connection`、`tls`、`http` 或 `format`。耗尽地址族预算或取消后尚未开始的来源标记 `skipped/budget`；超时按发生阶段分类。诊断不改变正常采集的缓存、周期或上报协议。
+
+`--panel` 读取 bootstrap 配置，依次检查 DNS、TCP、TLS，合计最长 10 秒；支持 `ca_file`，验证 CA 和主机名。各阶段记录状态及耗时，失败后后续阶段标记 `skipped`。直连 Panel，不使用环境代理；不读取节点身份、不注册、不发送 HTTP/WSS 请求。`connection=transport-checked` 表示已执行传输层检查，结果以 `panel` 各阶段为准。输出不包含凭证、响应正文或原始错误文本。
+
+整次网络诊断最长 30 秒，支持 SIGINT/SIGTERM 取消。全部请求的检查成功退出 0；任一来源或阶段失败/跳过退出 1（包括节点没有 IPv6）；参数、配置或 CA 文件错误退出 2。`--config` 必须与 `--panel` 一起使用。

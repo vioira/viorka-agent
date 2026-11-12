@@ -2,14 +2,18 @@ package collector
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -112,7 +116,7 @@ func parseRelease(data string) (id, name, version string) {
 	}
 	return values["ID"], name, values["VERSION_ID"]
 }
-func lookupPublicIP(ctx context.Context, ipv4 bool) (string, error) {
+func publicIPClient(ipv4 bool) (*http.Client, []string) {
 	network := "tcp6"
 	endpoints := []string{"https://api6.ipify.org", "https://ipv6.icanhazip.com", "https://cloudflare.com/cdn-cgi/trace"}
 	if ipv4 {
@@ -123,10 +127,73 @@ func lookupPublicIP(ctx context.Context, ipv4 bool) (string, error) {
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
 		return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, network, address)
 	}, TLSHandshakeTimeout: 3 * time.Second, DisableKeepAlives: true}
-	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 4 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return client, endpoints
+}
+
+func lookupPublicIP(ctx context.Context, ipv4 bool) (string, error) {
+	client, endpoints := publicIPClient(ipv4)
+	defer client.CloseIdleConnections()
 	return lookupPublicIPFromEndpoints(ctx, client, endpoints, ipv4)
 }
+
+// IPDiagnostic is local-only: no remote response or raw error is exposed.
+type IPDiagnostic struct {
+	Source    string `json:"source"`
+	Family    string `json:"family"`
+	ElapsedMS int64  `json:"elapsed_ms"`
+	Status    string `json:"status"`
+	Failure   string `json:"failure,omitempty"`
+	Address   string `json:"address,omitempty"`
+}
+
+// DiagnosePublicIP checks every fixed source, even after a successful response.
+func DiagnosePublicIP(ctx context.Context) []IPDiagnostic {
+	var results []IPDiagnostic
+	for _, ipv4 := range []bool{true, false} {
+		client, endpoints := publicIPClient(ipv4)
+		results = append(results, diagnoseIPFamily(ctx, client, endpoints, ipv4)...)
+		client.CloseIdleConnections()
+	}
+	return results
+}
+func diagnoseIPFamily(ctx context.Context, client *http.Client, endpoints []string, ipv4 bool) []IPDiagnostic {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var results []IPDiagnostic
+	family := "ipv6"
+	if ipv4 {
+		family = "ipv4"
+	}
+	for _, endpoint := range endpoints {
+		start := time.Now()
+		d := IPDiagnostic{Source: endpoint, Family: family, Status: "ok"}
+		if ctx.Err() != nil {
+			d.Status, d.Failure = "skipped", "budget"
+		} else {
+			value, err := fetchPublicIP(ctx, client, endpoint, ipv4)
+			d.Address = value
+			if err != nil {
+				d.Status, d.Failure = "failed", "http"
+				var failure *ipProbeError
+				if errors.As(err, &failure) {
+					d.Failure = failure.stage
+				}
+			}
+		}
+		d.ElapsedMS = time.Since(start).Milliseconds()
+		results = append(results, d)
+	}
+	return results
+}
+
+type ipProbeError struct {
+	stage string
+	err   error
+}
+
+func (e *ipProbeError) Error() string { return e.stage + ": " + e.err.Error() }
+func (e *ipProbeError) Unwrap() error { return e.err }
 
 // Each address family has its own budget so an unavailable family cannot
 // consume the other family's discovery time.
@@ -147,6 +214,26 @@ func lookupPublicIPFromEndpoints(ctx context.Context, client *http.Client, endpo
 	return "", fmt.Errorf("public address sources exhausted: %w", lastErr)
 }
 func fetchPublicIP(ctx context.Context, client *http.Client, endpoint string, ipv4 bool) (string, error) {
+	// Trace callbacks can run concurrently with cancellation; protect the stage.
+	var mu sync.Mutex
+	stage := "connection"
+	setStage := func(value string) { mu.Lock(); stage = value; mu.Unlock() }
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		DNSStart: func(httptrace.DNSStartInfo) { setStage("dns") },
+		DNSDone: func(info httptrace.DNSDoneInfo) {
+			if info.Err == nil {
+				setStage("connection")
+			}
+		},
+		ConnectStart:      func(string, string) { setStage("connection") },
+		TLSHandshakeStart: func() { setStage("tls") },
+		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
+			if err == nil {
+				setStage("http")
+			}
+		},
+		GotConn: func(httptrace.GotConnInfo) { setStage("http") },
+	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", err
@@ -154,11 +241,18 @@ func fetchPublicIP(ctx context.Context, client *http.Client, endpoint string, ip
 	req.Header.Set("User-Agent", "curl/8.0.1")
 	res, err := client.Do(req)
 	if err != nil {
-		return "", err
+		mu.Lock()
+		failedStage := stage
+		mu.Unlock()
+		var dns *net.DNSError
+		if errors.As(err, &dns) {
+			failedStage = "dns"
+		}
+		return "", &ipProbeError{failedStage, err}
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("address discovery HTTP %d", res.StatusCode)
+		return "", &ipProbeError{"http", fmt.Errorf("address discovery HTTP %d", res.StatusCode)}
 	}
 	limit := int64(64)
 	trace := strings.HasSuffix(req.URL.Path, "/cdn-cgi/trace")
@@ -170,7 +264,7 @@ func fetchPublicIP(ctx context.Context, client *http.Client, endpoint string, ip
 		return "", err
 	}
 	if int64(len(b)) > limit {
-		return "", fmt.Errorf("public address response too large")
+		return "", &ipProbeError{"format", fmt.Errorf("public address response too large")}
 	}
 	value := strings.TrimSpace(string(b))
 	if trace {
@@ -183,7 +277,7 @@ func fetchPublicIP(ctx context.Context, client *http.Client, endpoint string, ip
 		}
 	}
 	if !v1.PublicAddress(value, ipv4) {
-		return "", fmt.Errorf("invalid public address")
+		return "", &ipProbeError{"format", fmt.Errorf("invalid public address")}
 	}
 	return value, nil
 }
