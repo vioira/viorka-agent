@@ -94,3 +94,22 @@ func TestLogLevelConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestDNSFallbackServers(t *testing.T) {
+	for _, tc := range []struct {
+		servers []string
+		valid   bool
+	}{
+		{nil, true}, {[]string{"127.0.0.1:53", "[::1]:5353"}, true},
+		{[]string{"dns.example.com:53"}, false}, {[]string{"1.1.1.1"}, false},
+		{[]string{"1.1.1.1:0"}, false}, {[]string{"1.1.1.1:65536"}, false},
+		{[]string{"0.0.0.0:53"}, false}, {[]string{"[::ffff:0.0.0.0]:53"}, false}, {[]string{"255.255.255.255:53"}, false}, {[]string{"224.0.0.1:53"}, false},
+		{[]string{"[fe80::1%en0]:53"}, false}, {[]string{"1.1.1.1:53", "1.1.1.1:53"}, false},
+		{[]string{"1.1.1.1:53", "1.1.1.2:53", "1.1.1.3:53", "1.1.1.4:53"}, false},
+	} {
+		cfg := Local{PanelURL: "https://panel.example.com", NodeName: "test", StateDir: "/unused", DNSFallbackServers: tc.servers}
+		if err := cfg.Validate(); (err == nil) != tc.valid {
+			t.Fatalf("%v: %v", tc.servers, err)
+		}
+	}
+}

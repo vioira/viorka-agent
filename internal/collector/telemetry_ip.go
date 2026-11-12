@@ -17,7 +17,9 @@ type TelemetryPublicIP struct {
 	sequence uint64
 }
 
-func NewTelemetryPublicIP() *TelemetryPublicIP { return &TelemetryPublicIP{lookup: lookupPublicIP} }
+func NewTelemetryPublicIP(servers ...string) *TelemetryPublicIP {
+	return &TelemetryPublicIP{lookup: publicIPLookup(servers)}
+}
 func (t *TelemetryPublicIP) Sample(ctx context.Context, at time.Time) (*v1.TelemetryPublicIP, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

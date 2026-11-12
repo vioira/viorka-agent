@@ -40,7 +40,7 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 		return telemetrySources{}, fmt.Errorf("open traffic ledger: %w", ledgerErr)
 	}
 	fast.SetTrafficLedger(ledger)
-	full, ip := collector.NewTelemetryFull(), collector.NewTelemetryPublicIP()
+	full, ip := collector.NewTelemetryFull(), collector.NewTelemetryPublicIP(cfg.DNSFallbackServers...)
 	return telemetrySources{
 		trafficError: ledgerErr,
 		configure:    fast.ApplyTraffic,

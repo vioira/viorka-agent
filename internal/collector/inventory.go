@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/vioira/viorka-agent/internal/network"
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
 )
 
@@ -27,7 +28,9 @@ type Inventory struct {
 	lookup   func(context.Context, bool) (string, error)
 }
 
-func NewInventory() *Inventory { return &Inventory{readFile: readRelease, lookup: lookupPublicIP} }
+func NewInventory(servers ...string) *Inventory {
+	return &Inventory{readFile: readRelease, lookup: publicIPLookup(servers)}
+}
 func readRelease(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -116,25 +119,29 @@ func parseRelease(data string) (id, name, version string) {
 	}
 	return values["ID"], name, values["VERSION_ID"]
 }
-func publicIPClient(ipv4 bool) (*http.Client, []string) {
-	network := "tcp6"
+func publicIPClient(ipv4 bool, servers ...string) (*http.Client, []string) {
+	family := "tcp6"
 	endpoints := []string{"https://api6.ipify.org", "https://ipv6.icanhazip.com", "https://cloudflare.com/cdn-cgi/trace"}
 	if ipv4 {
-		network = "tcp4"
+		family = "tcp4"
 		endpoints = []string{"https://www.visa.cn/cdn-cgi/trace", "https://www.qualcomm.cn/cdn-cgi/trace", "https://api.ipify.org"}
 	}
 	// Direct egress, never a proxy's address. No credentials, redirects or remote URLs.
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, network, address)
+		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		return network.NewDNS(servers).DialContext(ctx, family, address)
 	}, TLSHandshakeTimeout: 3 * time.Second, DisableKeepAlives: true}
 	client := &http.Client{Transport: transport, Timeout: 4 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return client, endpoints
 }
 
-func lookupPublicIP(ctx context.Context, ipv4 bool) (string, error) {
-	client, endpoints := publicIPClient(ipv4)
-	defer client.CloseIdleConnections()
-	return lookupPublicIPFromEndpoints(ctx, client, endpoints, ipv4)
+func publicIPLookup(servers []string) func(context.Context, bool) (string, error) {
+	return func(ctx context.Context, ipv4 bool) (string, error) {
+		client, endpoints := publicIPClient(ipv4, servers...)
+		defer client.CloseIdleConnections()
+		return lookupPublicIPFromEndpoints(ctx, client, endpoints, ipv4)
+	}
 }
 
 // IPDiagnostic is local-only: no remote response or raw error is exposed.
@@ -148,10 +155,10 @@ type IPDiagnostic struct {
 }
 
 // DiagnosePublicIP checks every fixed source, even after a successful response.
-func DiagnosePublicIP(ctx context.Context) []IPDiagnostic {
+func DiagnosePublicIP(ctx context.Context, servers ...string) []IPDiagnostic {
 	var results []IPDiagnostic
 	for _, ipv4 := range []bool{true, false} {
-		client, endpoints := publicIPClient(ipv4)
+		client, endpoints := publicIPClient(ipv4, servers...)
 		results = append(results, diagnoseIPFamily(ctx, client, endpoints, ipv4)...)
 		client.CloseIdleConnections()
 	}

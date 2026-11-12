@@ -175,4 +175,22 @@ viorka-agent doctor --public-ip --panel
 
 `--panel` 读取 bootstrap 配置，依次检查 DNS、TCP、TLS，合计最长 10 秒；支持 `ca_file`，验证 CA 和主机名。各阶段记录状态及耗时，失败后后续阶段标记 `skipped`。直连 Panel，不使用环境代理；不读取节点身份、不注册、不发送 HTTP/WSS 请求。`connection=transport-checked` 表示已执行传输层检查，结果以 `panel` 各阶段为准。输出不包含凭证、响应正文或原始错误文本。
 
-整次网络诊断最长 30 秒，支持 SIGINT/SIGTERM 取消。全部请求的检查成功退出 0；任一来源或阶段失败/跳过退出 1（包括节点没有 IPv6）；参数、配置或 CA 文件错误退出 2。`--config` 必须与 `--panel` 一起使用。
+整次网络诊断最长 30 秒，支持 SIGINT/SIGTERM 取消。全部请求的检查成功退出 0；任一来源或阶段失败/跳过退出 1（包括节点没有 IPv6）；参数、配置或 CA 文件错误退出 2。`--config` 可与 `--panel` 或 `--public-ip` 一起使用；单独 `--public-ip` 不读取配置。
+
+### 可选备用 DNS
+
+本地 bootstrap 可设置 `"dns_fallback_servers": ["192.0.2.53:53", "[2001:db8::53]:53"]`
+（示例地址须替换为实际可达服务器）。最多 3 个不同服务器，必须明确指定单播 IP 和
+1–65535 端口；不接受域名、URL、未指定地址、组播或 IPv6 zone。
+
+省略或空列表时保留系统 DNS 行为。设置后仍先使用系统解析，只有真实 DNS 查询错误
+或超时才按配置顺序查询备用服务器；每次 DNS 解析最多 1 秒，受调用方整体 deadline
+和取消约束。备用查询固定使用标准库 DNS over TCP，不要求 UDP，不修改系统 DNS。
+系统解析成功后不会因 TCP 连接失败改用备用 DNS，也不自动添加公共 DNS。
+
+配置同时用于 Panel HTTP/WSS、资产与监控公网 IP 探测，以及
+`doctor --panel --config PATH` 和 `doctor --public-ip --config PATH`。
+拨号保留标准库的多地址尝试、地址族筛选与 IPv4/IPv6 并行回退；DNS 计时不缩短后续
+TCP 连接预算。HTTPS/WSS URL 和 TLS 主机名保持原始域名，仍验证 CA 和主机名。
+公网 IP 的固定来源、直连规则与整体时间预算不变。Panel 使用环境代理时，备用解析
+作用于本地拨号的代理主机；代理侧解析 Panel 域名仍由代理负责。

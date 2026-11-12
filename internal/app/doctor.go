@@ -18,6 +18,7 @@ import (
 
 	"github.com/vioira/viorka-agent/internal/collector"
 	"github.com/vioira/viorka-agent/internal/config"
+	"github.com/vioira/viorka-agent/internal/network"
 )
 
 type panelDiagnostic struct {
@@ -27,7 +28,7 @@ type panelDiagnostic struct {
 }
 
 type doctorChecks struct {
-	publicIP func(context.Context) []collector.IPDiagnostic
+	publicIP func(context.Context, ...string) []collector.IPDiagnostic
 	panel    func(context.Context, config.Local) ([]panelDiagnostic, error)
 }
 
@@ -43,12 +44,12 @@ func doctorWithChecks(args []string, out, errOut io.Writer, checks doctorChecks)
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if flags.NArg() != 0 || (*path != "" && !*panel) {
-		fmt.Fprintln(errOut, "doctor: --config requires --panel; positional arguments are unsupported")
+	if flags.NArg() != 0 || (*path != "" && !*panel && !*publicIP) {
+		fmt.Fprintln(errOut, "doctor: --config requires --panel or --public-ip; positional arguments are unsupported")
 		return 2
 	}
 	var cfg config.Local
-	if *panel {
+	if *panel || *path != "" {
 		var err error
 		cfg, err = loadConfig(*path)
 		if err != nil {
@@ -78,7 +79,7 @@ func doctorWithChecks(args []string, out, errOut io.Writer, checks doctorChecks)
 		}
 	}
 	if *publicIP {
-		results := checks.publicIP(ctx)
+		results := checks.publicIP(ctx, cfg.DNSFallbackServers...)
 		info["public_ip"] = results
 		for _, d := range results {
 			if d.Status != "ok" {
@@ -128,7 +129,7 @@ func diagnosePanel(ctx context.Context, cfg config.Local) ([]panelDiagnostic, er
 		}
 	}
 	start := time.Now()
-	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, u.Hostname())
+	addresses, err := network.NewDNS(cfg.DNSFallbackServers).LookupIPAddr(ctx, u.Hostname())
 	if err == nil && len(addresses) == 0 {
 		err = fmt.Errorf("no addresses")
 	}

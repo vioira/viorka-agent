@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,7 +21,7 @@ import (
 
 func TestDoctorExplicitChecks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.json")
-	if err := os.WriteFile(path, []byte(`{"panel_url":"https://panel.example.com","node_name":"node","state_dir":"/unused"}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"panel_url":"https://panel.example.com","node_name":"node","state_dir":"/unused","dns_fallback_servers":["127.0.0.1:5353"]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -33,14 +34,22 @@ func TestDoctorExplicitChecks(t *testing.T) {
 		{[]string{"unexpected"}, false, false, 2},
 		{[]string{"--unknown"}, false, false, 2},
 		{[]string{"--public-ip"}, true, false, 1},
+		{[]string{"--public-ip", "--config", path}, true, false, 1},
 		{[]string{"--panel", "--config", path}, false, true, 0},
 		{[]string{"--panel", "--config", path, "--public-ip"}, true, true, 1},
 	} {
 		var ipCalled, panelCalled bool
 		var out, errOut bytes.Buffer
 		checks := doctorChecks{
-			publicIP: func(ctx context.Context) []collector.IPDiagnostic {
+			publicIP: func(ctx context.Context, servers ...string) []collector.IPDiagnostic {
 				ipCalled = true
+				expected := 0
+				if slices.Contains(tc.args, "--config") {
+					expected = 1
+				}
+				if len(servers) != expected {
+					t.Fatalf("DNS config not forwarded: %v", servers)
+				}
 				if _, ok := ctx.Deadline(); !ok {
 					t.Fatal("missing budget")
 				}

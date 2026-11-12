@@ -17,6 +17,7 @@ import (
 	"github.com/vioira/viorka-agent/internal/collector"
 	"github.com/vioira/viorka-agent/internal/config"
 	"github.com/vioira/viorka-agent/internal/executor"
+	"github.com/vioira/viorka-agent/internal/network"
 	managed "github.com/vioira/viorka-agent/internal/runtime"
 	"github.com/vioira/viorka-agent/internal/state"
 	"github.com/vioira/viorka-agent/internal/version"
@@ -24,6 +25,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -71,9 +73,17 @@ func New(cfg config.Local, s *state.Store) (*Client, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsConfig
+	if len(cfg.DNSFallbackServers) > 0 {
+		dns := network.NewDNS(cfg.DNSFallbackServers)
+		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			return dns.DialContext(ctx, network, address)
+		}
+	}
 	level := new(slog.LevelVar)
 	level.Set(parseLogLevel(cfg.LogLevel))
-	return &Client{logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})), logLevel: level, cfg: cfg, telemetryEnabled: cfg.TelemetryV3, http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, store: s, inventory: collector.NewInventory().SampleEvery}, nil
+	return &Client{logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})), logLevel: level, cfg: cfg, telemetryEnabled: cfg.TelemetryV3, http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, store: s, inventory: collector.NewInventory(cfg.DNSFallbackServers...).SampleEvery}, nil
 }
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 func (c *Client) post(ctx context.Context, path string, v, out any) error {

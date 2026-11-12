@@ -5,19 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
 )
 
 type Local struct {
-	TelemetryV3   bool          `json:"telemetry_v3"`
-	NetworkFilter NetworkFilter `json:"network_filter,omitempty"`
-	PanelURL      string        `json:"panel_url"`
-	NodeName      string        `json:"node_name"`
-	StateDir      string        `json:"state_dir"`
-	LogLevel      string        `json:"log_level"`
-	CAFile        string        `json:"ca_file,omitempty"`
+	DNSFallbackServers []string      `json:"dns_fallback_servers,omitempty"`
+	TelemetryV3        bool          `json:"telemetry_v3"`
+	NetworkFilter      NetworkFilter `json:"network_filter,omitempty"`
+	PanelURL           string        `json:"panel_url"`
+	NodeName           string        `json:"node_name"`
+	StateDir           string        `json:"state_dir"`
+	LogLevel           string        `json:"log_level"`
+	CAFile             string        `json:"ca_file,omitempty"`
 }
 
 func LoadFile(path string) (Local, error) {
@@ -40,6 +42,23 @@ func LoadFile(path string) (Local, error) {
 }
 
 func (c Local) Validate() error {
+	if len(c.DNSFallbackServers) > 3 {
+		return fmt.Errorf("dns_fallback_servers allows at most 3 servers")
+	}
+	seen := make(map[netip.AddrPort]bool)
+	for _, server := range c.DNSFallbackServers {
+		addr, err := netip.ParseAddrPort(server)
+		ip := addr.Addr().Unmap()
+		if err != nil || addr.Port() == 0 || ip.IsUnspecified() || ip.IsMulticast() || ip == netip.AddrFrom4([4]byte{255, 255, 255, 255}) || ip.Zone() != "" {
+			return fmt.Errorf("dns_fallback_servers requires unicast IP:port addresses with ports 1–65535")
+		}
+		addr = netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())
+		if seen[addr] {
+			return fmt.Errorf("duplicate dns_fallback_servers address")
+		}
+		seen[addr] = true
+	}
+
 	if err := c.NetworkFilter.Validate(); err != nil {
 		return err
 	}
