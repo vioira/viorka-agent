@@ -153,6 +153,7 @@ func (t *telemetryClientSession) start(ready v1.TelemetryReady, send func(v1.Env
 	}
 	settings.validate = sources.validate
 	settings.configure = sources.configure
+	settings.configureProbe = sources.configureProbe
 	result := settings.apply(*ready.Settings)
 	if result.State != "applied" {
 		return t.control(telemetryControl{generation: t.generation, correlation: t.readyID, settings: &result}, send)

@@ -214,3 +214,35 @@ func TestTrafficValidationDoesNotReplaceDurableSettings(t *testing.T) {
 		t.Fatal(result, writes)
 	}
 }
+
+func TestManagedTCPProbeSettingsApply(t *testing.T) {
+	initial := v1.DefaultTelemetrySettings()
+	var configured *v1.TelemetryTCPProbeSettings
+	s := &telemetrySettings{current: &initial, write: func(string, any) error { return nil }, configureProbe: func(p *v1.TelemetryTCPProbeSettings) { configured = p }}
+	next := initial
+	next.TcpProbe = &v1.TelemetryTCPProbeSettings{Targets: []string{}, UseGlobal: true}
+	if result := s.apply(next); result.State != "applied" || configured == nil {
+		t.Fatal("default capability upgrade", result)
+	}
+	cadence, _ := newTelemetryCadence(initial, time.Now())
+	if err := cadence.change(next, time.Now()); err != nil {
+		t.Fatal("cadence rejected equivalent default", err)
+	}
+	next.Revision++
+	next.TcpProbe = &v1.TelemetryTCPProbeSettings{Targets: []string{"example.com:443"}}
+	if result := s.apply(next); result.State != "applied" || configured.Targets[0] != "example.com:443" {
+		t.Fatal("target not applied", result)
+	}
+	bad := next
+	bad.Revision++
+	bad.TcpProbe = &v1.TelemetryTCPProbeSettings{Targets: []string{"127.0.0.1:80"}}
+	if result := s.apply(bad); result.ErrorCode != "invalid_settings" || configured.Targets[0] != "example.com:443" {
+		t.Fatal("unsafe target applied", result)
+	}
+	s.write = func(string, any) error { return errors.New("disk failed") }
+	next.Revision++
+	next.TcpProbe = &v1.TelemetryTCPProbeSettings{Targets: []string{}}
+	if result := s.apply(next); result.ErrorCode != "persist_failed" || len(configured.Targets) != 1 {
+		t.Fatal("failed persistence changed targets", result)
+	}
+}

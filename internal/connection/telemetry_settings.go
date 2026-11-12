@@ -21,13 +21,14 @@ type savedTelemetrySettings struct {
 // telemetrySettings is owned by the scheduler. Persistence is independent of
 // legacy settings and live lease state; a restart never restores a live lease.
 type telemetrySettings struct {
-	validate    func(v1.TelemetryTrafficSettings) error
-	configure   func(v1.TelemetryTrafficSettings) error
-	logger      *slog.Logger
-	setLogLevel func(string)
-	panel, node string
-	current     *v1.TelemetrySettings
-	write       func(string, any) error
+	configureProbe func(*v1.TelemetryTCPProbeSettings)
+	validate       func(v1.TelemetryTrafficSettings) error
+	configure      func(v1.TelemetryTrafficSettings) error
+	logger         *slog.Logger
+	setLogLevel    func(string)
+	panel, node    string
+	current        *v1.TelemetrySettings
+	write          func(string, any) error
 }
 
 func loadTelemetrySettings(store *state.Store, id state.Identity) (*telemetrySettings, error) {
@@ -56,7 +57,7 @@ func (s *telemetrySettings) apply(next v1.TelemetrySettings) v1.TelemetrySetting
 		result.ErrorCode = "invalid_settings"
 	case s.current != nil && next.Revision < s.current.Revision:
 		result.ErrorCode = "stale_revision"
-	case s.current != nil && next.Revision == s.current.Revision && !reflect.DeepEqual(next, *s.current):
+	case s.current != nil && next.Revision == s.current.Revision && !sameTelemetrySettings(next, *s.current):
 		result.ErrorCode = "revision_conflict"
 	default:
 		if s.validate != nil {
@@ -75,6 +76,9 @@ func (s *telemetrySettings) apply(next v1.TelemetrySettings) v1.TelemetrySetting
 				return result
 			}
 		}
+		if s.configureProbe != nil {
+			s.configureProbe(next.TcpProbe)
+		}
 		s.current = &next
 		if s.setLogLevel != nil {
 			s.setLogLevel(next.LogLevel)
@@ -86,6 +90,18 @@ func (s *telemetrySettings) apply(next v1.TelemetrySettings) v1.TelemetrySetting
 		result.AppliedRevision = next.Revision
 	}
 	return result
+}
+
+// An empty inherited target set is the explicit form of the original default.
+// Permit this capability upgrade without changing an otherwise equal revision.
+func sameTelemetrySettings(next, previous v1.TelemetrySettings) bool {
+	if next.TcpProbe == nil {
+		previous.TcpProbe = nil
+	}
+	if previous.TcpProbe == nil && next.TcpProbe != nil && next.TcpProbe.UseGlobal && len(next.TcpProbe.Targets) == 0 {
+		next.TcpProbe = nil
+	}
+	return reflect.DeepEqual(next, previous)
 }
 
 // telemetryCadence contains deadlines only, never data baselines. Its owner
@@ -107,7 +123,7 @@ func (c *telemetryCadence) change(next v1.TelemetrySettings, now time.Time) erro
 		return err
 	}
 	old := c.settings
-	if next.Revision < old.Revision || (next.Revision == old.Revision && !reflect.DeepEqual(next, old)) {
+	if next.Revision < old.Revision || (next.Revision == old.Revision && !sameTelemetrySettings(next, old)) {
 		return fmt.Errorf("stale or conflicting cadence revision")
 	}
 	if next.HttpReportSeconds != old.HttpReportSeconds {

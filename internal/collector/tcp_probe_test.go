@@ -162,3 +162,26 @@ func TestTCPProbeCanceledTickRetriesAllTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestTCPProbeUnchangedConfigurationPreservesWindow(t *testing.T) {
+	p := probeForTest()
+	p.dial = func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("refused") }
+	at := time.Now()
+	p.Sample(context.Background(), at)
+	cfg := p.settings
+	p.Configure(&cfg)
+	rows, err := p.Sample(context.Background(), at.Add(30*time.Second))
+	if err != nil || rows[0].Samples != 2 {
+		t.Fatal("unchanged target reset history", err)
+	}
+	cfg.Targets = []string{}
+	p.Configure(&cfg)
+	p.lookup = func(context.Context, string) ([]net.IPAddr, error) {
+		t.Fatal("disabled target resolved")
+		return nil, nil
+	}
+	rows, err = p.Sample(context.Background(), at.Add(time.Minute))
+	if err != nil || len(rows) != 0 {
+		t.Fatal("empty managed targets not disabled")
+	}
+}

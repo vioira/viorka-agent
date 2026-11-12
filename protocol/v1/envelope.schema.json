@@ -363,6 +363,9 @@
         },
         "traffic": {
           "$ref": "#/$defs/TelemetryTrafficSettings"
+        },
+        "tcp_probe": {
+          "$ref": "#/$defs/TelemetryTCPProbeSettings"
         }
       },
       "required": [
@@ -1830,6 +1833,29 @@
         "window_seconds",
         "samples",
         "failures"
+      ]
+    },
+    "TelemetryTCPProbeSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "targets": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 259
+          }
+        },
+        "use_global": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "targets",
+        "use_global"
       ]
     }
   }

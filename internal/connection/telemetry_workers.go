@@ -18,6 +18,7 @@ type telemetryWorkResult struct {
 	err   error
 }
 type telemetrySources struct {
+	configureProbe func(*v1.TelemetryTCPProbeSettings)
 	validate       func(v1.TelemetryTrafficSettings) error
 	configure      func(v1.TelemetryTrafficSettings) error
 	calibrate      func(context.Context, string, v1.TrafficCalibration, time.Time) (*v1.TrafficCalibration, error)
@@ -43,6 +44,18 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 	full, ip := collector.NewTelemetryFull(), collector.NewTelemetryPublicIP(cfg.DNSFallbackServers...)
 	probes := collector.NewTCPProbes(cfg.TCPProbe, cfg.DNSFallbackServers)
 	return telemetrySources{
+		configureProbe: func(next *v1.TelemetryTCPProbeSettings) {
+			if next == nil {
+				probes.Configure(cfg.TCPProbe)
+				return
+			}
+			local := config.TCPProbe{IntervalSeconds: 60, TimeoutMS: 1000, WindowSeconds: 600}
+			if cfg.TCPProbe != nil {
+				local = *cfg.TCPProbe
+			}
+			local.Targets = next.Targets
+			probes.Configure(&local)
+		},
 		trafficError: ledgerErr,
 		configure:    fast.ApplyTraffic,
 		validate:     fast.ValidateTraffic,

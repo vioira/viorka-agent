@@ -4,7 +4,9 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"reflect"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/vioira/viorka-agent/internal/config"
@@ -26,6 +28,7 @@ type tcpHistory struct {
 // TCPProbes is owned by the existing full worker. It has no goroutines, retries,
 // sockets retained between samples, or state outside the configured window.
 type TCPProbes struct {
+	mu        sync.Mutex
 	settings  config.TCPProbe
 	histories map[string]*tcpHistory
 	next      time.Time
@@ -40,6 +43,11 @@ func NewTCPProbes(settings *config.TCPProbe, servers []string) *TCPProbes {
 	return p
 }
 func (p *TCPProbes) Configure(settings *config.TCPProbe) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if settings != nil && reflect.DeepEqual(p.settings, *settings) {
+		return
+	}
 	p.settings = config.TCPProbe{}
 	if settings != nil {
 		p.settings = *settings
@@ -49,6 +57,8 @@ func (p *TCPProbes) Configure(settings *config.TCPProbe) {
 	p.next = time.Time{}
 }
 func (p *TCPProbes) Sample(ctx context.Context, at time.Time) ([]*v1.TelemetryTCPProbe, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

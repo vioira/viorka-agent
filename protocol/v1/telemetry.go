@@ -14,6 +14,7 @@ import (
 // Neither peer advertises it until storage, transport and scheduling are ready.
 const TelemetryCapability = "node.telemetry.v3"
 const TCPProbeCapability = "node.tcp_probe.v1"
+const TCPProbeSettingsCapability = "node.tcp_probe.settings.v1"
 const (
 	TelemetryMaxBodyBytes   = 1 << 20
 	TelemetryMaxFrameBytes  = 64 << 10
@@ -28,6 +29,11 @@ func DefaultTelemetrySettings() TelemetrySettings {
 	return TelemetrySettings{LogLevel: "warn", Revision: 1, CollectionSeconds: 30, HttpReportSeconds: 60, WssReportSeconds: 2, ConnectionMode: "auto_http_wss"}
 }
 func (s TelemetrySettings) Validate() error {
+	if s.TcpProbe != nil {
+		if err := ValidateTCPProbeTargets(s.TcpProbe.Targets); err != nil {
+			return err
+		}
+	}
 	if err := s.TrafficSettings().Validate(); err != nil {
 		return err
 	}
