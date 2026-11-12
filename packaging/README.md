@@ -100,3 +100,28 @@ curl -fsSL --proto '=https' --proto-redir '=https' \
 安装器回归测试：`python3 scripts/test_install.py`；卸载回归测试：`python3 scripts/test_uninstall.py`。使用真实 shell、PTY、文件权限与 SHA-256，下载/平台/Agent 可执行文件使用本地 fixtures；卸载测试使用临时目录和服务管理器、`/proc` fixtures，覆盖保留数据、拒绝第三方服务、停止失败、残留进程、锁及重复卸载。不访问生产数据，不替代真实 Linux Release 安装验收。
 
 SHA-256 用于完整性校验，发布来源依赖 GitHub HTTPS 与仓库发布权限；独立签名验证和真实 VPS Release 安装验收尚未完成。服务测试 `python3 scripts/test_services.py` 使用临时目录验证文件保护及错误处理；CI 中 `scripts/test_services_linux.sh` 使用真实 Ubuntu systemd 和 Alpine OpenRC 验证启动、崩溃恢复、停止、卸载、身份保留及无关进程存活（Agent 进程为本地 fixture）。该脚本仅允许在可丢弃的 root 测试环境运行，不用于生产主机。
+
+## 更新检查与受控升级
+
+```sh
+"$HOME/.viorka-agent/viorka-agent" update-check
+"$HOME/.viorka-agent/viorka-agent" update-check --prerelease --config "$HOME/.viorka-agent/agent.json"
+```
+
+检查只读取官方 `vioira/viorka-agent` GitHub Releases，输出 JSON：`current`、`candidate`、`platform`、`channel`、`status`，有更新时附 `installer` 下载地址及 `upgrade` 精确版本命令。默认按 SemVer 选最高正式版；`--prerelease` 同时考虑正式版和预发布，草稿和非法标签跳过，构建元数据不参与大小比较。当前为预发布也需显式选择预发布通道。不会自动降级。
+
+`update-available`、`up-to-date`、`ahead` 返回 0；`no-release`、`unsupported-platform`、`asset-missing`、`checksum-missing` 及网络错误返回 1，参数或配置错误返回 2。候选版本缺少当前 Linux amd64/arm64 二进制或 `.sha256` 时拒绝给出升级入口，不静默退回较老版本。检查只确认校验文件存在，下载时才验证内容和二进制摘要。
+
+请求共用 30 秒 deadline，支持 SIGINT/SIGTERM 取消；每页响应最多 4 MiB、最多 10 页，每页 100 条，超限报错。TLS 使用系统 CA 并验证主机名，拒绝 API 重定向。仅显式传入 `--config` 时读取其中的 `dns_fallback_servers`，复用系统 DNS 优先、DNS 失败才尝试备用服务器的策略，不读取身份或向 GitHub 发送 Panel 凭证。安装脚本 curl 下载仍使用主机网络配置。
+
+取得检查结果后，从输出的 `installer` 地址下载并审阅 `install.sh`，用原安装用户执行输出的 `upgrade`，例如：
+
+```sh
+sh install.sh install --version=v1.2.3
+# 原安装为前台或外部 supervisor 模式：
+sh install.sh install --version=v1.2.3 --foreground
+```
+
+必须使用输出的精确版本；省略 `--version` 的旧入口仍跟随 GitHub Latest，可能与按 SemVer 排序的候选不同。指定预发布无需额外安装参数。安装器严格接受 v 开头的 SemVer；二进制下载上限 128 MiB，摘要文件上限 128 字节，缺失、格式错误或 SHA-256 不匹配均拒绝切换；校验通过后执行 `version`，其版本及平台必须与指定产物一致，再执行配置检查。后台安装升级会重启 Agent，失败恢复旧二进制并尝试重启旧 Agent；身份、配置和代理服务保持原状。前台已有进程继续运行旧版本，需通过原终端或 supervisor 重启；未运行时进入前台运行。
+
+实现参考了 [cfsm-agent 的版本筛选流程](https://github.com/huilang-me/cfsm-agent/blob/main/internal/cfprobe/update.go)，保留显式检查和用户执行安装的方式。没有周期更新任务；发布产物使用 SHA-256，未增加签名体系。

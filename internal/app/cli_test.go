@@ -67,3 +67,12 @@ func TestExplicitConfigWithoutHome(t *testing.T) {
 		t.Fatal("missing home must fail")
 	}
 }
+
+func TestUpdateCheckInvalidArguments(t *testing.T) {
+	for _, args := range [][]string{{"update-check", "extra"}, {"update-check", "--config", "/missing/update-config"}, {"update-check", "--unknown"}} {
+		var out, errOut bytes.Buffer
+		if code := Main(args, &out, &errOut); code != 2 {
+			t.Fatalf("%v: code=%d", args, code)
+		}
+	}
+}

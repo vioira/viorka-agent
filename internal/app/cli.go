@@ -30,6 +30,8 @@ func Main(args []string, out, errOut io.Writer) int {
 	case "version":
 		fmt.Fprintf(out, "viorka-agent %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
 		return 0
+	case "update-check":
+		return updateCheck(args[1:], out, errOut)
 	case "doctor":
 		return doctor(args[1:], out, errOut)
 	case "config-check":
@@ -58,7 +60,7 @@ func Main(args []string, out, errOut io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: viorka-agent [version|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH|enroll --config PATH --token-stdin [--replace-node ID]|run --config PATH|help]")
+	fmt.Fprintln(w, "Usage: viorka-agent [version|update-check [--prerelease] [--config PATH]|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH|enroll --config PATH --token-stdin [--replace-node ID]|run --config PATH|help]")
 	fmt.Fprintln(w, "M0 supports enrollment, WSS and read-only node.inspect tasks.")
 }
 

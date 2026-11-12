@@ -14,6 +14,7 @@ cat > "$agent_dir/viorka-agent" <<'AGENT'
 #!/bin/sh
 set -eu
 case "$1" in
+version) case "$(uname -m)" in x86_64) arch=amd64;; *) arch=arm64;; esac; echo "viorka-agent 0.1.0-test (linux/$arch)" ;;
 config-check) exit 0 ;;
 run)
     echo $$ > /root/.viorka-agent/fixture.pid

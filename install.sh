@@ -19,6 +19,14 @@ main() {
         # Paths containing control characters are rejected before reaching here.
         printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
     }
+    validate_version() {
+        printf '%s\n' "$1" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+)(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$' || fail '版本须为 v 开头的 SemVer。'
+        pre=${1%%+*}
+        case "$pre" in *-*)
+            pre=${pre#*-}
+            if printf '%s\n' "$pre" | grep -Eq '(^|\.)0[0-9]+(\.|$)'; then fail '预发布数字标识不能有前导零。'; fi ;;
+        esac
+    }
     validate_token() {
         [ "${#enrollment_token}" -eq 64 ] || fail '注册令牌格式无效。'
         case "$enrollment_token" in *[!a-f0-9]*) fail '注册令牌格式无效。' ;; esac
@@ -373,7 +381,7 @@ RC
         printf '%s\n' "$panel_url" | grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?$' || fail '请提供 HTTPS Origin，不含路径、凭证、查询或片段。'
     fi
     if [ -n "$release_tag" ]; then
-        printf '%s\n' "$release_tag" | grep -Eq '^v[0-9][0-9A-Za-z._-]*$' || fail '版本格式无效。'
+        validate_version "$release_tag"
     fi
     [ "$(uname -s)" = Linux ] || fail '此安装包仅支持 Linux。macOS 开发请从源码构建 Agent。'
     case "$(uname -m)" in
@@ -429,7 +437,8 @@ RC
             *) fail '未找到可用的正式 Release。请在 https://github.com/vioira/viorka-agent/releases 审核并发布含 Linux 二进制及 .sha256 的正式版本；草稿不可下载，已公开的预发布需显式指定 --version=vX.Y.Z。尚未创建安装目录。' ;;
         esac
         plain_text "$release_tag"
-        printf '%s\n' "$release_tag" | grep -Eq '^v[0-9][0-9A-Za-z._-]*$' || fail '没有可用的正式 Release。'
+        validate_version "$release_tag"
+        case "${release_tag%%+*}" in *-*) fail 'Latest 指向预发布，请显式指定 --version。' ;; esac
     fi
     mkdir -p "$install_dir"
     cd "$install_dir"
@@ -513,8 +522,8 @@ RC
     printf '安装目录：%s\n' "$install_dir"
     asset="viorka-agent-linux-$arch"
     base="https://github.com/vioira/viorka-agent/releases/download/$release_tag"
-    download --output "$staging/viorka-agent" "$base/$asset" || fail "下载 Agent 失败：请确认 Release $release_tag 及 $asset 已发布（版本标签必须精确匹配），可直接重试。"
-    download --output "$staging/viorka-agent.sha256" "$base/$asset.sha256" || fail '下载校验文件失败，可直接重试。'
+    download --max-filesize 134217728 --output "$staging/viorka-agent" "$base/$asset" || fail "下载 Agent 失败：请确认 Release $release_tag 及 $asset 已发布（版本标签必须精确匹配），可直接重试。"
+    download --max-filesize 128 --output "$staging/viorka-agent.sha256" "$base/$asset.sha256" || fail '下载校验文件失败，可直接重试。'
     checksum=$(cat "$staging/viorka-agent.sha256")
     [ "${#checksum}" -eq 64 ] || fail '安装包校验文件无效。'
     case "$checksum" in *[!a-fA-F0-9]*) fail '安装包校验文件无效。' ;; esac
@@ -525,6 +534,8 @@ RC
     checksum=$(printf '%s' "$checksum" | tr 'A-F' 'a-f')
     [ "$actual" = "$checksum" ] || fail '安装包 SHA-256 校验失败。'
     chmod 700 "$staging/viorka-agent"
+    binary_version=$("$staging/viorka-agent" version) || fail '无法执行下载的 Agent。'
+    [ "$binary_version" = "viorka-agent ${release_tag#v} (linux/$arch)" ] || fail '下载的 Agent 版本或平台与指定 Release 不符。'
     if [ "$reinstall" -eq 1 ]; then
         printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"warn","ca_file":"%s"}\n' \
             "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$staging/agent.json"
@@ -574,8 +585,8 @@ RC
         cp viorka-agent "$staging/previous"
         mv -f "$staging/previous" viorka-agent.previous
     fi
-    mv -f "$staging/viorka-agent" viorka-agent
     swapped=1
+    mv -f "$staging/viorka-agent" viorka-agent
     if [ -n "$reenroll_node" ] && [ "${existing_service:-0}" -eq 1 ]; then
         if [ "$service_manager" = systemd ]; then
             timeout 45 systemctl stop viorka-agent.service || fail '停止 Agent 管理服务失败。'

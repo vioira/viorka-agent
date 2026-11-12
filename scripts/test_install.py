@@ -43,6 +43,14 @@ print(s.st_uid if sys.argv[2]=='%u' else format(s.st_mode & 0o777, 'o'))
             executable("flock", f'#!{sys.executable}\nimport fcntl, sys\nfcntl.flock(int(sys.argv[-1]), fcntl.LOCK_EX | fcntl.LOCK_NB)\n')
             fixture = b'''#!/bin/sh
 set -eu
+if [ "$1" = version ]; then
+  case "$FAILURE" in
+    version) echo 'viorka-agent 9.9.9 (linux/amd64)' ;;
+    platform) echo 'viorka-agent 0.1.0 (darwin/arm64)' ;;
+    *) echo "viorka-agent 0.1.0 (linux/$TEST_ARCH)" ;;
+  esac
+  exit 0
+fi
 printf '%s\\n' "$1" >> calls
 case "$1" in
  config-check) test "$FAILURE" != config ;;
@@ -62,7 +70,7 @@ esac
             executable("curl", f'''#!{sys.executable}
 import hashlib, os, pathlib, sys
 args=sys.argv[1:]; url=args[-1]
-if os.environ['FAILURE']=='download': sys.exit(22)
+if os.environ['FAILURE']=='download' or (os.environ['FAILURE']=='missing_checksum' and url.endswith('.sha256')): sys.exit(22)
 if url.endswith('/latest'):
     if os.environ['FAILURE']=='no_release':
         print('https://github.com/vioira/viorka-agent/releases', end='')
@@ -82,6 +90,8 @@ else:
         output.write_text(digest+'\\n')
     else: output.write_bytes(data)
 ''')
+            fixture = fixture.replace(b"$TEST_ARCH", b"arm64" if arch == "aarch64" else b"amd64")
+            payload.write_bytes(fixture)
             install = home / ".viorka-agent"
             if failure == "legacy":
                 legacy = home / ".local/share/viorka-agent"
@@ -338,7 +348,7 @@ else:
         self.run_install(token_arg=True, retry=True, running=True)
 
     def test_failed_update_preserves_install(self):
-        for failure in ("download", "checksum", "manifest", "config"):
+        for failure in ("download", "checksum", "manifest", "missing_checksum", "version", "platform", "config"):
             with self.subTest(failure=failure):
                 self.run_install(token_arg=True, retry=True, retry_failure=failure)
 
@@ -366,7 +376,7 @@ else:
         self.run_install(arch="riscv64")
 
     def test_bad_arguments(self):
-        for arg in ("--url=http://localhost", "--url=https://host/path", "--url=https://user:pass@host", "--url=https://host\nBAD", "--url=https://host'$(id)'", "--auto_update=1", "-secret=do-not-log", "--version=../../bad", "--token=", "--token=short", "--token=" + "g" * 64, "--token=" + "a" * 63 + "\'"):
+        for arg in ("--url=http://localhost", "--url=https://host/path", "--url=https://user:pass@host", "--url=https://host\nBAD", "--url=https://host'$(id)'", "--auto_update=1", "-secret=do-not-log", "--version=../../bad", "--version=v01.0.0", "--version=v1.0", "--version=v1.0.0-beta.01", "--token=", "--token=short", "--token=" + "g" * 64, "--token=" + "a" * 63 + "\'"):
             with self.subTest(arg=arg):
                 self.run_install(extra=(arg,))
 

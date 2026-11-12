@@ -109,7 +109,7 @@ exit 0
 import hashlib, os, pathlib, sys
 args=sys.argv[1:]
 if os.environ['FAILURE']=='download': sys.exit(22)
-data=b'#!/bin/sh\\n# new release\\nexit 0\\n'
+data=b'#!/bin/sh\\n# new release\\n[ "$1" != version ] || echo "viorka-agent 0.1.0 (linux/amd64)"\\nexit 0\\n'
 if args[-1].endswith('.sha256'): data=(hashlib.sha256(data).hexdigest()+'\\n').encode()
 pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
 ''')
@@ -127,7 +127,13 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                     self.assertFalse(list(install.glob('.install-*')))
                     if upgrade_failure:
                         self.assertEqual(agent.read_bytes(), old_binary)
-                    else:
+                        if upgrade_failure == 'upgrade':
+                            self.assertIn('已恢复旧 Agent 二进制'.encode(), result.stderr)
+                            restart = 'restart viorka-agent.service' if manager == 'systemd' else 'viorka-agent restart'
+                            self.assertEqual(calls.read_text().count(restart), 2)
+                    self.assertNotIn('sing-box', calls.read_text())
+                    self.assertNotIn('xray', calls.read_text())
+                    if not upgrade_failure:
                         self.assertIn(b'new release', agent.read_bytes())
                         self.assert_commands(result.stdout, manager)
 
