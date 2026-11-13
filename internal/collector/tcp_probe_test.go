@@ -1,9 +1,12 @@
 package collector
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/vioira/viorka-agent/internal/config"
+	"log/slog"
 	"net"
 	"testing"
 	"time"
@@ -182,5 +185,76 @@ func TestTCPProbeCanceledTickRetriesAllTargets(t *testing.T) {
 		if row.Loss != 100 || row.Ping != -1 {
 			t.Fatal(row)
 		}
+	}
+}
+
+func TestTCPProbeDiagnostics(t *testing.T) {
+	for _, scenario := range []string{"success", "dns", "blocked", "connect", "cancel"} {
+		t.Run(scenario, func(t *testing.T) {
+			var output bytes.Buffer
+			level := new(slog.LevelVar)
+			p := probeForTest()
+			p.logger = slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: level}))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			p.dial = func(context.Context, string, string) (net.Conn, error) {
+				if scenario == "connect" {
+					return nil, errors.New("connection refused")
+				}
+				a, b := net.Pipe()
+				b.Close()
+				return a, nil
+			}
+			if scenario == "dns" || scenario == "cancel" {
+				p.lookup = func(context.Context, string) ([]net.IPAddr, error) {
+					if scenario == "cancel" {
+						cancel()
+						return nil, context.Canceled
+					}
+					return nil, errors.New("DNS timeout")
+				}
+			}
+			if scenario == "blocked" {
+				p.lookup = func(context.Context, string) ([]net.IPAddr, error) {
+					return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+				}
+			}
+			p.measure(ctx, "example.com:443")
+			if output.Len() != 0 {
+				t.Fatal("probe logged at info level")
+			}
+			level.Set(slog.LevelDebug)
+			p.measure(ctx, "example.com:443")
+			var record map[string]any
+			if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+				t.Fatal(err)
+			}
+			stage, outcome := "connect", "failed"
+			switch scenario {
+			case "success":
+				outcome = "succeeded"
+			case "dns":
+				stage = "dns"
+			case "blocked":
+				stage = "address_validation"
+			case "cancel":
+				stage = "dns"
+				outcome = "canceled"
+			}
+			if record["stage"] != stage || record["outcome"] != outcome || record["target"] != "example.com:443" {
+				t.Fatal(record)
+			}
+			if scenario != "success" && record["error"] == nil {
+				t.Fatal("missing original error", record)
+			}
+			for _, key := range []string{"dns_ms", "connect_ms", "total_ms", "timeout_ms", "resolved_ips", "selected_ip"} {
+				if _, ok := record[key]; !ok {
+					t.Fatal("missing", key, record)
+				}
+			}
+			if stage == "connect" && record["selected_ip"] != "1.1.1.1" {
+				t.Fatal(record)
+			}
+		})
 	}
 }

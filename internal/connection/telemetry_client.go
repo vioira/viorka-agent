@@ -152,7 +152,7 @@ func (t *telemetryClientSession) start(ready v1.TelemetryReady, send func(v1.Env
 	if c.telemetrySource != nil {
 		sources, err = c.telemetrySource()
 	} else {
-		sources, err = newTelemetrySources(c.cfg, c.store, t.identity, c.tcpProbeSupported.Load)
+		sources, err = newTelemetrySources(c.cfg, c.store, t.identity, c.log(), c.tcpProbeSupported.Load)
 	}
 	if err != nil {
 		return err

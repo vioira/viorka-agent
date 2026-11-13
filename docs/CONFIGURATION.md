@@ -140,7 +140,7 @@ C 只保存供退出实时后生效。修改 R 不重排 HTTP fast，跳过的�
 
 `log_level` 支持 `debug`、`info`、`warn`、`error`，省略默认 `warn`；新安装配置也使用 `warn`。
 级别为最低输出阈值，例如 `warn` 输出警告和错误，`info` 额外输出连接及每分钟监控状态，
-`debug` 额外输出配置应用诊断。退出失败按 ERROR 输出，CLI 致命错误仍写 stderr 并返回非零退出码。
+`debug` 额外输出配置应用诊断，以及每目标每轮一条 `TCP probe` 探测日志：目标、解析地址、选中 IP、阶段（dns/address_validation/connect）、结果（succeeded/failed/canceled）、超时预算、DNS/建连/总耗时（毫秒）及失败原始错误。DNS 与 TCP 共用超时预算；取消结果不计入丢包。退出失败按 ERROR 输出，CLI 致命错误仍写 stderr 并返回非零退出码。
 
 Panel 节点设置中的日志等级随 `node.settings.v3`（首次连接为 `node.telemetry.ready.settings`）
 和采集周期一起下发。沿用 revision、身份校验、原子持久化和应用回执；仅持久化成功后即时修改

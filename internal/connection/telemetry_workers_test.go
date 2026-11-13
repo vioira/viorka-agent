@@ -159,7 +159,7 @@ func TestTelemetrySourcesPreserveCorruptTraffic(t *testing.T) {
 	if err = os.WriteFile(path, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	sources, err := newTelemetrySources(config.Local{}, store, state.Identity{PanelURL: "https://panel.test", NodeID: "node-test"})
+	sources, err := newTelemetrySources(config.Local{}, store, state.Identity{PanelURL: "https://panel.test", NodeID: "node-test"}, nil)
 	if err != nil {
 		t.Fatal("corrupt traffic disabled all collection", err)
 	}

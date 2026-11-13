@@ -2,6 +2,8 @@ package collector
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"slices"
@@ -26,6 +28,7 @@ type tcpObservation struct {
 type rollingProbeHistory struct{ observations []tcpObservation }
 
 type TCPProbes struct {
+	logger    *slog.Logger
 	mu        sync.Mutex
 	settings  config.TCPProbe
 	histories map[string]*rollingProbeHistory
@@ -37,8 +40,11 @@ type TCPProbes struct {
 	now       func() time.Time
 }
 
-func NewTCPProbes(settings *config.TCPProbe, servers []string) *TCPProbes {
+func NewTCPProbes(settings *config.TCPProbe, servers []string, logger ...*slog.Logger) *TCPProbes {
 	p := &TCPProbes{lookup: network.NewDNS(servers).LookupIPAddr, dial: (&net.Dialer{}).DialContext, now: time.Now, changed: make(chan struct{}, 1)}
+	if len(logger) > 0 {
+		p.logger = logger[0]
+	}
 	p.Configure(settings)
 	return p
 }
@@ -136,32 +142,71 @@ func (p *TCPProbes) Sample(ctx context.Context, at time.Time) (*v1.TelemetryTCPP
 	p.next = at.Add(TCPProbeInterval)
 	return batch, nil
 }
-func (p *TCPProbes) measure(parent context.Context, target string) (float64, bool) {
+func (p *TCPProbes) measure(parent context.Context, target string) (ms float64, ok bool) {
+	started := p.now()
+	stage := "dns"
+	var probeErr error
+	var addresses []net.IPAddr
+	var selectedIP string
+	var dnsMS, connectMS float64
+	defer func() {
+		if p.logger == nil || !p.logger.Enabled(parent, slog.LevelDebug) {
+			return
+		}
+		ips := make([]string, 0, len(addresses))
+		for _, address := range addresses {
+			ips = append(ips, address.String())
+		}
+		outcome := "failed"
+		if ok {
+			outcome = "succeeded"
+		}
+		if parent.Err() != nil {
+			outcome = "canceled"
+		}
+		attrs := []any{"target", target, "resolved_ips", ips, "selected_ip", selectedIP,
+			"stage", stage, "outcome", outcome, "timeout_ms", p.settings.TimeoutMS,
+			"dns_ms", dnsMS, "connect_ms", connectMS, "total_ms", p.now().Sub(started).Seconds() * 1000}
+		if probeErr != nil {
+			attrs = append(attrs, "error", probeErr)
+		}
+		p.logger.DebugContext(parent, "TCP probe", attrs...)
+	}()
 	host, port, _ := net.SplitHostPort(target)
 	ctx, cancel := context.WithTimeout(parent, time.Duration(p.settings.TimeoutMS)*time.Millisecond)
 	defer cancel()
-	addresses, err := p.lookup(ctx, host)
-	if err != nil || len(addresses) == 0 {
+	addresses, probeErr = p.lookup(ctx, host)
+	dnsMS = p.now().Sub(started).Seconds() * 1000
+	if probeErr != nil || len(addresses) == 0 {
+		if probeErr == nil {
+			probeErr = fmt.Errorf("DNS returned no addresses")
+		}
 		return 0, false
 	}
+	stage = "address_validation"
 	// Reject mixed public/private answers too; never silently probe an internal IP.
 	for _, address := range addresses {
 		ip, ok := netip.AddrFromSlice(address.IP)
 		if !ok || address.Zone != "" || !config.PublicProbeIP(ip) {
+			probeErr = fmt.Errorf("probe address rejected: %s", address.String())
 			return 0, false
 		}
 	}
 	// One resolved address and one connection attempt per target per tick. DNS is
 	// outside the timer; no TLS/HTTP/application payload or retry biases the sample.
 	if ctx.Err() != nil {
+		probeErr = ctx.Err()
 		return 0, false
 	}
+	stage = "connect"
+	selectedIP = addresses[0].IP.String()
 	start := p.now()
 	conn, err := p.dial(ctx, "tcp", net.JoinHostPort(addresses[0].IP.String(), port))
-	ms := p.now().Sub(start).Seconds() * 1000
+	connectMS = p.now().Sub(start).Seconds() * 1000
+	probeErr = err
 	if err != nil {
 		return 0, false
 	}
 	conn.Close()
-	return ms, true
+	return connectMS, true
 }

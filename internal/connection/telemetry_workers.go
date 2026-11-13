@@ -3,6 +3,7 @@ package connection
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -33,7 +34,7 @@ type telemetrySources struct {
 
 // Production sources are instantiated once per Agent run. Reconnecting or
 // changing cadence never reconstructs CPU/network/disk/traffic baselines.
-func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity, probeEnabled ...func() bool) (telemetrySources, error) {
+func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity, logger *slog.Logger, probeEnabled ...func() bool) (telemetrySources, error) {
 	fast, err := collector.NewTelemetryFast(cfg.NetworkFilter)
 	if err != nil {
 		return telemetrySources{}, err
@@ -46,7 +47,7 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 	}
 	fast.SetTrafficLedger(ledger)
 	full, ip := collector.NewTelemetryFull(), collector.NewTelemetryPublicIP(cfg.DNSFallbackServers...)
-	probes := collector.NewTCPProbes(cfg.TCPProbe, cfg.DNSFallbackServers)
+	probes := collector.NewTCPProbes(cfg.TCPProbe, cfg.DNSFallbackServers, logger)
 	return telemetrySources{
 		configureProbe: func(next *v1.TelemetryTCPProbeSettings) {
 			if next == nil {
