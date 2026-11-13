@@ -37,21 +37,25 @@ import (
 var ErrIdentityRejected = errors.New("agent identity rejected; contact administrator")
 
 type Client struct {
-	tcpProbeSupported atomic.Bool
-	trafficCalibrate  func(context.Context, string, v1.TrafficCalibration, time.Time) (*v1.TrafficCalibration, error)
-	logger            *slog.Logger
-	logLevel          *slog.LevelVar
-	telemetrySource   func() (telemetrySources, error)
-	telemetryEnabled  bool // local telemetry control
-	telemetry         *telemetryRunner
-	telemetryBridge   telemetryWSS
-	sessions          sessionCoordinator
-	cfg               config.Local
-	http              *http.Client
-	store             *state.Store
-	inventory         func(context.Context, time.Duration) v1.NodeInventory
-	runCtx            context.Context
-	assets            *assetSampling
+	dailyPersistFailed    bool // owned by the telemetry sender
+	dailyTrafficSupported atomic.Bool
+	dailyPending          func(context.Context) ([]*v1.TelemetryDailyTraffic, error)
+	dailyAck              func([]*v1.TelemetryDailyTrafficAck)
+	tcpProbeSupported     atomic.Bool
+	trafficCalibrate      func(context.Context, string, v1.TrafficCalibration, time.Time) (*v1.TrafficCalibration, error)
+	logger                *slog.Logger
+	logLevel              *slog.LevelVar
+	telemetrySource       func() (telemetrySources, error)
+	telemetryEnabled      bool // local telemetry control
+	telemetry             *telemetryRunner
+	telemetryBridge       telemetryWSS
+	sessions              sessionCoordinator
+	cfg                   config.Local
+	http                  *http.Client
+	store                 *state.Store
+	inventory             func(context.Context, time.Duration) v1.NodeInventory
+	runCtx                context.Context
+	assets                *assetSampling
 }
 
 func New(cfg config.Local, s *state.Store) (*Client, error) {
@@ -286,7 +290,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		capabilities = append(capabilities, v1.EngineCapability)
 	}
 	if c.telemetryEnabled {
-		capabilities = append(capabilities, v1.TrafficCapability)
+		capabilities = append(capabilities, v1.TrafficCapability, v1.DailyTrafficCapability)
 	}
 	if c.telemetryEnabled {
 		capabilities = append(capabilities, v1.TelemetryCapability, v1.TCPProbeCapability, v1.TCPProbeSettingsCapability)

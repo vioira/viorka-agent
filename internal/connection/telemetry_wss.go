@@ -2,6 +2,7 @@ package connection
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -24,6 +25,7 @@ type telemetryWSS struct {
 	current *telemetryWSSPort
 }
 type telemetryWSSPort struct {
+	dailyAck  func([]*v1.TelemetryDailyTrafficAck)
 	requests  chan *telemetryFrameRequest
 	done      chan struct{}
 	closeOnce sync.Once
@@ -126,6 +128,15 @@ func (p *telemetryWSSPort) receipt(e v1.Envelope) bool {
 		err = &telemetryUploadError{Code: "invalid_response"}
 	} else if receipt.State == "rejected" {
 		err = &telemetryUploadError{Code: receipt.ErrorCode}
+	}
+	if err == nil {
+		var envelope v1.Envelope
+		var batch v1.TelemetryBatch
+		if json.Unmarshal(pending.raw, &envelope) != nil || json.Unmarshal(envelope.Payload, &batch) != nil || !validDailyAcks(receipt.DailyTrafficAcks, batch.DailyTraffic) {
+			err = &telemetryUploadError{Code: "invalid_response"}
+		} else if p.dailyAck != nil {
+			p.dailyAck(receipt.DailyTrafficAcks)
+		}
 	}
 	pending.result <- err
 	return true

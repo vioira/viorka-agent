@@ -19,6 +19,7 @@ type TrafficInterface struct {
 	TX      uint64 `json:"tx_bytes"`
 }
 type TrafficSnapshot struct {
+	Daily             []*v1.TelemetryDailyTraffic      `json:"daily,omitempty"`
 	CalibrationBefore map[string]v1.TrafficCalibration `json:"calibration_before,omitempty"`
 	Cycle             *v1.TelemetryTrafficSettings     `json:"cycle,omitempty"`
 	PeriodEnd         string                           `json:"period_end,omitempty"`
@@ -41,6 +42,7 @@ type TrafficSnapshot struct {
 // Observations serialize under a short lock. Persistence copies one coherent
 // snapshot and performs filesystem I/O outside the sampling lock.
 type TrafficLedger struct {
+	durableDaily  []*v1.TelemetryDailyTraffic
 	settings      v1.TelemetryTrafficSettings
 	mu            sync.Mutex
 	saveMu        sync.Mutex
@@ -119,6 +121,14 @@ func validateTrafficSnapshot(s TrafficSnapshot, panel, node string) error {
 	if s.FormatVersion != 1 || s.PanelURL != panel || s.NodeID != node || s.SampledAt.IsZero() || s.SavedAt.IsZero() || s.SavedAt.Before(s.SampledAt) || !validTrafficPeriod(s) || !validTrafficBoot(s.BootID) || !validTrafficHex(s.FilterRevision, 64) || s.RX > math.MaxInt64 || s.TX > math.MaxInt64 {
 		return fmt.Errorf("invalid traffic snapshot identity")
 	}
+	if len(s.Daily) > maxDailyRecords {
+		return fmt.Errorf("daily traffic capacity exceeded")
+	}
+	for i, d := range s.Daily {
+		if d == nil || d.Validate() != nil || (i > 0 && d.DayStart.Before(s.Daily[i-1].DayEnd)) {
+			return fmt.Errorf("invalid daily traffic snapshot")
+		}
+	}
 	if len(s.Calibrations) > 64 || len(s.CalibrationBefore) != len(s.Calibrations) {
 		return fmt.Errorf("invalid calibration receipts")
 	}
@@ -146,6 +156,7 @@ func validateTrafficSnapshot(s TrafficSnapshot, panel, node string) error {
 	return nil
 }
 func cloneTraffic(s TrafficSnapshot) TrafficSnapshot {
+	s.Daily = cloneDaily(s.Daily)
 	if s.Cycle != nil {
 		v := *s.Cycle
 		s.Cycle = &v
@@ -180,6 +191,7 @@ func (l *TrafficLedger) Restore(s TrafficSnapshot) error {
 	}
 	copy := cloneTraffic(s)
 	l.snapshot = &copy
+	l.durableDaily = cloneDaily(copy.Daily)
 	return nil
 }
 func (l *TrafficLedger) Snapshot() (TrafficSnapshot, bool) {
@@ -282,6 +294,10 @@ func (l *TrafficLedger) Observe(at time.Time, boot, filter string, interfaces []
 		if len(old) > 0 {
 			quality("partial")
 		}
+	}
+	if err := l.observeDaily(&next, previous); err != nil {
+		l.blocked = err
+		return l.unknown(at, filter), err
 	}
 	l.snapshot = &next
 	l.dirty = true

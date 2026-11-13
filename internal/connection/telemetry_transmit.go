@@ -37,8 +37,18 @@ func (c *Client) telemetryTransport(node, run string, delivery func() telemetryF
 				sample.raw = raw
 			}
 		}
+		if c.dailyTrafficSupported.Load() && c.dailyPending != nil {
+			daily, err := c.dailyPending(ctx)
+			if err == nil {
+				c.dailyPersistFailed = false
+				flight = &telemetryFlight{samples: flight.samples, daily: daily}
+			} else if !c.dailyPersistFailed {
+				c.dailyPersistFailed = true
+				c.logger.Warn("日流量持久化失败，保留待报记录", "error", err)
+			}
+		}
 		if request.send.attempt.HTTP {
-			body, err := encodeTelemetryWindow(flight.samples, node, run, ID())
+			body, err := encodeTelemetryWindow(flight.samples, node, run, ID(), flight.daily...)
 			if err != nil {
 				return &telemetryUploadError{Code: "invalid_batch", Cause: err}
 			}

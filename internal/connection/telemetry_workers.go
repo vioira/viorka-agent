@@ -18,6 +18,8 @@ type telemetryWorkResult struct {
 	err   error
 }
 type telemetrySources struct {
+	dailyPending   func(context.Context) ([]*v1.TelemetryDailyTraffic, error)
+	dailyAck       func([]*v1.TelemetryDailyTrafficAck)
 	configureProbe func(*v1.TelemetryTCPProbeSettings)
 	validate       func(v1.TelemetryTrafficSettings) error
 	configure      func(v1.TelemetryTrafficSettings) error
@@ -66,6 +68,7 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 			_, err := probes.Sample(ctx, at)
 			return err
 		},
+		dailyPending: ledger.PendingDaily, dailyAck: ledger.AcknowledgeDaily,
 		trafficError: ledgerErr,
 		configure:    fast.ApplyTraffic,
 		validate:     fast.ValidateTraffic,

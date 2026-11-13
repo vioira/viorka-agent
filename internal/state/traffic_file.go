@@ -17,7 +17,7 @@ import (
 )
 
 const trafficFile = "traffic.dat"
-const trafficFileLimit = 64 << 10
+const trafficFileLimit = 256 << 10
 
 var ErrTrafficFileChanged = errors.New("traffic state changed outside its owner")
 
@@ -128,6 +128,9 @@ func (l *TrafficLedger) Save(ctx context.Context, at time.Time, force bool) erro
 	err := work.saveSnapshot(ctx, at, force)
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if err == nil && work.snapshot != nil && !work.dirty {
+		l.durableDaily = cloneDaily(work.snapshot.Daily)
+	}
 	l.etag = work.etag
 	l.nextSave = work.nextSave
 	l.persistFailed = work.persistFailed

@@ -144,6 +144,12 @@ func (c *Client) uploadTelemetryBody(ctx context.Context, credential sessionCred
 		if !validJSON || v1.ValidateTelemetryJSON(raw, "TelemetryReceipt", true) != nil || v1.DecodeTelemetry(raw, &receipt, true) != nil || receipt.Validate(total) != nil || receipt.BatchID != batch.BatchID || receipt.State != "accepted" {
 			return failed("invalid_response", 200, delay, nil)
 		}
+		if !validDailyAcks(receipt.DailyTrafficAcks, batch.DailyTraffic) {
+			return failed("invalid_response", 200, delay, nil)
+		}
+		if c.dailyAck != nil {
+			c.dailyAck(receipt.DailyTrafficAcks)
+		}
 		return receipt, nil
 	}
 	code := ""

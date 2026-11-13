@@ -106,7 +106,7 @@ func testTelemetryClientReconnect(t *testing.T) {
 				return fmt.Errorf("v3 capability missing")
 			}
 			for _, capability := range payload.Capabilities {
-				if capability != "node.inspect" && capability != "node.inventory.v1" && capability != v1.TelemetryCapability && capability != v1.TrafficCapability && capability != v1.TCPProbeCapability && capability != v1.TCPProbeSettingsCapability {
+				if capability != "node.inspect" && capability != "node.inventory.v1" && capability != v1.TelemetryCapability && capability != v1.TrafficCapability && capability != v1.DailyTrafficCapability && capability != v1.TCPProbeCapability && capability != v1.TCPProbeSettingsCapability {
 					return fmt.Errorf("unexpected or retired capability: %s", capability)
 				}
 			}

@@ -13,7 +13,7 @@ import (
 // owns a detached window until release, including after partial WSS failure.
 // Limits: pending and inflight each <=1MiB; three latest samples each <=1MiB;
 // a body/frame encoder may additionally allocate <=1MiB/64KiB respectively.
-const telemetryWindowReserve = 2048
+const telemetryWindowReserve = 8192
 
 type telemetrySample struct {
 	kind     int
@@ -27,7 +27,10 @@ type telemetryWindow struct {
 	inflight                      *telemetryFlight
 	droppedLimit, droppedCooldown uint64
 }
-type telemetryFlight struct{ samples []telemetrySample }
+type telemetryFlight struct {
+	samples []telemetrySample
+	daily   []*v1.TelemetryDailyTraffic
+}
 
 func (w *telemetryWindow) add(value any) error {
 	var kind int
@@ -163,19 +166,20 @@ func (w *telemetryWindow) release(f *telemetryFlight) bool {
 }
 
 type telemetryWireBatch struct {
-	NodeID   string            `json:"node_id"`
-	RunID    string            `json:"run_id"`
-	BatchID  string            `json:"batch_id"`
-	Fast     []json.RawMessage `json:"fast"`
-	Full     []json.RawMessage `json:"full"`
-	PublicIP []json.RawMessage `json:"public_ip"`
+	NodeID   string                      `json:"node_id"`
+	RunID    string                      `json:"run_id"`
+	BatchID  string                      `json:"batch_id"`
+	Fast     []json.RawMessage           `json:"fast"`
+	Full     []json.RawMessage           `json:"full"`
+	PublicIP []json.RawMessage           `json:"public_ip"`
+	Daily    []*v1.TelemetryDailyTraffic `json:"daily_traffic,omitempty"`
 }
 
-func encodeTelemetryWindow(samples []telemetrySample, node, run, id string) ([]byte, error) {
+func encodeTelemetryWindow(samples []telemetrySample, node, run, id string, daily ...*v1.TelemetryDailyTraffic) ([]byte, error) {
 	if len(node) > 128 || len(run) > 128 || len(id) > 128 {
 		return nil, fmt.Errorf("telemetry identity exceeds bound")
 	}
-	b := telemetryWireBatch{node, run, id, []json.RawMessage{}, []json.RawMessage{}, []json.RawMessage{}}
+	b := telemetryWireBatch{node, run, id, []json.RawMessage{}, []json.RawMessage{}, []json.RawMessage{}, daily}
 	for _, s := range samples {
 		switch s.kind {
 		case 0:
@@ -202,7 +206,7 @@ func (f *telemetryFlight) frame(offset int, node, run, id string, now time.Time)
 	}
 	// Measure the actual empty envelope once. Samples are already canonical
 	// json.Marshal output, so their bytes and per-array commas give exact size.
-	empty, err := encodeTelemetryWindow(nil, node, run, id)
+	empty, err := encodeTelemetryWindow(nil, node, run, id, f.daily...)
 	if err != nil {
 		return nil, offset, err
 	}
@@ -229,7 +233,7 @@ func (f *telemetryFlight) frame(offset int, node, run, id string, now time.Time)
 	if end == offset {
 		return nil, offset, fmt.Errorf("single telemetry sample exceeds WSS frame")
 	}
-	body, err := encodeTelemetryWindow(f.samples[offset:end], node, run, id)
+	body, err := encodeTelemetryWindow(f.samples[offset:end], node, run, id, f.daily...)
 	if err != nil {
 		return nil, offset, err
 	}

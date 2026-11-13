@@ -75,6 +75,9 @@ func (r TelemetryReceipt) Validate(total uint64) error {
 // It does not mutate deduplication state. Full and IP retain their own timestamps:
 // accepting cached IP does not create a new history observation.
 func (b TelemetryBatch) ValidateIdentity(node string, now time.Time, reportSeconds uint64) error {
+	if err := ValidateDailyTraffic(b.DailyTraffic, now); err != nil {
+		return err
+	}
 	if !telemetryID.MatchString(b.NodeID) || b.NodeID != node || !telemetryRunID.MatchString(b.RunID) || !telemetryID.MatchString(b.BatchID) || reportSeconds < 30 || reportSeconds > 180 || now.IsZero() {
 		return errors.New("invalid telemetry batch identity")
 	}

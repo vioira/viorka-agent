@@ -98,10 +98,16 @@ func (t *telemetryClientSession) handle(e v1.Envelope, send func(v1.Envelope) er
 		if v1.ValidateTelemetryJSON(e.Payload, "TelemetryReady", false) != nil || v1.DecodeTelemetry(e.Payload, &ready, false) != nil || ready.Settings == nil || ready.Settings.Validate() != nil {
 			return true, fmt.Errorf("invalid telemetry ready")
 		}
+		t.client.dailyTrafficSupported.Store(ready.DailyTraffic)
 		t.client.tcpProbeSupported.Store(ready.TcpProbe)
 		t.generation = ready.SessionGeneration
 		t.readyID = e.MessageID
 		t.port = t.client.telemetryBridge.attach()
+		t.port.dailyAck = func(acks []*v1.TelemetryDailyTrafficAck) {
+			if t.client.dailyAck != nil {
+				t.client.dailyAck(acks)
+			}
+		}
 		if t.client.telemetry != nil {
 			return true, t.enqueue(telemetryEvent{kind: "ready", correlation: e.MessageID, settings: *ready.Settings, credential: t.credential, serverGeneration: ready.SessionGeneration})
 		}
@@ -158,6 +164,8 @@ func (t *telemetryClientSession) start(ready v1.TelemetryReady, send func(v1.Env
 	if result.State != "applied" {
 		return t.control(telemetryControl{generation: t.generation, correlation: t.readyID, settings: &result}, send)
 	}
+	c.dailyPending = sources.dailyPending
+	c.dailyAck = sources.dailyAck
 	c.trafficCalibrate = sources.calibrate
 	var run [16]byte
 	if _, err = rand.Read(run[:]); err != nil {
