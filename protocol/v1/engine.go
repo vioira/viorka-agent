@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-const EngineCapability = "engine.manage.v6"
+const EngineCapability = "engine.manage.v7"
 
 func EngineOperation(op string) bool {
 	switch op {
@@ -22,7 +22,7 @@ func EngineOperation(op string) bool {
 }
 func (c EngineCommand) Validate(operation string) error {
 	bad := errors.New("invalid engine command")
-	if c.IncludeConfig && operation != "engine.inspect" {
+	if (c.IncludeConfig || c.RecoveryCheck) && operation != "engine.inspect" || c.IncludeConfig && c.RecoveryCheck {
 		return bad
 	}
 	if err := c.ValidateRouting(operation); err != nil {
@@ -155,7 +155,7 @@ func ValidEngineDiagnostic(d *EngineDiagnostic) bool {
 	return (d.HttpStatus == nil || *d.HttpStatus >= 100 && *d.HttpStatus <= 599) && (d.ExitCode == nil || *d.ExitCode <= 255)
 }
 
-// ValidateEngineRecovery validates the enrollment-only snapshot boundary.
+// ValidateEngineRecovery validates a managed runtime snapshot.
 func ValidateEngineRecovery(items []*EngineRecovery) error {
 	bad := errors.New("invalid engine recovery")
 	if len(items) > 3 {

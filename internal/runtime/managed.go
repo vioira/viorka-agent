@@ -283,7 +283,7 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 	} else {
 		r.Status = "not_installed"
 	}
-	if old.Command.Revision >= c.Revision {
+	if old.Command.Revision >= c.Revision && !c.RecoveryCheck {
 		return fail("engine_result_unknown")
 	}
 	unitPath := m.unitPath(c.Name)
@@ -337,6 +337,13 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 	}
 	if !old.Installed {
 		if operation == "engine.inspect" {
+			if c.RecoveryCheck {
+				if m.detectExternal(c.Name) {
+					return fail("engine_external")
+				}
+				r.RecoveryRevision = &old.Command.Revision
+				return r, nil
+			}
 			if c.IncludeConfig {
 				return fail("engine_config_unavailable")
 			}
@@ -463,6 +470,39 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 				r.Status = "degraded"
 				return fail("engine_result_unknown")
 			}
+		}
+		if c.RecoveryCheck {
+			// Recovery is a read-only observation. The request revision belongs to
+			// the restored Panel and may legitimately be behind the local state.
+			// Verify the active managed files before returning the current command.
+			unit, err := os.ReadFile(unitPath)
+			if err != nil || !m.ownsUnit(unit) {
+				return fail("engine_config_unavailable")
+			}
+			// A newly installed, stopped engine has no active configuration yet.
+			// Only report that empty state if neither supported configuration path
+			// exists; an unexpected file is never silently treated as empty.
+			empty := len(old.Command.Services) == 0 && r.Status == "stopped"
+			if empty {
+				for _, path := range []string{filepath.Join(dir, configName(c.Name)), filepath.Join(dir, "conf.d")} {
+					if _, err = os.Lstat(path); !os.IsNotExist(err) {
+						empty = false
+						break
+					}
+				}
+			}
+			if !empty {
+				if _, err = m.readEngineConfiguration(dir, old.Command); err != nil {
+					return fail("engine_config_unavailable")
+				}
+			}
+			current := old.Command
+			r.Recovery = &v1.EngineRecovery{EngineID: id, Command: &current, Status: r.Status}
+			if v1.ValidateRecoveryObservation(id, r.Recovery) != nil {
+				r.Recovery = nil
+				return fail("engine_config_unavailable")
+			}
+			r.RecoveryRevision = &old.Command.Revision
 		}
 		if c.IncludeConfig {
 			config, err := m.readEngineConfiguration(dir, old.Command)

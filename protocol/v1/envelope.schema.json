@@ -1420,6 +1420,10 @@
         "include_config": {
           "type": "boolean",
           "description": "Only engine.inspect: return complete native configuration after ownership and active-file verification."
+        },
+        "recovery_check": {
+          "type": "boolean",
+          "description": "Only engine.inspect after Panel snapshot restore: return the authenticated current managed command after checking local ownership and active files. Mutually exclusive with include_config."
         }
       }
     },
@@ -1471,6 +1475,15 @@
         },
         "configuration": {
           "$ref": "#/$defs/EngineConfiguration"
+        },
+        "recovery": {
+          "$ref": "#/$defs/EngineRecovery"
+        },
+        "recovery_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Current Agent revision for recovery_check, including an explicitly not-installed engine."
         }
       }
     },

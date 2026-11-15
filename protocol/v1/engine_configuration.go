@@ -8,6 +8,20 @@ import (
 
 const MaxEngineConfigurationBytes = 32 << 10
 
+// ValidateRecoveryObservation bounds a single authenticated read-only
+// recovery reply to leave room in the 64 KiB task envelope. The returned
+// command contains credentials and must be protected like native config.
+func ValidateRecoveryObservation(engineID string, recovery *EngineRecovery) error {
+	if recovery == nil || recovery.EngineID != engineID || ValidateEngineRecovery([]*EngineRecovery{recovery}) != nil {
+		return errors.New("invalid recovery observation")
+	}
+	encoded, err := json.Marshal(recovery)
+	if err != nil || len(encoded) > 40<<10 {
+		return errors.New("recovery observation too large")
+	}
+	return nil
+}
+
 // ValidateEngineConfiguration validates native files without modifying their content.
 func ValidateEngineConfiguration(name string, config *EngineConfiguration) error {
 	if config == nil || config.Revision == 0 || config.Revision > 1<<53-1 || len(config.Files) == 0 || len(config.Files) > 34 {

@@ -82,6 +82,23 @@ func TestManagedInstallApplyAndManualStop(t *testing.T) {
 	if err != nil || result.Status != "installed" || result.ErrorCode != "" || starts != 0 {
 		t.Fatalf("install %+v %v starts=%d", result, err, starts)
 	}
+	emptyCheck := c
+	emptyCheck.RecoveryCheck = true
+	emptyResult, err := m.Execute(ctx, "engine", "engine.inspect", emptyCheck)
+	if err != nil || emptyResult.ErrorCode != "" || emptyResult.Recovery == nil || len(emptyResult.Recovery.Command.Services) != 0 || starts != 0 {
+		t.Fatalf("empty installed recovery: %+v %v", emptyResult, err)
+	}
+	unexpected := filepath.Join(m.root, c.Name, configName(c.Name))
+	if err = os.WriteFile(unexpected, []byte("unexpected"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	emptyResult, err = m.Execute(ctx, "engine", "engine.inspect", emptyCheck)
+	if err != nil || emptyResult.ErrorCode != "engine_config_unavailable" || emptyResult.Recovery != nil {
+		t.Fatalf("unexpected configuration treated as empty: %+v %v", emptyResult, err)
+	}
+	if err = os.Remove(unexpected); err != nil {
+		t.Fatal(err)
+	}
 	c.Revision = 2
 	c.Services = []*v1.EngineService{{ID: "tcp", Name: "TCP", Enabled: true, ListenHost: "127.0.0.1", ListenPort: listenPort, TargetHost: "127.0.0.1", TargetPort: targetPort}}
 	result, err = m.Execute(ctx, "engine", "engine.apply", c)
@@ -95,6 +112,21 @@ func TestManagedInstallApplyAndManualStop(t *testing.T) {
 	readResult, readErr := m.Execute(ctx, "engine", "engine.inspect", inspect)
 	if readErr != nil || readResult.ErrorCode != "" || readResult.Configuration == nil || starts != 1 || readResult.Configuration.Revision != c.Revision {
 		t.Fatalf("configuration read restarted engine or lost revision: %+v %v", readResult, readErr)
+	}
+	// A restored Panel can have an older revision than the Agent. The
+	// authenticated recovery check reads the actual managed state without
+	// changing the revision, starting the process or returning native files.
+	recovery := inspect
+	recovery.Revision = 1
+	recovery.IncludeConfig = false
+	recovery.RecoveryCheck = true
+	observed, readErr := m.Execute(ctx, "engine", "engine.inspect", recovery)
+	if readErr != nil || observed.ErrorCode != "" || observed.Recovery == nil || observed.Recovery.Command.Revision != c.Revision || observed.Configuration != nil || starts != 1 {
+		t.Fatalf("recovery inspection changed the engine or lost state: %+v %v", observed, readErr)
+	}
+	foreign, err := m.Execute(ctx, "other", "engine.inspect", recovery)
+	if err != nil || foreign.ErrorCode != "engine_external" || foreign.Recovery != nil {
+		t.Fatalf("foreign engine recovery accepted: %+v %v", foreign, err)
 	}
 	stop := c
 	stop.Revision = 3
