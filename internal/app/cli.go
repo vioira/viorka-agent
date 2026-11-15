@@ -47,7 +47,7 @@ func Main(args []string, out, errOut io.Writer) int {
 		}
 		fmt.Fprintln(out, "configuration format OK (connection not attempted)")
 		return 0
-	case "run", "enroll":
+	case "run", "enroll", "register":
 		return connect(args, out, errOut)
 	case "help", "-h", "--help":
 		usage(out)
@@ -60,7 +60,7 @@ func Main(args []string, out, errOut io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: viorka-agent [version|update-check [--prerelease] [--config PATH]|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH|enroll --config PATH --token-stdin [--replace-node ID]|run --config PATH|help]")
+	fmt.Fprintln(w, "Usage: viorka-agent [version|update-check [--prerelease] [--config PATH]|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH|enroll --config PATH --token-stdin [--replace-node ID]|register --config PATH --token-stdin [--name NAME]|run --config PATH|help]")
 	fmt.Fprintln(w, "M0 supports enrollment, WSS and read-only node.inspect tasks.")
 }
 
@@ -68,12 +68,13 @@ func connect(args []string, out, errOut io.Writer) int {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(errOut)
 	path := flags.String("config", "", "local JSON config (default ~/.viorka-agent/agent.json)")
+	name := flags.String("name", "", "node display name for batch registration; defaults to hostname")
 	replaceNode := flags.String("replace-node", "", "explicitly replace identity for this node; preserves local state")
 	tokenStdin := flags.Bool("token-stdin", false, "read enrollment token from standard input")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
-	if flags.NArg() != 0 || (args[0] != "enroll" && *replaceNode != "") {
+	if flags.NArg() != 0 || (args[0] != "enroll" && *replaceNode != "") || (args[0] != "register" && *name != "") || (args[0] == "run" && *tokenStdin) {
 		return 2
 	}
 	cfg, err := loadConfig(*path)
@@ -96,9 +97,9 @@ func connect(args []string, out, errOut io.Writer) int {
 	client.SetLogOutput(errOut)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if args[0] == "enroll" {
+	if args[0] == "enroll" || args[0] == "register" {
 		if !*tokenStdin {
-			fmt.Fprintln(errOut, "enroll requires --token-stdin")
+			fmt.Fprintln(errOut, "enroll/register requires --token-stdin")
 			return 2
 		}
 		var b []byte
@@ -108,7 +109,9 @@ func connect(args []string, out, errOut io.Writer) int {
 			if len(token) != 64 {
 				err = fmt.Errorf("invalid enrollment token length")
 			} else {
-				if *replaceNode != "" {
+				if args[0] == "register" {
+					err = client.Register(ctx, token, *name)
+				} else if *replaceNode != "" {
 					err = client.Reenroll(ctx, token, *replaceNode)
 				} else {
 					err = client.Enroll(ctx, token)
@@ -122,7 +125,7 @@ func connect(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
-	if args[0] == "enroll" {
+	if args[0] == "enroll" || args[0] == "register" {
 		fmt.Fprintln(out, "identity enrolled and saved")
 	}
 	return 0

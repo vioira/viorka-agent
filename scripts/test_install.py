@@ -24,7 +24,7 @@ TOKEN = "a" * 64
 
 
 class InstallerTests(unittest.TestCase):
-    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False, replacement=False, choice=None, locked_state=False, omit_url=False, retry_omit_url=False):
+    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False, replacement=False, choice=None, locked_state=False, omit_url=False, retry_omit_url=False, registration=False, token_stdin=False):
         with tempfile.TemporaryDirectory(prefix="viorka-install-") as tmp:
             home = pathlib.Path(tmp) / 'home "quote" \\ slash'
             home.mkdir()
@@ -66,7 +66,7 @@ fi
 printf '%s\\n' "$1" >> calls
 case "$1" in
  config-check) test "$FAILURE" != config ;;
- enroll)
+ enroll|register)
    token=$(cat)
    test "${#token}" -eq 64
    if [ "$FAILURE" = enroll ]; then
@@ -122,11 +122,19 @@ else:
                     (install / "state").mkdir()
                     (install / "state/identity.json").write_text("preserve")
             args = ["sh", str(ROOT / "install.sh"), "install", "--foreground", "--url=https://localhost:8143", *extra]
+            if registration:
+                args.append("--registration")
             if omit_url:
                 args.remove("--url=https://localhost:8143")
             if pinned:
                 args.append("--version=v0.1.0")
-            if token_arg:
+            if token_stdin:
+                args.append("--token-stdin")
+                env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}", FAILURE=failure, PAYLOAD=str(payload))
+                result = subprocess.run(args, input=(TOKEN + "\n").encode(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, start_new_session=True, timeout=15)
+                output = result.stdout
+                status = result.returncode << 8
+            elif token_arg:
                 args.append("--token=" + TOKEN)
                 env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}", FAILURE=failure, PAYLOAD=str(payload))
                 # A new session with pipe stdin has no controlling terminal.
@@ -188,7 +196,7 @@ else:
                 self.assertNotIn(b'--token=', output)
                 self.assertNotIn(b'systemctl', output)
                 self.assertNotIn(b'rc-service', output)
-                self.assertEqual(calls, ["config-check", "enroll", "run"])
+                self.assertEqual(calls, ["config-check", "register" if registration else "enroll", "run"])
                 config = json.loads((install / "agent.json").read_text())
                 self.assertEqual(config["state_dir"], str(install.resolve() / "state"))
                 self.assertEqual(config["panel_url"], "https://localhost:8143")
@@ -211,7 +219,7 @@ else:
                 if failure == "config":
                     self.assertEqual(calls, ["config-check"])
                 if failure == "enroll":
-                    self.assertEqual(calls, ["config-check", "enroll"])
+                    self.assertEqual(calls, ["config-check", "register" if registration else "enroll"])
                 if failure in ("checksum", "manifest"):
                     self.assertFalse(list(install.glob(".install-*")))
                     self.assertFalse((install / "viorka-agent").exists())
@@ -376,6 +384,15 @@ else:
         for arch in ("x86_64", "aarch64"):
             with self.subTest(arch=arch):
                 self.run_install(arch=arch, pinned=arch == "aarch64")
+
+    def test_batch_registration_rejects_unsafe_combinations(self):
+        self.run_install(extra=("--registration",), token_arg=True)
+        self.run_install(registration=True, extra=("--reenroll-node=node",))
+
+    def test_batch_registration_terminal_and_stdin(self):
+        self.run_install(registration=True)
+        self.run_install(registration=True, token_stdin=True)
+        self.run_install(registration=True, token_stdin=True, failure="enroll")
 
     def test_token_argument_without_terminal(self):
         self.run_install(token_arg=True)

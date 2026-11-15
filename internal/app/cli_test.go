@@ -76,3 +76,12 @@ func TestUpdateCheckInvalidArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestBatchRegisterRejectsIncompatibleFlags(t *testing.T) {
+	for _, args := range [][]string{{"register", "--replace-node", "node"}, {"enroll", "--name", "node"}, {"run", "--name", "node"}, {"run", "--token-stdin"}, {"register", "extra"}} {
+		var out, errOut bytes.Buffer
+		if code := Main(args, &out, &errOut); code != 2 || out.Len() != 0 {
+			t.Fatalf("%v: code=%d, output=%s", args, code, out.String())
+		}
+	}
+}

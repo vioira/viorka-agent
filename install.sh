@@ -323,15 +323,17 @@ RC
         print_commands
     }
     action=${1:-}
-    case "$action" in install|service|uninstall) ;; *) fail '用法：sh install.sh install --url=https://panel.example.com [--token=TOKEN] [--version=vX.Y.Z] [--ca-file=/path/ca.pem] [--foreground] [--reenroll-node=ID]；已有安装转后台：sh install.sh service；卸载：sh install.sh uninstall [--foreground]' ;; esac
+    case "$action" in install|service|uninstall) ;; *) fail '用法：sh install.sh install --url=https://panel.example.com [--token=TOKEN] [--version=vX.Y.Z] [--ca-file=/path/ca.pem] [--foreground] [--reenroll-node=ID] [--registration] [--token-stdin]；已有安装转后台：sh install.sh service；卸载：sh install.sh uninstall [--foreground]' ;; esac
     shift
-    panel_url= release_tag= ca_file= enrollment_token= token_supplied=0 foreground=0 reenroll_node=
+    panel_url= release_tag= ca_file= enrollment_token= token_supplied=0 foreground=0 reenroll_node= registration=0 token_stdin=0
     for arg do
         plain_text "$arg"
         if [ "$action" = uninstall ]; then
             [ "$arg" = --foreground ] || fail 'uninstall 仅接受可选的 --foreground，不接受安装参数。'
         fi
         case "$arg" in
+            --registration) registration=1 ;;
+            --token-stdin) token_stdin=1 ;;
             --foreground) foreground=1 ;;
             --reenroll-node=*) reenroll_node=${arg#*=} ;;
             --url=*|-url=*) panel_url=${arg#*=} ;;
@@ -341,7 +343,7 @@ RC
                 [ "$token_supplied" -eq 0 ] || fail '请勿重复指定 --token。'
                 enrollment_token=${arg#*=}
                 token_supplied=1 ;;
-            *) fail '不支持的参数。仅支持 --url、--token、--version、--ca-file、--foreground、--reenroll-node；自动更新尚未实现。' ;;
+            *) fail '不支持的参数。仅支持 --url、--token、--version、--ca-file、--foreground、--reenroll-node、--registration、--token-stdin；自动更新尚未实现。' ;;
         esac
     done
     unset arg
@@ -351,7 +353,7 @@ RC
         return
     fi
     if [ "$action" = service ]; then
-        [ -z "$panel_url$release_tag$ca_file$enrollment_token$reenroll_node" ] && [ "$token_supplied" -eq 0 ] && [ "$foreground" -eq 0 ] || fail 'service 不接受安装参数。'
+        [ -z "$panel_url$release_tag$ca_file$enrollment_token$reenroll_node" ] && [ "$token_supplied" -eq 0 ] && [ "$foreground" -eq 0 ] && [ "$registration" -eq 0 ] && [ "$token_stdin" -eq 0 ] || fail 'service 不接受安装参数。'
         service_preflight
         cd /root/.viorka-agent
         mkdir .install-lock 2>/dev/null || fail '另一个安装或卸载正在进行，请稍后重试。'
@@ -369,6 +371,16 @@ RC
         ./viorka-agent config-check --config agent.json
         install_service
         return
+    fi
+    if [ "$registration" -eq 1 ]; then
+        [ -z "$reenroll_node" ] || fail '批量注册不能用于原节点换钥。'
+        [ -n "$panel_url" ] || fail '批量注册需要 --url=https://面板地址。'
+        [ "$token_supplied" -eq 0 ] || fail '批量注册请通过交互输入或 --token-stdin 提供令牌，不要放入命令参数。'
+    fi
+    if [ "$token_stdin" -eq 1 ]; then
+        [ "$token_supplied" -eq 0 ] || fail '--token 与 --token-stdin 不能同时使用。'
+        enrollment_token=$(dd bs=1 count=130 2>/dev/null) || fail '无法读取注册令牌。'
+        token_supplied=1
     fi
     if [ "$token_supplied" -eq 1 ]; then validate_token; fi
     if [ -n "$reenroll_node" ]; then
@@ -481,6 +493,7 @@ RC
             registered=0
             printf '检测到未完成注册，将保留原配置和密钥，使用本次令牌继续注册（忽略本次 URL 和 CA）。\n'
         elif [ -z "$reenroll_node" ]; then
+            [ "$registration" -eq 0 ] || fail '此 Agent 已注册，批量注册不会替换已有身份。升级时请去掉 --registration 和令牌。'
             if [ "$token_supplied" -eq 1 ]; then
                 printf '检测到历史节点数据。\n1) 覆盖重新安装（备份旧配置和状态，使用新令牌注册并恢复本机托管引擎）\n2) 退出并查看恢复说明（默认）\n'
                 # Script stdin may be curl's pipe. Never read confirmation there.
@@ -606,7 +619,9 @@ RC
             printf '\n' >&3
         fi
         validate_token
-        if [ -n "$reenroll_node" ]; then
+        if [ "$registration" -eq 1 ]; then
+            printf '%s' "$enrollment_token" | ./viorka-agent register --config agent.json --token-stdin
+        elif [ -n "$reenroll_node" ]; then
             printf '%s' "$enrollment_token" | ./viorka-agent enroll --config agent.json --token-stdin --replace-node="$reenroll_node"
         else
             printf '%s' "$enrollment_token" | ./viorka-agent enroll --config agent.json --token-stdin

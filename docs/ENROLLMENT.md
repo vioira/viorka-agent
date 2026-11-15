@@ -1,4 +1,4 @@
-# Agent 首次注册和身份生命周期（目标方案）
+# Agent 注册和身份生命周期
 
 > M0 当前状态：已实现注册、签名会话、WSS、重连/吊销和只读 node.inspect；完整运行说明与未完成验收见 [GETTING_STARTED.md](GETTING_STARTED.md)。
 > 下述通用身份轮换仍为目标；当前注册/会话流程已实现，详见 M0 使用说明。
@@ -7,8 +7,8 @@
 
 1. 用户在 Panel 登录，创建可限时的一次性 Enrollment Token，并指定目标节点类型或命名范围。
 2. Agent 本地生成 Ed25519 密钥对，私钥权限 0600，不传给 Panel。
-3. Agent 通过 HTTPS 发送 Enrollment Token、public key、inventory，不通过 URL query 传令牌。
-4. Panel 验证 TTL/使用次数/限流和组织权限，创建节点身份，令牌原子消耗。
+3. Agent 通过 HTTPS 发送 Enrollment Token、public key 和协议版本，资产在连接后上报，不通过 URL query 传令牌。
+4. Panel 验证令牌有效期、使用状态和限流，绑定管理员预建的节点，令牌原子消耗；当前权限为实例级角色。
 5. Agent 保存 node_id、服务器地址、已建立的身份和协议版本。
 6. 后续通过短期签名 challenge 获取短期 session token；WSS Upgrade 时放 `Authorization` 头。
 
@@ -107,3 +107,32 @@ rc-service viorka-agent status
 ## 托管引擎复用
 
 原节点 `--replace-node` 换钥保留引擎和本地配置。删除原节点后使用新令牌注册时，Agent 核对 `/var/lib/viorka-engines` 中的 Viorka 托管引擎，随注册请求提交有效配置和原引擎 ID；Panel 原子恢复服务、凭证、修订与管理归属。此过程不重装或重启代理。第三方服务、配置不一致或旧节点仍持有引擎时拒绝恢复，失败保留本地数据和待注册身份供重试。需配套支持 `EngineRecovery` 的 Panel。
+
+## 批量自动注册
+
+管理员在 Panel 节点页创建批量注册令牌（1–720 小时、1–10000 个新节点），同一令牌可在多台新服务器使用。Panel 无需预建节点，收到合法注册请求后原子创建离线节点、独立公钥身份及审计。真实 WSS 建立后才变为在线。
+
+安装器使用 `--registration` 选择批量注册，默认通过终端隐藏输入提示读取令牌。非交互部署先取得并核对安装脚本，再从部署工具提供的受限文件输入：
+
+```sh
+sh install.sh install --url=https://panel.example.com --registration --token-stdin \
+  < /run/secrets/viorka-registration-token
+```
+
+已有匹配版本二进制和本地配置时：
+
+```sh
+viorka-agent register --config /absolute/path/agent.json --token-stdin --name hk-01 \
+  < /run/secrets/viorka-registration-token
+viorka-agent run --config /absolute/path/agent.json
+```
+
+`--name` 可选，为 Panel 显示名称，最多 128 UTF-8 字节；省略时 Panel 使用令牌前缀加本机 hostname。它与本地配置的 `node_name` 启动标签独立。Panel 管理员之后可在节点详情修改显示名称，不会改本机 hostname、身份或代理配置。
+
+`register` 使用 `POST /api/v1/agents/register`，传 `token`、`public_key`、`protocol_version: "1.0"`、`hostname` 和可选 `name`。它不接受旧引擎恢复数据，也不自动替换已注册身份。安装器拒绝 `--registration` 与 `--reenroll-node` 或明文 `--token` 组合；共享令牌只经交互或标准输入传递。已有单节点 `enroll`、显式换钥和引擎恢复保留。
+
+请求前落盘密钥，响应丢失或进程重启后复用原密钥；有效令牌下同一公钥重试不重复创建节点或扣配额。过期/撤销令牌不能用于恢复响应，禁用/删除节点也不会被重新创建。需管理员核对注册记录再走显式恢复流程，不能删掉身份文件盲目重试。不要把状态目录或私钥放进可克隆镜像。
+
+注册成功后不保存批量令牌。后续仍以各自私钥签名 Challenge、使用短期 Session 和 WSS；令牌撤销不影响已注册节点。Panel 快照恢复会撤销所有批量令牌，删除节点不返还配额。
+
+兼容边界：本次新增 REST bootstrap，不变更 Envelope 1.0 或能力协商。先发布支持 `register` 的 Agent 二进制和支持 `--registration` 的安装脚本，再启用配套 Panel/Web。旧二进制会拒绝新命令，旧单节点注册继续使用；本地源码和测试不代表制品已发布。
