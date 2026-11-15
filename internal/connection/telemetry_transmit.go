@@ -53,6 +53,9 @@ func (c *Client) telemetryTransport(node, run string, delivery func() telemetryF
 				return &telemetryUploadError{Code: "invalid_batch", Cause: err}
 			}
 			_, err = c.uploadTelemetryBody(ctx, request.credential, body, node, request.report)
+			if err == nil {
+				request.send.flight.acknowledged = len(flight.samples)
+			}
 			return err
 		}
 		var deliver telemetryFrameDelivery
@@ -87,6 +90,7 @@ func (c *Client) telemetryTransport(node, run string, delivery func() telemetryF
 				}
 				return err
 			}
+			request.send.flight.acknowledged = next
 			offset = next
 		}
 		return nil

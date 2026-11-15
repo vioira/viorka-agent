@@ -16,7 +16,7 @@ type telemetryLogState struct {
 	failed         [5]bool
 	send, accepted time.Time
 	sendFailed     bool
-	droppedFailure uint64
+	lastError      string
 }
 
 func (d *telemetryLogState) collection(result telemetryWorkResult, err error, now time.Time) {
@@ -62,6 +62,11 @@ func (d *telemetryLogState) record(ctx context.Context, logger *slog.Logger, s *
 			inflightBytes += len(sample.raw) + 1
 		}
 	}
+	bufferBytes, bufferSamples := s.window.usage()
+	oldest := 0.0
+	for _, sample := range s.window.pending {
+		oldest = max(oldest, now.Sub(sample.at).Seconds())
+	}
 	cfg := s.cadence.settings
 	logger.LogAttrs(ctx, slog.LevelInfo, "Telemetry status",
 		slog.String("mode", mode), slog.Uint64("collection_seconds", cfg.CollectionSeconds),
@@ -76,8 +81,10 @@ func (d *telemetryLogState) record(ctx context.Context, logger *slog.Logger, s *
 		slog.Time("last_send_started", d.send), slog.Time("last_receipt_accepted", d.accepted), slog.Bool("last_send_error", d.sendFailed),
 		slog.Int("pending_samples", len(s.window.pending)), slog.Int("pending_sample_bytes", s.window.bytes),
 		slog.Int("inflight_samples", inflightCount), slog.Int("inflight_sample_bytes", inflightBytes),
-		slog.Uint64("dropped_limit", s.window.droppedLimit), slog.Uint64("dropped_cooldown", s.window.droppedCooldown),
-		slog.Uint64("dropped_failed_flight", d.droppedFailure), slog.Uint64("refusals", s.retry.refusals),
+		slog.Uint64("dropped_limit", s.window.droppedLimit), slog.Uint64("dropped_expired", s.window.droppedExpired),
+		slog.Uint64("retry_samples", s.window.retried), slog.Uint64("acknowledged_samples", s.window.acknowledged),
+		slog.Uint64("dropped_oversized", s.window.droppedOversized), slog.String("last_send_error_code", d.lastError),
+		slog.Int("buffer_bytes", bufferBytes), slog.Int("buffer_samples", bufferSamples), slog.Float64("oldest_pending_seconds", oldest), slog.Uint64("refusals", s.retry.refusals),
 		slog.Float64("http_wait_seconds", remaining(s.retry.earliest(true))),
 		slog.Float64("wss_wait_seconds", remaining(s.retry.earliest(false))))
 }

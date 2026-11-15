@@ -12,15 +12,16 @@ import (
 )
 
 type Local struct {
-	TCPProbe           *TCPProbe     `json:"tcp_probe,omitempty"`
-	DNSFallbackServers []string      `json:"dns_fallback_servers,omitempty"`
-	TelemetryV3        bool          `json:"telemetry_v3"`
-	NetworkFilter      NetworkFilter `json:"network_filter,omitempty"`
-	PanelURL           string        `json:"panel_url"`
-	NodeName           string        `json:"node_name"`
-	StateDir           string        `json:"state_dir"`
-	LogLevel           string        `json:"log_level"`
-	CAFile             string        `json:"ca_file,omitempty"`
+	TelemetryBufferBytes int           `json:"telemetry_buffer_bytes,omitempty"`
+	TCPProbe             *TCPProbe     `json:"tcp_probe,omitempty"`
+	DNSFallbackServers   []string      `json:"dns_fallback_servers,omitempty"`
+	TelemetryV3          bool          `json:"telemetry_v3"`
+	NetworkFilter        NetworkFilter `json:"network_filter,omitempty"`
+	PanelURL             string        `json:"panel_url"`
+	NodeName             string        `json:"node_name"`
+	StateDir             string        `json:"state_dir"`
+	LogLevel             string        `json:"log_level"`
+	CAFile               string        `json:"ca_file,omitempty"`
 }
 
 func LoadFile(path string) (Local, error) {
@@ -43,6 +44,9 @@ func LoadFile(path string) (Local, error) {
 }
 
 func (c Local) Validate() error {
+	if c.TelemetryBufferBytes != 0 && c.TelemetryBufferBytes != 512<<10 && c.TelemetryBufferBytes != 1<<20 {
+		return fmt.Errorf("telemetry_buffer_bytes must be 524288 or 1048576 (0 uses 524288)")
+	}
 	if c.TCPProbe != nil {
 		if err := c.TCPProbe.Validate(); err != nil {
 			return err

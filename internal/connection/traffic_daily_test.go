@@ -26,7 +26,7 @@ func TestDailyTrafficReceiptAndFrame(t *testing.T) {
 	if err := window.add(b.Fast[0]); err != nil {
 		t.Fatal(err)
 	}
-	flight := window.take(false)
+	flight := window.take()
 	flight.daily = []*v1.TelemetryDailyTraffic{d}
 	raw, _, err := flight.frame(0, b.NodeID, b.RunID, b.BatchID, time.Now())
 	if err != nil {

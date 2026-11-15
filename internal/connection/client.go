@@ -111,19 +111,22 @@ func (c *Client) post(ctx context.Context, path string, v, out any) error {
 	}
 	defer res.Body.Close()
 	if res.StatusCode == 401 || res.StatusCode == 403 {
-		return ErrIdentityRejected
+		return &connectionFailure{phase: "authentication", status: res.StatusCode, cause: ErrIdentityRejected}
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("Panel returned HTTP %d", res.StatusCode)
+		return &connectionFailure{phase: "authentication", reason: "http_error", status: res.StatusCode}
 	}
 	b, err = io.ReadAll(io.LimitReader(res.Body, 16385))
 	if err != nil {
 		return err
 	}
 	if len(b) > 16384 {
-		return fmt.Errorf("response too large")
+		return connectionError("authentication", "response_too_large", nil)
 	}
-	return v1.Decode(b, out)
+	if err := v1.Decode(b, out); err != nil {
+		return connectionError("authentication", "invalid_response", err)
+	}
+	return nil
 }
 func (c *Client) Enroll(ctx context.Context, token string) error {
 	id, err := c.store.Identity(c.cfg.PanelURL, true)
@@ -179,7 +182,7 @@ func (c *Client) issueSession(ctx context.Context, id state.Identity) (sessionCr
 	}
 	expected := fmt.Sprintf("viorka-agent-session-v1\n%s\n%s\n%s\n%s", c.cfg.PanelURL, id.NodeID, ch.ID, ch.ExpiresAt.Format(time.RFC3339Nano))
 	if ch.Message != expected || !ch.ExpiresAt.After(time.Now()) || ch.ExpiresAt.After(time.Now().Add(2*time.Minute)) {
-		return sessionCredential{}, fmt.Errorf("invalid challenge context")
+		return sessionCredential{}, connectionError("authentication", "invalid_challenge", nil)
 	}
 	sig := ed25519.Sign(ed25519.PrivateKey(id.PrivateKey), []byte(ch.Message))
 	var result struct {
@@ -190,7 +193,7 @@ func (c *Client) issueSession(ctx context.Context, id state.Identity) (sessionCr
 		return sessionCredential{}, err
 	}
 	if len(result.Token) != 64 || !result.ExpiresAt.After(time.Now()) {
-		return sessionCredential{}, fmt.Errorf("invalid session")
+		return sessionCredential{}, connectionError("authentication", "invalid_session", nil)
 	}
 	return sessionCredential{Token: result.Token, ExpiresAt: result.ExpiresAt}, nil
 }
@@ -240,16 +243,18 @@ func (c *Client) Run(ctx context.Context) (runErr error) {
 			return nil
 		}
 		if errors.Is(err, ErrIdentityRejected) || errors.Is(err, errTelemetryStopped) {
+			c.logConnectionEnd(err, time.Since(started), 0, true)
 			return err
 		}
 		var certErr *tls.CertificateVerificationError
 		if errors.As(err, &certErr) {
+			c.logConnectionEnd(err, time.Since(started), 0, true)
 			return fmt.Errorf("Panel TLS verification failed: %w", err)
 		}
 		if time.Since(started) > time.Minute {
 			delay = time.Second
 		}
-		c.lifecycle().Warn("Panel connection failed or lost; retrying", "retry_seconds", delay.Seconds())
+		c.logConnectionEnd(err, time.Since(started), delay, false)
 		j, _ := rand.Int(rand.Reader, big.NewInt(int64(delay/2)))
 		wait := time.NewTimer(delay + time.Duration(j.Int64()))
 		select {
@@ -265,25 +270,38 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	credential, err := c.credentials(ctx, id)
 	token := credential.Token
 	if err != nil {
-		return err
+		return connectionError("authentication", "", err)
 	}
-	ctx, endSession := context.WithDeadline(ctx, credential.ExpiresAt.Add(-30*time.Second))
+	ctx, endSession := context.WithDeadlineCause(ctx, credential.ExpiresAt.Add(-30*time.Second), errSessionRotation)
 	defer endSession()
+	sessionCtx := ctx
+	defer func() {
+		if errors.Is(context.Cause(sessionCtx), errSessionRotation) {
+			connectErr = connectionError("session", "session_rotation", errSessionRotation)
+		}
+	}()
 	dialCtx, stop := context.WithTimeout(ctx, 15*time.Second)
 	conn, res, err := websocket.Dial(dialCtx, "wss"+strings.TrimPrefix(c.cfg.PanelURL, "https")+"/api/v1/agents/ws", &websocket.DialOptions{HTTPClient: c.http, HTTPHeader: http.Header{"Authorization": []string{"Bearer " + token}}})
 	stop()
 	if err != nil {
-		if res != nil && (res.StatusCode == 401 || res.StatusCode == 403) {
-			if !c.sessions.Reject(credential.Generation, false) {
-				return errSessionChanged
-			}
-			return ErrIdentityRejected
+		status := 0
+		if res != nil {
+			status = res.StatusCode
 		}
-		return err
+		cause := err
+		if status == 401 || status == 403 {
+			cause = ErrIdentityRejected
+			if !c.sessions.Reject(credential.Generation, false) {
+				cause = errSessionChanged
+			}
+		}
+		return &connectionFailure{phase: "dial", status: status, cause: cause}
 	}
+
 	defer conn.CloseNow()
 	conn.SetReadLimit(65536)
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	cancel := func() { cancelCause(context.Canceled) }
 	defer cancel()
 	send := func(e v1.Envelope) error {
 		b, err := json.Marshal(e)
@@ -292,7 +310,10 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		}
 		c, stop := context.WithTimeout(ctx, 5*time.Second)
 		defer stop()
-		return conn.Write(c, websocket.MessageText, b)
+		if err := conn.Write(c, websocket.MessageText, b); err != nil {
+			return connectionError("write", "", err)
+		}
+		return nil
 	}
 	capabilities := []string{"node.inspect", "node.inventory.v1"}
 	if managed.Supported() {
@@ -311,15 +332,15 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	_, b, err := conn.Read(hctx)
 	hstop()
 	if err != nil {
-		return err
+		return connectionError("handshake", "", err)
 	}
 	envelope, err := v1.Parse(b, id.NodeID)
 	if err != nil {
-		return err
+		return connectionError("handshake", "invalid_envelope", err)
 	}
 	var ack v1.HelloAck
 	if envelope.Type != "system.hello_ack" || v1.Decode(envelope.Payload, &ack) != nil || ack.ProtocolVersion != v1.Version || ack.HeartbeatSeconds < 5 || ack.HeartbeatSeconds > 60 {
-		return fmt.Errorf("unsupported hello response")
+		return connectionError("handshake", "unsupported_hello", nil)
 	}
 	if c.runCtx == nil {
 		c.runCtx = ctx
@@ -329,7 +350,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	var inventory <-chan struct{}
 	if ack.InventoryVersion != nil {
 		if *ack.InventoryVersion != 1 {
-			return fmt.Errorf("unsupported inventory version")
+			return connectionError("handshake", "unsupported_inventory", nil)
 		}
 		if c.assets == nil {
 			c.assets = startAssets(c.runCtx, c.inventory)
@@ -346,11 +367,17 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		defer cancel()
 		for {
 			typ, b, err := conn.Read(ctx)
-			if err != nil || typ != websocket.MessageText {
+			if err != nil {
+				cancelCause(connectionError("read", "", err))
+				return
+			}
+			if typ != websocket.MessageText {
+				cancelCause(connectionError("read", "unexpected_message_type", nil))
 				return
 			}
 			e, err := v1.Parse(b, id.NodeID)
 			if err != nil {
+				cancelCause(connectionError("read", "invalid_envelope", err))
 				return
 			}
 			select {
@@ -358,11 +385,19 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			case <-ctx.Done():
 				return
 			default:
+				cancelCause(connectionError("read", "incoming_queue_full", nil))
 				return
 			}
 		}
 	}()
-	defer func() { cancel(); conn.CloseNow(); <-done }()
+	defer func() {
+		if cause := context.Cause(ctx); cause != nil && errors.Is(connectErr, context.Canceled) {
+			connectErr = cause
+		}
+		cancel()
+		conn.CloseNow()
+		<-done
+	}()
 	tick := time.NewTicker(time.Duration(ack.HeartbeatSeconds) * time.Second)
 	defer tick.Stop()
 	telemetry := &telemetryClientSession{client: c, identity: id, credential: credential}
@@ -382,7 +417,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		err := conn.Ping(pingCtx)
 		stop()
 		if err != nil {
-			return err
+			return connectionError("heartbeat", "", err)
 		}
 		return send(v1.Message("node.heartbeat", id.NodeID, ID(), v1.Heartbeat{}))
 	}
@@ -432,7 +467,10 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			err = telemetry.port.write(pendingFrame, func(writeCtx context.Context, raw []byte) error {
 				bounded, stop := context.WithTimeout(writeCtx, 5*time.Second)
 				defer stop()
-				return conn.Write(bounded, websocket.MessageText, raw)
+				if err := conn.Write(bounded, websocket.MessageText, raw); err != nil {
+					return connectionError("write", "", err)
+				}
+				return nil
 			})
 			pendingFrame = nil
 			if err != nil {
@@ -444,7 +482,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		case <-negotiationExpired:
 			negotiationExpired = nil
 			if telemetry.generation == "" {
-				return fmt.Errorf("Panel does not support telemetry v3")
+				return connectionError("telemetry_negotiation", "ready_timeout", nil)
 			}
 		case <-runnerDone:
 			return fmt.Errorf("%w: %v", errTelemetryStopped, c.telemetry.err)
@@ -467,7 +505,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 				return err
 			}
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 		case <-inventory:
 			value := c.assets.snapshot()
 			if value.SampledAt.IsZero() {
@@ -487,7 +525,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 				count = 1
 			}
 			if count > 120 {
-				return fmt.Errorf("message rate exceeded")
+				return connectionError("read", "message_rate_exceeded", nil)
 			}
 			if handled, handleErr := telemetry.handle(e, send); handled {
 				if telemetry.generation != "" && negotiationTimer != nil {
@@ -495,20 +533,20 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 					negotiationExpired = nil
 				}
 				if handleErr != nil {
-					return handleErr
+					return connectionError("telemetry_control", "invalid_control", handleErr)
 				}
 				continue
 			}
 			var d v1.TaskDispatch
 			if e.Type != "task.dispatch" || e.Revision != nil || v1.Decode(e.Payload, &d) != nil || e.CorrelationID != d.TaskID {
-				return fmt.Errorf("invalid dispatch")
+				return connectionError("task", "invalid_dispatch", nil)
 			}
 			if v1.EngineOperation(d.Operation) {
 				if engineBusy {
 					continue
 				}
 				if d.Engine == nil || d.Engine.Validate(d.Operation) != nil || d.Attempt == nil {
-					return fmt.Errorf("invalid engine task")
+					return connectionError("task", "invalid_engine_task", nil)
 				}
 				accept := v1.TaskReply{TaskID: d.TaskID, Attempt: *d.Attempt, ResourceID: d.ResourceID, State: "accepted"}
 				msg := v1.Message("task.ack", id.NodeID, ID(), accept)

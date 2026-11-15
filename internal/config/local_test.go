@@ -113,3 +113,13 @@ func TestDNSFallbackServers(t *testing.T) {
 		}
 	}
 }
+
+func TestTelemetryBufferLocalLimits(t *testing.T) {
+	for _, n := range []int{-1, 0, 1, 524288, 1048576, 2097152} {
+		cfg := Local{PanelURL: "https://panel.test", NodeName: "node", StateDir: "state", TelemetryBufferBytes: n}
+		valid := n == 0 || n == 524288 || n == 1048576
+		if (cfg.Validate() == nil) != valid {
+			t.Fatal("buffer validation", n)
+		}
+	}
+}

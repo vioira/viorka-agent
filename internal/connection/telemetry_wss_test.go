@@ -40,7 +40,7 @@ func TestTelemetryWSSRealSocketReceiptAndControl(t *testing.T) {
 	if err := window.add(fixture.Fast[0]); err != nil {
 		t.Fatal(err)
 	}
-	flight := window.take(false)
+	flight := window.take()
 	frame, _, err := flight.frame(0, fixture.NodeID, fixture.RunID, "batch-wss", time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +212,10 @@ func TestTelemetryWSSSplitWindowCannotCrossReconnect(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	flight := window.take(false)
+	flight := &telemetryFlight{samples: window.pending}
+	window.pending = nil
+	window.bytes = 0
+	window.inflight = flight
 	var bridge telemetryWSS
 	port := bridge.attach()
 	defer port.close()
@@ -236,6 +239,7 @@ func TestTelemetryWSSSplitWindowCannotCrossReconnect(t *testing.T) {
 	if !port.receipt(receipt) {
 		t.Fatal("first receipt not matched")
 	}
+	_ = waitFrame(t, port) // first receipt consumed; second frame is still unconfirmed
 	next := bridge.attach()
 	defer next.close()
 	if err := waitDelivery(t, result); err == nil {
@@ -246,7 +250,13 @@ func TestTelemetryWSSSplitWindowCannotCrossReconnect(t *testing.T) {
 		t.Fatal("remaining frames migrated to new generation")
 	default:
 	}
-	window.release(flight)
+	if flight.acknowledged != int(request.count) {
+		t.Fatal("partial receipt progress lost", flight.acknowledged, request.count)
+	}
+	window.complete(flight, false)
+	if len(window.pending) == 0 || window.pending[0].sequence != request.count+1 {
+		t.Fatal("confirmed prefix replayed or suffix lost")
+	}
 }
 
 func TestTelemetryWSSIdentityRejectionBlocksSharedSession(t *testing.T) {
@@ -255,7 +265,7 @@ func TestTelemetryWSSIdentityRejectionBlocksSharedSession(t *testing.T) {
 	if err := window.add(fixture.Fast[0]); err != nil {
 		t.Fatal(err)
 	}
-	flight := window.take(false)
+	flight := window.take()
 	defer window.release(flight)
 	client := &Client{}
 	credential, err := client.sessions.Get(context.Background(), "node", func(context.Context) (sessionCredential, error) {

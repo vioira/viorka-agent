@@ -67,6 +67,7 @@ func (s *telemetrySchedule) demand(d v1.TelemetryDemand, now time.Time) *v1.Tele
 // advance runs once at each deadline, never catches up missed ticks. A real
 // time.Time retains monotonic clock information for leases and retry budgets.
 func (s *telemetrySchedule) advance(now time.Time) *v1.TelemetryDemandResult {
+	s.window.expire(now)
 	s.lease.expire(now)
 	result := s.lease.settle(now, s.active != nil)
 	s.mode(now)
@@ -86,11 +87,6 @@ func (s *telemetrySchedule) advance(now time.Time) *v1.TelemetryDemandResult {
 		s.save = now.Add(time.Minute)
 	}
 	if due.POST {
-		// lastPOST+R alone is normal pacing, not failed delivery. A few
-		// milliseconds of sender jitter must not discard a healthy window.
-		if s.retry.blocked || s.retry.unsupported || (s.retry.degraded && now.Before(s.retry.earliest(true))) {
-			s.window.collapse()
-		}
 		s.postWanted = true
 	}
 	if due.WSS {
@@ -133,10 +129,8 @@ func (s *telemetrySchedule) take(now time.Time) *telemetrySend {
 	if !ok {
 		return nil
 	}
-	if s.retry.degraded {
-		s.window.collapse()
-	}
-	flight := s.window.take(s.fallback || s.retry.degraded)
+	s.window.expire(now)
+	flight := s.window.take()
 	if flight == nil {
 		s.retry.active = nil
 		return nil
@@ -154,12 +148,13 @@ func (s *telemetrySchedule) finish(send *telemetrySend, now time.Time, code stri
 	if send == nil || send != s.active {
 		return nil
 	}
-	s.window.release(send.flight)
+	s.window.complete(send.flight, code == "")
+	s.window.expire(now)
 	s.active = nil
 	owned := s.retry.finish(send.attempt, now, code, retryAfter)
 	if owned && code != "" && !send.attempt.HTTP {
 		// A new demand revision is needed after failed realtime. Duplicate enable
-		// cannot resurrect the invalidated lease. Fallback is latest-only.
+		// cannot resurrect the invalidated lease. The unconfirmed suffix stays queued.
 		s.lease.realtime = false
 		s.lease.pending = false
 		s.lease.expires = time.Time{}

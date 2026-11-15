@@ -118,7 +118,7 @@ v3 设置使用固定 `state_dir/node-telemetry-settings.json`，绑定 Panel/No
 低 revision 或同 revision 不同内容均拒绝；只有原子写入成功后才更新已应用设置。
 同 revision 重投仍执行耐久写入，以恢复先前可能失败的目录同步。
 
-独立周期规则已实现并测试，但尚未与客户端 ready/租约/POST 调度接线：HTTP 下
+独立周期规则已接入客户端 ready/租约/POST 调度：HTTP 下
 C 控制 fast、R 控制 full/POST，允许 C>R；实时下 W 控制 fast/发送、R 保持 full，
 C 只保存供退出实时后生效。修改 R 不重排 HTTP fast，跳过的采样窗口不补跑。
 
@@ -126,13 +126,13 @@ C 只保存供退出实时后生效。修改 R 不重排 HTTP fast，跳过的�
 
 `telemetry_v3` 省略或 `true` 时声明 `node.telemetry.v3`，必须经 Panel ready 和设置确认后才能上报。`false` 明确停用监控，不恢复旧采集。Panel 默认启用，可用 `VIORKA_TELEMETRY_V3=false` 停用；两端启动配置修改需要重启。
 
-旧 `metrics_seconds` 已删除，严格配置解析会拒绝该字段；升级时从 bootstrap JSON 移除。旧 `node-settings.json` 不再读取或写入，不自动删除用户状态目录中的文件。没有 ready 的管理连接在 10 秒后报不支持错误并重连，不回退旧协议；正常 v3 重连保留采集运行代次。监控重新协商成功后清除 HTTP/WSS 错误冷却和上次 POST 的间隔等待，立即补报缓存的最新指标；已有上传先结束，旧连接的迟到结果不会重新设置冷却。服务端明确的限流、Retry-After 和永久身份拒绝仍然有效。此行为不修改代理服务。
+旧 `metrics_seconds` 已删除，严格配置解析会拒绝该字段；升级时从 bootstrap JSON 移除。旧 `node-settings.json` 不再读取或写入，不自动删除用户状态目录中的文件。没有 ready 的管理连接在 10 秒后报不支持错误并重连，不回退旧协议；正常 v3 重连保留采集运行代次。监控重新协商成功后清除 HTTP/WSS 错误冷却和上次 POST 的间隔等待，立即按每组序号补报最旧未确认指标；已有上传先结束，旧连接的迟到结果不会重新设置冷却。服务端明确的限流、Retry-After 和永久身份拒绝仍然有效。此行为不修改代理服务。
 
 ### v3 本地运行诊断
 
-启用并完成协商后，采样调度器最多每分钟输出一条结构化 `Telemetry status`，管理 WSS 断开时仍可记录。字段包括当前模式、C/R/W、需求开关和租约剩余秒数、各组最后完成时间和错误标记、最后发送/收到成功回执时间、pending/inflight 样本数及编码样本字节、限额/冷却/失败窗口丢弃计数、拒绝次数与 HTTP/WSS 最早允许尝试前的等待秒数。日志不记录 Token、会话身份、采样内容或原始错误文本。采集返回有效对象但其中包含局部错误时，对应组错误标记仍为 true；恢复后清除。
+启用并完成协商后，采样调度器最多每分钟输出一条结构化 `Telemetry status`，管理 WSS 断开时仍可记录。字段包括当前模式、C/R/W、需求开关和租约剩余秒数、各组最后完成时间和错误标记、最后发送/收到成功回执时间、pending/inflight 样本数及编码样本字节、限额/过期/超大样本丢弃计数、重排队与确认计数、拒绝次数与 HTTP/WSS 最早允许尝试前的等待秒数。日志不记录 Token、会话身份、采样内容或原始错误文本。采集返回有效对象但其中包含局部错误时，对应组错误标记仍为 true；恢复后清除。
 
-零时间表示尚未发生；最后完成时间不是最后成功采样时间。`last_receipt_accepted` 表示收到入口接收回执，不保证 Panel 已提交 SQLite；刷盘状态应检查 Panel。`pending_sample_bytes` / `inflight_sample_bytes` 不包含外层 JSON、传输头及其他缓存，不能当作进程总内存。`dropped_failed_flight` 表示本地放弃所有权的失败窗口点数；丢失回执前 Panel 可能已接收部分或全部点，不能据此计算服务端丢点量。
+零时间表示尚未发生；最后完成时间不是最后成功采样时间。`last_receipt_accepted` 表示收到入口接收回执，不保证 Panel 已提交 SQLite；刷盘状态应检查 Panel。`pending_sample_bytes` / `inflight_sample_bytes` 不包含外层 JSON、传输头及其他缓存，不能当作进程总内存。`buffer_bytes` / `buffer_samples` 合并统计 pending、inflight 和 latest 的保留预算，共享采样只计一次。`retry_samples` 是失败后重排队的累计点数（可重复计数），`acknowledged_samples` 包含服务端去重确认，不代表新增历史点数；`dropped_limit`、`dropped_expired`、`dropped_oversized` 分别记录容量淘汰、过期和超大采样。`oldest_pending_seconds` 与 `last_send_error_code` 用于定位积压和拒收。已接收但回执丢失的点也可能被重排队或淘汰，这些计数不能直接当作服务端丢点量。
 
 退出额外记录一次 `Telemetry shutdown`，分别标记 worker 结束及最终月流量保存是否成功、整体调度关闭是否成功。普通保存状态由 `last_traffic_save_completed` 与 `traffic_save_error` 查看。Agent 只知道是否有实时需求，订阅者引用数量由 Panel 维护。
 
@@ -218,3 +218,15 @@ Panel/Agent 协商 `node.tcp_probe.v2` 后启用独立探测。每 20 秒一轮�
 
 `run --config PATH` 的启动、Panel 握手成功、连接失败/断开重试、失败退出和正常停止消息始终输出到 stderr，不受本地或 Panel 下发的 `log_level` 过滤。日常采集和诊断仍遵循日志等级。
 `Agent starting; connecting to Panel` 仅表示正在启动；`Panel connected; session established` 表示身份认证和管理 WSS 握手已完成，不代表代理引擎部署成功或监控协商完成。临时连接失败按退避策略重试；致命错误输出失败状态及 CLI 错误原因，并返回非零退出码。
+
+### NAT 小机器的指标补传缓存
+
+本地 bootstrap 可选 `telemetry_buffer_bytes`：省略或 0 使用 **524288（512 KiB）**，也可显式配置 1048576（1 MiB）。其它值拒绝启动。对应采样数量上限为 512 / 1024 条；Panel 的远程监控设置不能提高本地预算。该预算含待发送、发送中及最新快照共享的编码数据，不含 Go 对象、采集器、TLS、JSON 编解码临时分配，不能当作进程 RSS 上限。
+
+单批采样编码控制在 56 KiB，为外层 JSON、WSS 信封及日流量附加数据预留 8 KiB；单条采样超出此限明确丢弃并计数。上传始终单并发，HTTP 保持 R 最小间隔，WSS 保持 W 节奏，心跳与控制优先。多批积压可能在全部传完前达到过期时间，不保证任意采样频率或网卡数量都能补齐五分钟。
+
+采集在管理连接断开时继续按原离线频率工作。未确认指标保留至采样后五分钟，容量不足先淘汰最旧待发送点；发送中数据保持不可变，结束后再执行淘汰。公共 IP 最新快照按独立协议保留至 900 秒。重连保持原 run、序号及采样时间，严格先补旧再发新，成功回执才释放；丢回执允许重报，由 Panel 水位去重。缓存只在内存，Agent 进程退出/崩溃后不恢复；普通指标接收回执不是 Panel SQLite 持久化保证。日流量沿用独立持久化与确认机制。
+
+生命周期日志补充 `phase`、`reason`、`attempt_seconds`、`retry_seconds`，适用时包含 `close_code`、`http_status`。正常 `session_rotation` / `session_changed` 为 INFO，意外连接失败为 WARN，永久身份或证书失败为 ERROR。`attempt_seconds` 包含认证/拨号及会话存续时间；重试秒数是加入随机抖动前的基础间隔。不输出远端关闭文本、原始错误、凭证、URL 或采样内容。
+
+64 MiB 与 128 MiB 指整机/容器预算，不能据此推断 Agent 可用内存；默认选择 512 KiB。真实 Debian/Ubuntu、Alpine、cgroup 64/128 MiB 限额及与 sing-box/Xray/Realm 共存的运行验证须单独执行。资源证据和复现命令见 [TELEMETRY_REPLAY_VALIDATION.md](TELEMETRY_REPLAY_VALIDATION.md)。

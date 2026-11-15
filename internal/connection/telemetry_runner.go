@@ -196,9 +196,8 @@ func (r *telemetryRunner) run(ctx context.Context, s *telemetrySchedule, credent
 			operational.sendFailed = code != ""
 			if code == "" {
 				operational.accepted = now()
-			} else {
-				operational.droppedFailure += uint64(len(result.send.flight.samples))
 			}
+			operational.lastError = code
 			if receipt := s.finish(result.send, now(), code, retry); receipt != nil {
 				if !control(telemetryControl{correlation: correlation, demand: receipt}) {
 					return

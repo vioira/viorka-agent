@@ -183,6 +183,7 @@ func (t *telemetryClientSession) start(ready v1.TelemetryReady, send func(v1.Env
 		defer cancel()
 		return errors.Join(err, schedule.workers.stop(ctx))
 	}
+	schedule.window.maxBytes = c.cfg.TelemetryBufferBytes
 	c.telemetry = startTelemetryRunner(c.runCtx, schedule, t.credential, settings, c.telemetryTransport(t.identity.NodeID, runID, c.telemetryBridge.delivery), time.Now)
 	return nil
 }

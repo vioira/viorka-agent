@@ -30,48 +30,37 @@ func windowFixture(t *testing.T) v1.TelemetryBatch {
 func TestTelemetryWindowOwnershipAndLimit(t *testing.T) {
 	b := windowFixture(t)
 	var w telemetryWindow
-	for i := 1; i <= 301; i++ {
+	for i := 1; i <= 600; i++ {
 		b.Fast[0].Sequence = uint64(i)
 		if err := w.add(b.Fast[0]); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if len(w.pending) != 300 || w.pending[0].sequence != 2 || w.droppedLimit != 1 {
-		t.Fatalf("limit: %+v", w)
+	size, count := w.usage()
+	if size > telemetryBufferBytes || count > 512 || w.droppedLimit == 0 {
+		t.Fatal("unbounded queue", size, count)
 	}
-	f := w.take(false)
-	if f == nil || w.take(false) != nil || len(w.pending) != 0 {
-		t.Fatal("flight ownership")
+	firstSequence := w.pending[0].sequence
+	f := w.take()
+	if f == nil || w.take() != nil || len(w.pending) == 0 {
+		t.Fatal("bounded flight ownership")
 	}
-	b.Fast[0].Sequence = 302
+	b.Fast[0].Sequence = 601
 	if err := w.add(b.Fast[0]); err != nil {
 		t.Fatal(err)
 	}
 	b.Fast[0].Sequence = 999
 	var first v1.TelemetryFast
-	if err := json.Unmarshal(f.samples[0].raw, &first); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(f.samples[0].raw, &first); err != nil || first.Sequence != firstSequence {
+		t.Fatal("collector mutated flight", err)
 	}
-	if first.Sequence != 2 {
-		t.Fatal("collector mutated flight")
+	unconfirmed := f.samples[1].sequence
+	f.acknowledged = 1
+	if !w.complete(f, false) || w.release(f) || f.samples != nil {
+		t.Fatal("completion ownership")
 	}
-	if !w.release(f) || w.release(f) || f.samples != nil {
-		t.Fatal("release")
-	}
-	if len(w.pending) != 1 || w.pending[0].sequence != 302 {
-		t.Fatal("release lost new sample")
-	}
-	w.collapse()
-	if len(w.pending) != 0 || w.bytes != 0 || w.droppedCooldown != 1 {
-		t.Fatal("cooldown")
-	}
-	f = w.take(false)
-	if len(f.samples) != 1 || f.samples[0].sequence != 302 {
-		t.Fatal("latest identity")
-	}
-	w.release(f)
-	if err := w.add(&v1.TelemetryFast{Sequence: 302}); err == nil {
-		t.Fatal("duplicate accepted")
+	if w.pending[0].sequence != unconfirmed {
+		t.Fatal("retry not oldest first")
 	}
 }
 func TestTelemetryWindowFramesRoundTrip(t *testing.T) {
@@ -86,44 +75,34 @@ func TestTelemetryWindowFramesRoundTrip(t *testing.T) {
 	if err := w.add(b.Full[0]); err != nil {
 		t.Fatal(err)
 	}
-	f := w.take(false)
-	body, err := encodeTelemetryWindow(f.samples, b.NodeID, b.RunID, "http-batch")
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := b.Fast[0].SampledAt
-	if _, err = v1.DecodeTelemetryBatch(body, b.NodeID, now, 60, true); err != nil {
-		t.Fatal(err)
-	}
-	count, frames, offset := 0, 0, 0
-	for offset < len(f.samples) {
-		raw, next, err := f.frame(offset, b.NodeID, b.RunID, fmt.Sprintf("frame-%d", frames), now)
+	count, batches := 0, 0
+	var previous uint64
+	for len(w.pending) > 0 {
+		f := w.take()
+		body, err := encodeTelemetryWindow(f.samples, b.NodeID, b.RunID, "http-batch")
+		if err != nil || len(body) > telemetryBatchBytes {
+			t.Fatal("HTTP batch bound", err)
+		}
+		decoded, err := v1.DecodeTelemetryBatch(body, b.NodeID, b.Fast[0].SampledAt, 60, true)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(raw) > v1.TelemetryMaxFrameBytes || next <= offset {
-			t.Fatal("frame bound/progress")
+		for _, s := range decoded.Fast {
+			if s.Sequence <= previous {
+				t.Fatal("latest skipped backlog")
+			}
+			previous = s.Sequence
+			count++
 		}
-		var e v1.Envelope
-		if err = json.Unmarshal(raw, &e); err != nil {
-			t.Fatal(err)
+		raw, next, err := f.frame(0, b.NodeID, b.RunID, fmt.Sprintf("frame-%d", batches), b.Fast[0].SampledAt)
+		if err != nil || len(raw) > telemetryBatchBytes || next != len(f.samples) {
+			t.Fatal("frame bound", err)
 		}
-		decoded, err := v1.DecodeTelemetryBatch(e.Payload, b.NodeID, now, 60, true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		count += len(decoded.Fast) + len(decoded.Full)
-		frames++
-		offset = next
+		batches++
+		w.release(f)
 	}
-	if frames < 2 || count != 301 {
-		t.Fatalf("frames=%d count=%d", frames, count)
-	}
-	w.release(f)
-	// Only the latest snapshot may be retried, never the detached 301 samples.
-	fallback := w.take(true)
-	if len(fallback.samples) != 2 {
-		t.Fatal("failed window replayed")
+	if batches < 2 || count != 300 || previous != 300 {
+		t.Fatal("lost samples", batches, count, previous)
 	}
 }
 func TestTelemetryWindowByteBoundAndOversizedFrame(t *testing.T) {
@@ -142,10 +121,10 @@ func TestTelemetryWindowByteBoundAndOversizedFrame(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if w.bytes > v1.TelemetryMaxBodyBytes-telemetryWindowReserve || w.droppedLimit == 0 || len(w.pending) >= 300 {
+	if w.bytes > telemetryBufferBytes || w.droppedLimit == 0 || len(w.pending) >= 300 {
 		t.Fatal("byte bound not enforced")
 	}
-	f := w.take(false)
+	f := w.take()
 	raw, err := encodeTelemetryWindow(f.samples, b.NodeID, b.RunID, "batch")
 	if err != nil || len(raw) > v1.TelemetryMaxBodyBytes {
 		t.Fatal("body bound", err)

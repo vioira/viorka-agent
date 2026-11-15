@@ -18,7 +18,7 @@ func TestTCPProbeTransportNegotiation(t *testing.T) {
 	if err := window.add(full); err != nil {
 		t.Fatal(err)
 	}
-	flight := window.take(false)
+	flight := window.take()
 	defer window.release(flight)
 	client := &Client{}
 	for _, enabled := range []bool{true, false} {

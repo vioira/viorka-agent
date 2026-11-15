@@ -109,8 +109,8 @@ func TestTelemetryScheduleHTTPRealtimeFallback(t *testing.T) {
 	s.advance(now.Add(time.Minute))
 	drainSchedule(t, s)
 	fallback := s.take(now.Add(time.Minute))
-	if fallback == nil || !fallback.attempt.HTTP || len(fallback.flight.samples) != 1 {
-		t.Fatal("fallback replayed failed history")
+	if fallback == nil || !fallback.attempt.HTTP || len(fallback.flight.samples) != 3 {
+		t.Fatal("fallback lost unconfirmed history")
 	}
 	if s.finish(live, now.Add(time.Minute), "", 0) != nil || s.active != fallback {
 		t.Fatal("late WSS completion stole new flight")
@@ -173,15 +173,15 @@ func TestTelemetryScheduleCooldownAndGenerationFence(t *testing.T) {
 			t.Fatal("cooldown bypass")
 		}
 	}
-	if s.window.droppedCooldown == 0 {
-		t.Fatal("cooldown accumulated history")
+	if len(s.window.pending) != 5 {
+		t.Fatal("cooldown lost history")
 	}
 	at := start.Add(180 * time.Second)
 	s.advance(at)
 	drainSchedule(t, s)
 	probe := s.take(at)
-	if probe == nil || len(probe.flight.samples) != 1 {
-		t.Fatal("half-open must send latest only")
+	if probe == nil || len(probe.flight.samples) != 6 {
+		t.Fatal("half-open must replay ordered history")
 	}
 	if err := s.reconnected(2, "generation-2", at); err != nil {
 		t.Fatal(err)
@@ -257,8 +257,8 @@ func TestTelemetryHealthyPOSTJitterPreservesWindow(t *testing.T) {
 		t.Fatal("did not schedule rate-limit boundary")
 	}
 	second := s.take(next)
-	if second == nil || len(second.flight.samples) != 2 || second.flight.samples[0].sequence != 4 || second.flight.samples[1].sequence != 5 || s.window.droppedCooldown != 0 {
-		t.Fatalf("healthy timing jitter discarded observations: send=%+v cooldown_drops=%d", second, s.window.droppedCooldown)
+	if second == nil || len(second.flight.samples) != 2 || second.flight.samples[0].sequence != 4 || second.flight.samples[1].sequence != 5 || s.window.droppedExpired != 0 {
+		t.Fatalf("healthy timing jitter discarded observations: send=%+v cooldown_drops=%d", second, s.window.droppedExpired)
 	}
 	s.finish(second, next.Add(time.Millisecond), "", 0)
 }
@@ -272,7 +272,7 @@ func TestTelemetryReconnectRestoresCachedGroupsBeforeNextTick(t *testing.T) {
 		}
 	}
 	// The previous samples were already sent; only the immutable latest cache remains.
-	s.window.collapse()
+	s.window.release(s.window.take())
 	s.disconnect(start)
 	at := start.Add(5 * time.Second)
 	if err := s.reconnected(2, "restarted-panel", at); err != nil {

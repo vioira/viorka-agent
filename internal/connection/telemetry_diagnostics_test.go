@@ -27,14 +27,15 @@ func TestTelemetryOperationalLogBoundAndRedaction(t *testing.T) {
 	s.lease.current.Enabled = true
 	s.lease.expires = at.Add(90 * time.Second)
 	s.window.droppedLimit = 3
-	s.window.droppedCooldown = 5
+	s.window.droppedExpired = 5
 	s.window.bytes = 42
 	s.window.pending = []telemetrySample{{raw: []byte("secret-payload")}}
 	s.active = &telemetrySend{flight: &telemetryFlight{samples: []telemetrySample{{raw: []byte("secret-flight")}}}}
 	retry.degraded = true
 	retry.refusals = 4
 	retry.refusedUntil = at.Add(3 * time.Minute)
-	d := telemetryLogState{send: at, droppedFailure: 2}
+	s.window.retried = 2
+	d := telemetryLogState{send: at, lastError: "network_error"}
 	d.collection(telemetryWorkResult{kind: 0, value: &v1.TelemetryFast{Errors: []string{"secret-sample-error"}}}, nil, at)
 	d.collection(telemetryWorkResult{kind: 3}, errors.New("secret-token /private/path"), at)
 	var output bytes.Buffer
@@ -58,7 +59,7 @@ func TestTelemetryOperationalLogBoundAndRedaction(t *testing.T) {
 		"wss_report_seconds": float64(2), "lease_remaining_seconds": float64(90),
 		"http_wait_seconds": float64(180), "refusals": float64(4), "pending_samples": float64(1),
 		"pending_sample_bytes": float64(42), "inflight_samples": float64(1), "inflight_sample_bytes": float64(14),
-		"dropped_limit": float64(3), "dropped_cooldown": float64(5), "dropped_failed_flight": float64(2),
+		"dropped_limit": float64(3), "dropped_expired": float64(5), "retry_samples": float64(2),
 		"fast_error": true, "traffic_save_error": true, "last_fast_completed": at.Format(time.RFC3339),
 	} {
 		if record[key] != want {
