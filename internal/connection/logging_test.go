@@ -2,6 +2,7 @@ package connection
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"path/filepath"
@@ -87,5 +88,33 @@ func TestLogLevelDynamicDurability(t *testing.T) {
 	c.applyLogLevel(restored.current.LogLevel)
 	if c.logLevel.Level() != slog.LevelDebug {
 		t.Fatal("persisted level not restored")
+	}
+}
+
+func TestRunFailureVisibleAtErrorLevel(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	c, err := New(config.Local{PanelURL: "https://panel.test", NodeName: "test", StateDir: t.TempDir(), LogLevel: "error"}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	var output bytes.Buffer
+	c.SetLogOutput(&output)
+	if err := c.Run(context.Background()); err == nil {
+		t.Fatal("unregistered run succeeded")
+	}
+	got := output.String()
+	if !strings.Contains(got, "Agent starting") || !strings.Contains(got, "Agent run failed") || strings.Contains(got, "session established") || strings.Contains(got, "Agent stopped") {
+		t.Fatal(got)
+	}
+	output.Reset()
+	c.lifecycle().Info("Panel connected; session established")
+	c.logger.Info("routine diagnostics")
+	if !strings.Contains(output.String(), "session established") || strings.Contains(output.String(), "routine diagnostics") {
+		t.Fatal(output.String())
 	}
 }

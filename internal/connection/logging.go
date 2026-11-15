@@ -20,6 +20,7 @@ func parseLogLevel(value string) slog.Level {
 
 // SetLogOutput configures the destination before Run or Enroll starts.
 func (c *Client) SetLogOutput(w io.Writer) {
+	c.lifecycleLogger = slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	c.logger = slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: c.logLevel}))
 }
 func (c *Client) applyLogLevel(value string) {
@@ -33,4 +34,13 @@ func (c *Client) log() *slog.Logger {
 		return c.logger
 	}
 	return slog.Default()
+}
+
+// Lifecycle messages remain visible even when routine diagnostics are filtered.
+// Configure the output before starting the client, just like the regular logger.
+func (c *Client) lifecycle() *slog.Logger {
+	if c.lifecycleLogger != nil {
+		return c.lifecycleLogger
+	}
+	return c.log()
 }

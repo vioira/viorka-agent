@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -214,6 +215,15 @@ func testTelemetryClientReconnect(t *testing.T) {
 	}
 	client := &Client{logLevel: &logLevel, cfg: config.Local{PanelURL: origin}, http: server.Client(), store: store, telemetryEnabled: true}
 	defer client.Close()
+	logPath := filepath.Join(t.TempDir(), "lifecycle.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logFile.Close()
+	client.SetLogOutput(logFile)
+	client.applyLogLevel("error")
+
 	var final atomic.Int32
 	client.telemetrySource = func() (telemetrySources, error) {
 		var sequence uint64
@@ -258,6 +268,13 @@ func testTelemetryClientReconnect(t *testing.T) {
 	cancel()
 	if err := client.waitCollectors(); err != nil {
 		t.Fatal(err)
+	}
+	logOutput, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(logOutput), "Panel connected; session established") != attempts {
+		t.Fatalf("missing handshake lifecycle output: %s", logOutput)
 	}
 	expectedSaves := int32(1)
 	if final.Load() != expectedSaves {

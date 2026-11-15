@@ -213,3 +213,8 @@ TCP 连接预算。HTTPS/WSS URL 和 TLS 主机名保持原始域名，仍验证
 单目标解析与连接总超时可配置为 100–1000 毫秒。探测独立于 full 采集和上报调度，实时观看不会加速探测，不补发错过的轮次。
 
 Panel/Agent 协商 `node.tcp_probe.v2` 后启用独立探测。每 20 秒一轮，最多三个目标串行、每目标一次 TCP 连接；单目标超时包含 DNS，RTT 不包含 DNS。各目标保留最近 120 秒、最多 6 个样本，ping 为成功样本中位数，loss 为失败数 × 100 / 总数的整数商。DNS、地址拦截及连接失败均记失败，停止取消不计入；全失败为 ping=-1、loss=100，无样本不生成记录。整轮完成后发布共用 sampled_at 的 targets 快照，随 full 上报。目标变化从零积累，相同目标改名、重排保留历史；旧 interval_seconds/window_seconds 字段仍可读取，但不覆盖固定周期与窗口。
+
+### `run` 生命周期输出
+
+`run --config PATH` 的启动、Panel 握手成功、连接失败/断开重试、失败退出和正常停止消息始终输出到 stderr，不受本地或 Panel 下发的 `log_level` 过滤。日常采集和诊断仍遵循日志等级。
+`Agent starting; connecting to Panel` 仅表示正在启动；`Panel connected; session established` 表示身份认证和管理 WSS 握手已完成，不代表代理引擎部署成功或监控协商完成。临时连接失败按退避策略重试；致命错误输出失败状态及 CLI 错误原因，并返回非零退出码。

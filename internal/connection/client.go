@@ -43,6 +43,7 @@ type Client struct {
 	dailyAck              func([]*v1.TelemetryDailyTrafficAck)
 	tcpProbeSupported     atomic.Bool
 	trafficCalibrate      func(context.Context, string, v1.TrafficCalibration, time.Time) (*v1.TrafficCalibration, error)
+	lifecycleLogger       *slog.Logger
 	logger                *slog.Logger
 	logLevel              *slog.LevelVar
 	telemetrySource       func() (telemetrySources, error)
@@ -201,6 +202,14 @@ func ID() string {
 	return hex.EncodeToString(b[:])
 }
 func (c *Client) Run(ctx context.Context) (runErr error) {
+	c.lifecycle().Info("Agent starting; connecting to Panel")
+	defer func() {
+		if runErr != nil {
+			c.lifecycle().Error("Agent run failed")
+		} else {
+			c.lifecycle().Info("Agent stopped")
+		}
+	}()
 	id, err := c.store.Identity(c.cfg.PanelURL, false)
 	if err != nil {
 		return err
@@ -240,7 +249,7 @@ func (c *Client) Run(ctx context.Context) (runErr error) {
 		if time.Since(started) > time.Minute {
 			delay = time.Second
 		}
-		c.log().Warn("Panel connection lost; retrying", "retry_seconds", delay.Seconds())
+		c.lifecycle().Warn("Panel connection failed or lost; retrying", "retry_seconds", delay.Seconds())
 		j, _ := rand.Int(rand.Reader, big.NewInt(int64(delay/2)))
 		wait := time.NewTimer(delay + time.Duration(j.Int64()))
 		select {
@@ -329,7 +338,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		}
 		inventory = c.assets.wake
 	}
-	c.log().Info("Panel connected; session established", "protocol_version", ack.ProtocolVersion, "heartbeat_seconds", ack.HeartbeatSeconds)
+	c.lifecycle().Info("Panel connected; session established", "protocol_version", ack.ProtocolVersion, "heartbeat_seconds", ack.HeartbeatSeconds)
 	incoming := make(chan v1.Envelope, 8)
 	done := make(chan struct{})
 	go func() {
