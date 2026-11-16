@@ -49,7 +49,7 @@ func downloadLogged(ctx context.Context, r v1.EngineRelease, dir string, logger 
 		}
 	}()
 
-	client := &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	client := &http.Client{Timeout: 5 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) > 5 || req.URL.Scheme != "https" || (req.URL.Hostname() != "github.com" && req.URL.Hostname() != "release-assets.githubusercontent.com" && req.URL.Hostname() != "objects.githubusercontent.com") {
 			return errors.New("untrusted redirect")
 		}
