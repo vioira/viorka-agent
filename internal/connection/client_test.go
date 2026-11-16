@@ -6,6 +6,8 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"github.com/vioira/viorka-agent/internal/config"
 	"github.com/vioira/viorka-agent/internal/state"
 	"net/http"
@@ -16,6 +18,43 @@ import (
 	"testing"
 	"time"
 )
+
+func TestPostPanelErrorCodes(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, reason string
+		status             int
+	}{
+		{"identity conflict", `{"code":"conflict","message":"secret"}`, "conflict", 409},
+		{"engine conflict", `{"code":"engine_conflict","message":"secret"}`, "engine_conflict", 409},
+		{"unauthorized", `{"code":"unauthorized"}`, "unauthorized", 401},
+		{"forbidden", `{"code":"engine_forbidden"}`, "engine_forbidden", 403},
+		{"empty authentication response", "", "identity_rejected", 401},
+		{"proxy HTML", "<html>secret</html>", "http_error", 502},
+		{"missing code", `{"message":"secret"}`, "http_error", 409},
+		{"invalid code type", `{"code":409}`, "http_error", 409},
+		{"control character", `{"code":"conflict\nsecret"}`, "http_error", 409},
+		{"long code", `{"code":"` + strings.Repeat("x", 65) + `"}`, "http_error", 409},
+		{"oversized body", `{"code":"conflict","message":"` + strings.Repeat("x", 16384) + `"}`, "http_error", 409},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			c := &Client{cfg: config.Local{PanelURL: server.URL}, http: server.Client()}
+			defer c.Close()
+			err := c.post(context.Background(), "/api/v1/agents/enroll", struct{}{}, nil)
+			want := fmt.Sprintf("Panel connection: authentication: %s (HTTP %d)", tc.reason, tc.status)
+			if err == nil || err.Error() != want {
+				t.Fatalf("got %v, want %s", err, want)
+			}
+			if errors.Is(err, ErrIdentityRejected) != (tc.status == 401 || tc.status == 403) {
+				t.Fatalf("identity rejection classification changed: %v", err)
+			}
+		})
+	}
+}
 
 func TestTLSVerificationAndChallengeBinding(t *testing.T) {
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

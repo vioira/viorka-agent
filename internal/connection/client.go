@@ -110,11 +110,22 @@ func (c *Client) post(ctx context.Context, path string, v, out any) error {
 		return err
 	}
 	defer res.Body.Close()
-	if res.StatusCode == 401 || res.StatusCode == 403 {
-		return &connectionFailure{phase: "authentication", status: res.StatusCode, cause: ErrIdentityRejected}
-	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return &connectionFailure{phase: "authentication", reason: "http_error", status: res.StatusCode}
+		failure := &connectionFailure{phase: "authentication", reason: "http_error", status: res.StatusCode}
+		if res.StatusCode == 401 || res.StatusCode == 403 {
+			failure.reason, failure.cause = "identity_rejected", ErrIdentityRejected
+		}
+		// Only expose the bounded error code, never the remote message/body.
+		body, readErr := io.ReadAll(io.LimitReader(res.Body, 16385))
+		var response struct {
+			Code string `json:"code"`
+		}
+		if readErr == nil && len(body) <= 16384 && json.Unmarshal(body, &response) == nil &&
+			len(response.Code) > 0 && len(response.Code) <= 64 &&
+			strings.Trim(response.Code, "abcdefghijklmnopqrstuvwxyz0123456789_") == "" {
+			failure.reason = response.Code
+		}
+		return failure
 	}
 	b, err = io.ReadAll(io.LimitReader(res.Body, 16385))
 	if err != nil {
