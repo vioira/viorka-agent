@@ -46,7 +46,7 @@ func TestPostPanelErrorCodes(t *testing.T) {
 			defer c.Close()
 			err := c.post(context.Background(), "/api/v1/agents/enroll", struct{}{}, nil)
 			want := fmt.Sprintf("Panel connection: authentication: %s (HTTP %d)", tc.reason, tc.status)
-			if err == nil || err.Error() != want {
+			if err == nil || !strings.HasPrefix(err.Error(), want+"：") || strings.Contains(err.Error(), "secret") {
 				t.Fatalf("got %v, want %s", err, want)
 			}
 			if errors.Is(err, ErrIdentityRejected) != (tc.status == 401 || tc.status == 403) {

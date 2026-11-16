@@ -215,7 +215,13 @@ func ID() string {
 	}
 	return hex.EncodeToString(b[:])
 }
-func (c *Client) Run(ctx context.Context) (runErr error) {
+func (c *Client) Run(ctx context.Context) error {
+	return c.RunWithRetry(ctx, nil)
+}
+
+// RunWithRetry lets a foreground user decide transient retries. A nil callback
+// preserves automatic backoff for unattended services.
+func (c *Client) RunWithRetry(ctx context.Context, retry func(error) bool) (runErr error) {
 	c.lifecycle().Info("Agent starting; connecting to Panel")
 	defer func() {
 		if runErr != nil {
@@ -261,6 +267,12 @@ func (c *Client) Run(ctx context.Context) (runErr error) {
 		if errors.As(err, &certErr) {
 			c.logConnectionEnd(err, time.Since(started), 0, true)
 			return fmt.Errorf("Panel TLS verification failed: %w", err)
+		}
+		rotation := errors.Is(err, errSessionRotation) || errors.Is(err, errSessionChanged)
+		if retry != nil && !rotation {
+			if !transientConnectionError(err) || !retry(err) {
+				return err
+			}
 		}
 		if time.Since(started) > time.Minute {
 			delay = time.Second

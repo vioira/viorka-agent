@@ -16,6 +16,39 @@ import (
 
 var errSessionRotation = errors.New("scheduled session rotation")
 
+// EnrollmentRetry separates credential replacement from safe transient retries.
+// Session authentication failures must never trigger enrollment automatically.
+func EnrollmentRetry(err error) (retry, replaceToken bool) {
+	if errors.Is(err, context.Canceled) {
+		return false, false
+	}
+	var failure *connectionFailure
+	if errors.As(err, &failure) {
+		if failure.reason == "registration_limit_reached" ||
+			(failure.status == 401 && errors.Is(err, ErrIdentityRejected)) {
+			return true, true
+		}
+	}
+	return transientConnectionError(err), false
+}
+
+func transientConnectionError(err error) bool {
+	var cert *tls.CertificateVerificationError
+	if errors.Is(err, context.Canceled) || errors.Is(err, ErrIdentityRejected) || errors.As(err, &cert) {
+		return false
+	}
+	var failure *connectionFailure
+	if errors.As(err, &failure) && failure.status != 0 {
+		return failure.status == 408 || failure.status == 429 || failure.status >= 500 && failure.status <= 599
+	}
+	switch connectionReason(err) {
+	case "dns_failed", "timeout", "connection_refused", "connection_reset", "network_error", "eof", "remote_close":
+		return true
+	default:
+		return false
+	}
+}
+
 type connectionFailure struct {
 	phase, reason string
 	status        int
@@ -23,10 +56,63 @@ type connectionFailure struct {
 }
 
 func (e *connectionFailure) Error() string {
-	if e.status != 0 {
-		return fmt.Sprintf("Panel connection: %s: %s (HTTP %d)", e.phase, e.reason, e.status)
+	reason := e.reason
+	if reason == "" {
+		reason = connectionReason(e.cause)
 	}
-	return "Panel connection: " + e.phase + ": " + e.reason
+	detail := connectionReasonChinese(reason)
+	if e.status != 0 {
+		return fmt.Sprintf("Panel connection: %s: %s (HTTP %d)：%s", e.phase, reason, e.status, detail)
+	}
+	return "Panel connection: " + e.phase + ": " + reason + "：" + detail
+}
+
+// Use local descriptions so remote error messages cannot expose credentials.
+func connectionReasonChinese(reason string) string {
+	switch reason {
+	case "engine_conflict":
+		return "引擎恢复冲突：引擎 ID 已绑定其他节点、引擎名称不一致，或目标节点已有同名引擎"
+	case "conflict":
+		return "身份或资源状态冲突；注册时表示该公钥已绑定节点"
+	case "unauthorized", "identity_rejected":
+		return "身份认证失败：注册令牌或节点凭证无效、过期或已被撤销"
+	case "engine_forbidden":
+		return "没有目标节点的引擎管理权限"
+	case "registration_limit_reached":
+		return "批量注册令牌配额已用尽"
+	case "invalid_request", "engine_invalid":
+		return "请求参数无效"
+	case "not_found":
+		return "请求的节点或资源不存在"
+	case "unavailable":
+		return "Panel 服务暂不可用"
+	case "rate_limited":
+		return "请求过于频繁，请稍后重试"
+	case "http_error":
+		return "Panel 或反向代理返回错误，响应中没有可识别的错误码"
+	case "tls_verification_failed":
+		return "Panel TLS 证书校验失败"
+	case "dns_failed":
+		return "Panel 域名解析失败"
+	case "timeout":
+		return "连接或请求超时"
+	case "connection_refused":
+		return "Panel 拒绝连接"
+	case "connection_reset", "eof", "remote_close":
+		return "与 Panel 的连接已断开"
+	case "network_error":
+		return "连接 Panel 时发生网络错误"
+	case "invalid_response":
+		return "Panel 响应格式无效"
+	case "response_too_large":
+		return "Panel 响应超过大小限制"
+	case "session_rotation", "session_changed":
+		return "会话已更新，正在重新连接"
+	case "canceled":
+		return "连接操作已取消"
+	default:
+		return "请根据错误码定位具体原因"
+	}
 }
 func (e *connectionFailure) Unwrap() error { return e.cause }
 func connectionError(phase, reason string, err error) error {
@@ -97,6 +183,7 @@ func (c *Client) logConnectionEnd(err error, elapsed, retry time.Duration, termi
 		message = "Panel connection stopped"
 	}
 	attrs := []slog.Attr{slog.String("phase", phase), slog.String("reason", reason), slog.Float64("attempt_seconds", elapsed.Seconds()), slog.Float64("retry_seconds", retry.Seconds())}
+	attrs = append(attrs, slog.String("原因", connectionReasonChinese(reason)))
 	if code := websocket.CloseStatus(err); code != -1 {
 		attrs = append(attrs, slog.Int("close_code", int(code)))
 	}

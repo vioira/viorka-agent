@@ -16,6 +16,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +54,110 @@ func TestDisconnectClassificationAndRedaction(t *testing.T) {
 			}
 			if tc.reason == "identity_rejected" && !strings.Contains(got, "http_status=403") {
 				t.Fatal(got)
+			}
+		})
+	}
+}
+
+func TestConnectionFailureChineseReason(t *testing.T) {
+	for _, tc := range []struct{ code, detail string }{
+		{"engine_conflict", "引擎恢复冲突"},
+		{"conflict", "该公钥已绑定节点"},
+		{"unauthorized", "身份认证失败"},
+		{"http_error", "响应中没有可识别的错误码"},
+		{"future_error", "请根据错误码定位具体原因"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			err := &connectionFailure{phase: "authentication", reason: tc.code, status: 409}
+			if got := err.Error(); !strings.Contains(got, tc.detail) || !strings.Contains(got, tc.code+" (HTTP 409)") {
+				t.Fatal(got)
+			}
+			var output bytes.Buffer
+			c := &Client{logger: slog.New(slog.NewTextHandler(&output, nil))}
+			c.logConnectionEnd(err, time.Second, time.Second, true)
+			if got := output.String(); !strings.Contains(got, tc.detail) || !strings.Contains(got, "reason="+tc.code) {
+				t.Fatal(got)
+			}
+		})
+	}
+}
+
+func TestEnrollmentRetryPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		err            error
+		retry, replace bool
+	}{
+		{"unauthorized", &connectionFailure{status: 401, cause: ErrIdentityRejected}, true, true},
+		{"quota", &connectionFailure{status: 409, reason: "registration_limit_reached"}, true, true},
+		{"forbidden", &connectionFailure{status: 403, cause: ErrIdentityRejected}, false, false},
+		{"engine", &connectionFailure{status: 409, reason: "engine_conflict"}, false, false},
+		{"identity", &connectionFailure{status: 409, reason: "conflict"}, false, false},
+		{"invalid", &connectionFailure{status: 400}, false, false},
+		{"rate limit", &connectionFailure{status: 429}, true, false},
+		{"gateway", &connectionFailure{status: 502}, true, false},
+		{"DNS", &net.DNSError{Err: "lookup failed"}, true, false},
+		{"TLS", &tls.CertificateVerificationError{Err: errors.New("invalid certificate")}, false, false},
+		{"timeout", context.DeadlineExceeded, true, false},
+		{"cancel", context.Canceled, false, false},
+		{"local state", os.ErrPermission, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			retry, replace := EnrollmentRetry(tc.err)
+			if retry != tc.retry || replace != tc.replace {
+				t.Fatalf("got %v/%v, want %v/%v", retry, replace, tc.retry, tc.replace)
+			}
+		})
+	}
+}
+
+func TestRunInteractiveRetry(t *testing.T) {
+	for _, mode := range []string{"retry", "terminate", "unattended"} {
+		t.Run(mode, func(t *testing.T) {
+			requests, prompts := 0, 0
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if requests == 1 {
+					w.WriteHeader(502)
+				} else {
+					w.WriteHeader(403)
+				}
+			}))
+			defer server.Close()
+			store, err := state.Open(filepath.Join(t.TempDir(), "state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			id, err := store.Identity(server.URL, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id.NodeID = "node"
+			if err = store.Write("identity.json", id); err != nil {
+				t.Fatal(err)
+			}
+			c := &Client{cfg: config.Local{PanelURL: server.URL}, store: store, http: server.Client()}
+			defer c.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var retry func(error) bool
+			if mode != "unattended" {
+				retry = func(error) bool { prompts++; return mode == "retry" }
+			}
+			err = c.RunWithRetry(ctx, retry)
+			wantRequests, wantPrompts := 2, 1
+			if mode == "terminate" {
+				wantRequests = 1
+			}
+			if mode == "unattended" {
+				wantPrompts = 0
+			}
+			if err == nil || ctx.Err() != nil || requests != wantRequests || prompts != wantPrompts {
+				t.Fatalf("err=%v requests=%d prompts=%d", err, requests, prompts)
+			}
+			if mode != "terminate" && !errors.Is(err, ErrIdentityRejected) {
+				t.Fatalf("identity rejection should stop without prompting: %v", err)
 			}
 		})
 	}
