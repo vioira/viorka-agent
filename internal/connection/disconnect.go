@@ -16,39 +16,6 @@ import (
 
 var errSessionRotation = errors.New("scheduled session rotation")
 
-// EnrollmentRetry separates credential replacement from safe transient retries.
-// Session authentication failures must never trigger enrollment automatically.
-func EnrollmentRetry(err error) (retry, replaceToken bool) {
-	if errors.Is(err, context.Canceled) {
-		return false, false
-	}
-	var failure *connectionFailure
-	if errors.As(err, &failure) {
-		if failure.reason == "registration_limit_reached" ||
-			(failure.status == 401 && errors.Is(err, ErrIdentityRejected)) {
-			return true, true
-		}
-	}
-	return transientConnectionError(err), false
-}
-
-func transientConnectionError(err error) bool {
-	var cert *tls.CertificateVerificationError
-	if errors.Is(err, context.Canceled) || errors.Is(err, ErrIdentityRejected) || errors.As(err, &cert) {
-		return false
-	}
-	var failure *connectionFailure
-	if errors.As(err, &failure) && failure.status != 0 {
-		return failure.status == 408 || failure.status == 429 || failure.status >= 500 && failure.status <= 599
-	}
-	switch connectionReason(err) {
-	case "dns_failed", "timeout", "connection_refused", "connection_reset", "network_error", "eof", "remote_close":
-		return true
-	default:
-		return false
-	}
-}
-
 type connectionFailure struct {
 	phase, reason string
 	status        int
@@ -56,15 +23,11 @@ type connectionFailure struct {
 }
 
 func (e *connectionFailure) Error() string {
-	reason := e.reason
-	if reason == "" {
-		reason = connectionReason(e.cause)
-	}
-	detail := connectionReasonChinese(reason)
+	detail := connectionReasonChinese(e.reason)
 	if e.status != 0 {
-		return fmt.Sprintf("Panel connection: %s: %s (HTTP %d)：%s", e.phase, reason, e.status, detail)
+		return fmt.Sprintf("Panel connection: %s: %s (HTTP %d)：%s", e.phase, e.reason, e.status, detail)
 	}
-	return "Panel connection: " + e.phase + ": " + reason + "：" + detail
+	return "Panel connection: " + e.phase + ": " + e.reason + "：" + detail
 }
 
 // Use local descriptions so remote error messages cannot expose credentials.
@@ -86,8 +49,6 @@ func connectionReasonChinese(reason string) string {
 		return "请求的节点或资源不存在"
 	case "unavailable":
 		return "Panel 服务暂不可用"
-	case "rate_limited":
-		return "请求过于频繁，请稍后重试"
 	case "http_error":
 		return "Panel 或反向代理返回错误，响应中没有可识别的错误码"
 	case "tls_verification_failed":

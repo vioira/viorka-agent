@@ -60,7 +60,7 @@ func Main(args []string, out, errOut io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: viorka-agent [version|update-check [--prerelease] [--config PATH]|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH|enroll --config PATH [--token-stdin] [--non-interactive] [--replace-node ID]|register --config PATH [--token-stdin] [--non-interactive] [--name NAME]|run --config PATH [--non-interactive]|help]")
+	fmt.Fprintln(w, "Usage: viorka-agent [version|update-check [--prerelease] [--config PATH]|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH|enroll --config PATH --token-stdin [--replace-node ID]|register --config PATH --token-stdin [--name NAME]|run --config PATH|help]")
 	fmt.Fprintln(w, "M0 supports enrollment, WSS and read-only node.inspect tasks.")
 }
 
@@ -70,7 +70,6 @@ func connect(args []string, out, errOut io.Writer) int {
 	path := flags.String("config", "", "local JSON config (default ~/.viorka-agent/agent.json)")
 	name := flags.String("name", "", "node display name for batch registration; defaults to hostname")
 	replaceNode := flags.String("replace-node", "", "explicitly replace identity for this node; preserves local state")
-	nonInteractive := flags.Bool("non-interactive", false, "disable terminal prompts")
 	tokenStdin := flags.Bool("token-stdin", false, "read enrollment token from standard input")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
@@ -98,57 +97,32 @@ func connect(args []string, out, errOut io.Writer) int {
 	client.SetLogOutput(errOut)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	var prompt *terminalPrompt
-	runFailureShown := false
-	if !*nonInteractive {
-		var closeTerminal func()
-		prompt, closeTerminal = openTerminal(ctx)
-		defer closeTerminal()
-	}
 	if args[0] == "enroll" || args[0] == "register" {
-		var token string
-		if *tokenStdin {
-			var b []byte
-			b, err = io.ReadAll(io.LimitReader(os.Stdin, 130))
-			token = strings.TrimSpace(string(b))
-		} else if prompt != nil {
-			token, err = prompt.Token()
-		} else {
-			fmt.Fprintln(errOut, "没有交互终端，请使用 --token-stdin 提供注册令牌")
+		if !*tokenStdin {
+			fmt.Fprintln(errOut, "enroll/register requires --token-stdin")
 			return 2
 		}
+		var b []byte
+		b, err = io.ReadAll(io.LimitReader(os.Stdin, 130))
 		if err == nil {
-			var input enrollmentPrompt
-			if prompt != nil {
-				input = prompt
-			}
-			err = enrollWithRetry(ctx, token, func(ctx context.Context, token string) error {
+			token := strings.TrimSpace(string(b))
+			if len(token) != 64 {
+				err = fmt.Errorf("invalid enrollment token length")
+			} else {
 				if args[0] == "register" {
-					return client.Register(ctx, token, *name)
+					err = client.Register(ctx, token, *name)
+				} else if *replaceNode != "" {
+					err = client.Reenroll(ctx, token, *replaceNode)
+				} else {
+					err = client.Enroll(ctx, token)
 				}
-				if *replaceNode != "" {
-					return client.Reenroll(ctx, token, *replaceNode)
-				}
-				return client.Enroll(ctx, token)
-			}, input, errOut)
-			if err != nil {
-				return 1 // enrollWithRetry already printed the failure.
 			}
 		}
-	} else if prompt != nil {
-		err = client.RunWithRetry(ctx, func(err error) bool {
-			fmt.Fprintln(errOut, err)
-			retry := prompt.Retry(false)
-			runFailureShown = !retry
-			return retry
-		})
 	} else {
 		err = client.Run(ctx)
 	}
 	if err != nil {
-		if !runFailureShown {
-			fmt.Fprintln(errOut, err)
-		}
+		fmt.Fprintln(errOut, err)
 		return 1
 	}
 	if args[0] == "enroll" || args[0] == "register" {
