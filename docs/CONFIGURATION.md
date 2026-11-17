@@ -7,7 +7,7 @@ cd viorka-agent
 go run ./cmd/viorka-agent config-check --config examples/agent.example.json
 ```
 
-`config-check`、`enroll` 和 `run` 默认读取当前用户的 `~/.viorka-agent/agent.json`；可用 `--config PATH` 覆盖。安装器同时将二进制放在该目录，状态保存于 `~/.viorka-agent/state`。JSON 中的路径必须写成实际路径，`~` 不会自动展开。
+`config-check`、`register` 和 `run` 默认读取当前用户的 `~/.viorka-agent/agent.json`；可用 `--config PATH` 覆盖。安装器同时将二进制放在该目录，状态保存于 `~/.viorka-agent/state`。JSON 中的路径必须写成实际路径，`~` 不会自动展开。
 
 初始配置 JSON（以下为 root 安装示例）：
 
@@ -22,7 +22,7 @@ go run ./cmd/viorka-agent config-check --config examples/agent.example.json
 
 当前 `config-check` 只检验 JSON 结构与 HTTPS base URL 等基础字段；**不会连接服务器或启动 Agent**。文件内故意不放持久注册凭证。
 
-可选 `ca_file` 指向私有 CA PEM，仍验证主机名；`enroll/run` 用法见 [GETTING_STARTED.md](GETTING_STARTED.md)。
+可选 `ca_file` 指向私有 CA PEM，仍验证主机名；`register/run` 用法见 [GETTING_STARTED.md](GETTING_STARTED.md)。
 
 ## 2. Agent 配置分层
 

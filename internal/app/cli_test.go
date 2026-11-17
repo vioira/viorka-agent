@@ -78,10 +78,20 @@ func TestUpdateCheckInvalidArguments(t *testing.T) {
 }
 
 func TestBatchRegisterRejectsIncompatibleFlags(t *testing.T) {
-	for _, args := range [][]string{{"register", "--replace-node", "node"}, {"enroll", "--name", "node"}, {"run", "--name", "node"}, {"run", "--token-stdin"}, {"register", "extra"}} {
+	for _, args := range [][]string{{"register", "--replace-node", "node", "--name", "name"}, {"run", "--name", "node"}, {"run", "--token-stdin"}, {"register", "extra"}} {
 		var out, errOut bytes.Buffer
 		if code := Main(args, &out, &errOut); code != 2 || out.Len() != 0 {
 			t.Fatalf("%v: code=%d, output=%s", args, code, out.String())
 		}
+	}
+}
+
+func TestEnrollCommandRemoved(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Main([]string{"enroll"}, &out, &errOut); code != 2 {
+		t.Fatalf("removed command returned %d", code)
+	}
+	if !strings.Contains(errOut.String(), "unknown command: enroll") {
+		t.Fatal(errOut.String())
 	}
 }

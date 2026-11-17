@@ -25,9 +25,9 @@ Agent <===== WSS/TLS session =======> Panel
 
 ### 首次注册失败后的恢复
 
-首次注册请求前会保存密钥；`identity.json` 存在不代表注册完成。HTTP 502 等失败可能留下 `node_id` 为空的待注册身份。安装器重试会保留原配置和密钥，使用提供的令牌继续注册；已有非空 Node ID 的身份仍走更新流程，不自动重新注册。此修复只涉及安装脚本，可配合原有 `enroll --token-stdin` 二进制使用。
+首次注册请求前会保存密钥；`identity.json` 存在不代表注册完成。HTTP 502 等失败可能留下 `node_id` 为空的待注册身份。安装器重试会保留原配置和密钥，使用提供的令牌继续注册；已有非空 Node ID 的身份仍走更新流程，不自动重新注册。安装器与 Agent 二进制须使用支持统一 `register` 入口的版本。
 
-如旧安装器已创建服务并反复报 `enrollment incomplete`，先停止 Agent 服务以释放状态目录锁（不会停止代理服务），在原目录执行 `./viorka-agent enroll --config agent.json --token-stdin`，通过标准输入提供有效令牌，成功后启动 Agent 服务。不要删除身份文件或使用 `--reenroll-node` 来修复首次注册。502 的根因需结合 Panel 和反向代理日志排查；若原令牌已失效或被消费，应先在 Panel 核对注册结果，再按其恢复流程处理。
+如旧安装器已创建服务并反复报 `enrollment incomplete`，先停止 Agent 服务以释放状态目录锁（不会停止代理服务），在原目录执行 `./viorka-agent register --config agent.json --token-stdin`，通过标准输入提供有效令牌，成功后启动 Agent 服务。不要删除身份文件或使用 `--reenroll-node` 来修复首次注册。502 的根因需结合 Panel 和反向代理日志排查；若原令牌已失效或被消费，应先在 Panel 核对注册结果，再按其恢复流程处理。
 
 ## 2. 不允许的做法
 
@@ -53,7 +53,7 @@ Agent <===== WSS/TLS session =======> Panel
 
 ## 显式重新注册（保留节点历史）
 
-Panel 管理员确认重置离线或禁用节点后，沿用原节点 ID 并签发新 token。安装命令增加 `--reenroll-node=ID`，安装器保留原配置，停止已验证归属的 Agent 服务，再调用 `enroll --token-stdin --replace-node=ID`，成功后启动服务。此操作不触碰代理服务或任务 Journal。外部 supervisor/前台 Agent 必须先停止；状态目录锁拒绝并发执行。
+Panel 管理员确认重置离线或禁用节点后，沿用原节点 ID 并签发新 token。安装命令增加 `--reenroll-node=ID`，安装器保留原配置，停止已验证归属的 Agent 服务，再调用 `register --token-stdin --replace-node=ID`，成功后启动服务。此操作不触碰代理服务或任务 Journal。外部 supervisor/前台 Agent 必须先停止；状态目录锁拒绝并发执行。
 
 CLI 校验本地身份属于该 Panel 和目标节点，创建新的 Ed25519 密钥，保存在 0600 的 `reenrollment.json`（只存 token 哈希，不存原 token）。同一 token 重试复用该密钥，支持服务器已消费 token 但响应丢失的恢复。原身份在响应节点 ID 和协议验证成功后才被原子替换；失败保留原文件和重试密钥。原凭证已由 Panel 撤销，保留文件不表示还能连接。新 token 可重新开始失败的注册。网络错误或吊销不会自动触发此流程。
 
@@ -129,10 +129,10 @@ viorka-agent run --config /absolute/path/agent.json
 
 `--name` 可选，为 Panel 显示名称，最多 128 UTF-8 字节；省略时 Panel 使用令牌前缀加本机 hostname。它与本地配置的 `node_name` 启动标签独立。Panel 管理员之后可在节点详情修改显示名称，不会改本机 hostname、身份或代理配置。
 
-`register` 使用 `POST /api/v1/agents/register`，传 `token`、`public_key`、`protocol_version: "1.0"`、`hostname` 和可选 `name`。它不接受旧引擎恢复数据，也不自动替换已注册身份。安装器拒绝 `--registration` 与 `--reenroll-node` 或明文 `--token` 组合；共享令牌只经交互或标准输入传递。已有单节点 `enroll`、显式换钥和引擎恢复保留。
+`register` 使用 `POST /api/v1/agents/register`，传 `token`、`public_key`、`protocol_version: "1.0"`、`hostname` 和可选 `name`。Panel 自动识别单节点或批量令牌：单节点令牌绑定预建节点并支持引擎恢复；批量令牌创建新节点，拒绝引擎恢复数据。它不自动替换已注册身份。安装器拒绝 `--registration` 与 `--reenroll-node` 或明文 `--token` 组合；共享令牌只经交互或标准输入传递。单节点注册同样使用 `register`；显式换钥使用 `register --replace-node`，不再提供 `enroll` 命令。
 
 请求前落盘密钥，响应丢失或进程重启后复用原密钥；有效令牌下同一公钥重试不重复创建节点或扣配额。过期/撤销令牌不能用于恢复响应，禁用/删除节点也不会被重新创建。需管理员核对注册记录再走显式恢复流程，不能删掉身份文件盲目重试。不要把状态目录或私钥放进可克隆镜像。
 
 注册成功后不保存批量令牌。后续仍以各自私钥签名 Challenge、使用短期 Session 和 WSS；令牌撤销不影响已注册节点。Panel 快照恢复会撤销所有批量令牌，删除节点不返还配额。
 
-兼容边界：本次新增 REST bootstrap，不变更 Envelope 1.0 或能力协商。先发布支持 `register` 的 Agent 二进制和支持 `--registration` 的安装脚本，再启用配套 Panel/Web。旧二进制会拒绝新命令，旧单节点注册继续使用；本地源码和测试不代表制品已发布。
+兼容边界：本次新增 REST bootstrap，不变更 Envelope 1.0 或能力协商。先发布支持 `register` 的 Agent 二进制和支持 `--registration` 的安装脚本，再启用配套 Panel/Web。统一入口需要配套新版 Panel 和 Agent；本地源码和测试不代表制品已发布。

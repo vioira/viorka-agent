@@ -49,7 +49,7 @@ agent identity rejected; contact administrator
     printf '备份位置：%s\n' "$backup")
 3. 同一面板下重新执行新节点的有效安装命令；跨面板需另外核对配置。
 以日志 Panel connected; session established 和面板新节点在线为成功依据。
-详细步骤：docs/ENROLLMENT.md
+详细步骤：docs/REGISTRATION.md
 HELP
     }
     render_service() {
@@ -366,7 +366,7 @@ RC
             case "$mode" in *[2367][0-7]|*[0-7][2367]) fail '已有安装不能允许组或其他用户写入。' ;; esac
         done
         if grep -Eq '"node_id"[[:space:]]*:[[:space:]]*""' state/identity.json; then
-            fail '注册尚未完成，请先使用原配置和密钥完成 enroll，再安装服务。'
+            fail '注册尚未完成，请先使用原配置和密钥完成 register，再安装服务。'
         fi
         ./viorka-agent config-check --config agent.json
         install_service
@@ -619,12 +619,10 @@ RC
             printf '\n' >&3
         fi
         validate_token
-        if [ "$registration" -eq 1 ]; then
-            printf '%s' "$enrollment_token" | ./viorka-agent register --config agent.json --token-stdin
-        elif [ -n "$reenroll_node" ]; then
-            printf '%s' "$enrollment_token" | ./viorka-agent enroll --config agent.json --token-stdin --replace-node="$reenroll_node"
+        if [ -n "$reenroll_node" ]; then
+            printf '%s' "$enrollment_token" | ./viorka-agent register --config agent.json --token-stdin --replace-node="$reenroll_node"
         else
-            printf '%s' "$enrollment_token" | ./viorka-agent enroll --config agent.json --token-stdin
+            printf '%s' "$enrollment_token" | ./viorka-agent register --config agent.json --token-stdin
         fi
         unset enrollment_token
         if [ "$token_supplied" -eq 0 ]; then tty_state=; exec 3>&-; fi

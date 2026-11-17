@@ -11,7 +11,7 @@
 ### 按任务查阅的文档
 
 - 组件边界：`docs/AGENT_ARCHITECTURE.md`、`docs/DEVELOPMENT.md`。
-- 本地配置：`docs/CONFIGURATION.md`；注册认证：`docs/ENROLLMENT.md`。
+- 本地配置：`docs/CONFIGURATION.md`；注册认证：`docs/REGISTRATION.md`。
 - 代理引擎：`docs/RUNTIMES.md`；威胁模型：`docs/SECURITY.md`。
 - 公共协议：**以 Panel 仓库** `viorka/api/agent/v1` 的打版本 Schema 为权威，本地 `protocol/v1` 是实现/生成产物；不要把两个版本各自演化成不同标准。
 

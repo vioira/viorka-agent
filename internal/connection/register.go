@@ -10,11 +10,12 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	managed "github.com/vioira/viorka-agent/internal/runtime"
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
 )
 
-// Register creates a new Panel node using a batch registration token. It never
-// replaces an established identity and never performs engine recovery.
+// Register accepts single-node and batch tokens. Panel selects the binding flow.
+// Existing local identities require explicit replacement through Reenroll.
 func (c *Client) Register(ctx context.Context, token, name string) error {
 	name = strings.TrimSpace(name)
 	if len(token) != 64 || len(name) > 128 || !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
@@ -32,13 +33,18 @@ func (c *Client) Register(ctx context.Context, token, name string) error {
 		return fmt.Errorf("read hostname: %w", err)
 	}
 	key := ed25519.PrivateKey(id.PrivateKey).Public().(ed25519.PublicKey)
+	engines, err := managed.NewManaged(c.log()).RecoverySnapshots(ctx)
+	if err != nil {
+		return err
+	}
 	request := struct {
-		Token           string `json:"token"`
-		PublicKey       string `json:"public_key"`
-		ProtocolVersion string `json:"protocol_version"`
-		Name            string `json:"name,omitempty"`
-		Hostname        string `json:"hostname,omitempty"`
-	}{token, base64.StdEncoding.EncodeToString(key), v1.Version, name, hostname}
+		Token           string               `json:"token"`
+		PublicKey       string               `json:"public_key"`
+		ProtocolVersion string               `json:"protocol_version"`
+		Name            string               `json:"name,omitempty"`
+		Hostname        string               `json:"hostname,omitempty"`
+		Engines         []*v1.EngineRecovery `json:"engines,omitempty"`
+	}{token, base64.StdEncoding.EncodeToString(key), v1.Version, name, hostname, engines}
 	var result struct {
 		NodeID          string `json:"node_id"`
 		ProtocolVersion string `json:"protocol_version"`

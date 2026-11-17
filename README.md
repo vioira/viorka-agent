@@ -71,7 +71,7 @@ viorka-agent/
 ## 文档
 
 - [Agent 架构](docs/AGENT_ARCHITECTURE.md)
-- [节点注册与身份](docs/ENROLLMENT.md)
+- [节点注册与身份](docs/REGISTRATION.md)
 - [配置与兼容](docs/CONFIGURATION.md)
 - [引擎适配接口](docs/RUNTIMES.md)
 - [安全和权限](docs/SECURITY.md)

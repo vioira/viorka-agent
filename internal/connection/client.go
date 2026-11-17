@@ -139,38 +139,6 @@ func (c *Client) post(ctx context.Context, path string, v, out any) error {
 	}
 	return nil
 }
-func (c *Client) Enroll(ctx context.Context, token string) error {
-	id, err := c.store.Identity(c.cfg.PanelURL, true)
-	if err != nil {
-		return err
-	}
-	if id.NodeID != "" {
-		return fmt.Errorf("already enrolled; existing identity preserved")
-	}
-	key := ed25519.PrivateKey(id.PrivateKey).Public().(ed25519.PublicKey)
-	var result struct {
-		NodeID          string `json:"node_id"`
-		ProtocolVersion string `json:"protocol_version"`
-	}
-	engines, err := managed.NewManaged(c.log()).RecoverySnapshots(ctx)
-	if err != nil {
-		return err
-	}
-	request := struct {
-		Token           string               `json:"token"`
-		PublicKey       string               `json:"public_key"`
-		ProtocolVersion string               `json:"protocol_version"`
-		Engines         []*v1.EngineRecovery `json:"engines,omitempty"`
-	}{token, base64.StdEncoding.EncodeToString(key), v1.Version, engines}
-	if err = c.post(ctx, "/api/v1/agents/enroll", request, &result); err != nil {
-		return err
-	}
-	if result.NodeID == "" || len(result.NodeID) > 128 || result.ProtocolVersion != v1.Version {
-		return fmt.Errorf("invalid enrollment response")
-	}
-	id.NodeID = result.NodeID
-	return c.store.Write("identity.json", id)
-}
 func (c *Client) credentials(ctx context.Context, id state.Identity) (sessionCredential, error) {
 	binding := sha256.Sum256(append([]byte(c.cfg.PanelURL+"\x00"+id.NodeID+"\x00"), id.PrivateKey...))
 	return c.sessions.Get(ctx, hex.EncodeToString(binding[:]), func(ctx context.Context) (sessionCredential, error) { return c.issueSession(ctx, id) })

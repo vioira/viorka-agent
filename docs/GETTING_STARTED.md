@@ -1,6 +1,6 @@
 # Agent 入门指南
 
-已实现 `enroll --config PATH --token-stdin`、`run --config PATH`：Ed25519 本地身份、HTTPS challenge、WSS、心跳、退避重连和只读 `node.inspect`。`doctor` 不连接 Panel，明确报告 `not-checked`。
+已实现 `register --config PATH --token-stdin`、`run --config PATH`：Ed25519 本地身份、HTTPS challenge、WSS、心跳、退避重连和只读 `node.inspect`。`doctor` 不连接 Panel，明确报告 `not-checked`。
 
 Linux 用户可直接使用 Panel 生成的一行安装命令，命令携带一次性令牌，执行后自动注册；省略 `--token` 时可隐藏输入。安装器参数、发布前提和重启方式见 [安装说明](../packaging/README.md)。本地源码开发仍可使用下述命令。
 
@@ -9,7 +9,7 @@ Linux 用户可直接使用 Panel 生成的一行安装命令，命令携带一�
 ```sh
 go build -o /tmp/viorka-agent ./cmd/viorka-agent
 /tmp/viorka-agent config-check --config /absolute/path/agent.json
-/tmp/viorka-agent enroll --config /absolute/path/agent.json --token-stdin
+/tmp/viorka-agent register --config /absolute/path/agent.json --token-stdin
 /tmp/viorka-agent run --config /absolute/path/agent.json
 ```
 

@@ -14,7 +14,7 @@ import (
 	"github.com/vioira/viorka-agent/internal/state"
 )
 
-func TestEnrollRetriesPendingIdentityAfter502(t *testing.T) {
+func TestRegisterRetriesPendingIdentityAfter502(t *testing.T) {
 	var keys []string
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request map[string]string
@@ -35,7 +35,7 @@ func TestEnrollRetriesPendingIdentityAfter502(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &Client{cfg: config.Local{PanelURL: server.URL}, store: store, http: server.Client()}
-	if err = c.Enroll(context.Background(), strings.Repeat("a", 64)); err == nil || !strings.Contains(err.Error(), "502") {
+	if err = c.Register(context.Background(), strings.Repeat("a", 64), ""); err == nil || !strings.Contains(err.Error(), "502") {
 		t.Fatalf("expected HTTP 502, got %v", err)
 	}
 	pending, err := store.Identity(server.URL, false)
@@ -50,14 +50,14 @@ func TestEnrollRetriesPendingIdentityAfter502(t *testing.T) {
 	}
 	defer store.Close()
 	c.store = store
-	if err = c.Enroll(context.Background(), strings.Repeat("a", 64)); err != nil {
+	if err = c.Register(context.Background(), strings.Repeat("a", 64), ""); err != nil {
 		t.Fatal(err)
 	}
 	registered, err := store.Identity(server.URL, false)
 	if err != nil || registered.NodeID != "node" || !bytes.Equal(registered.PrivateKey, pending.PrivateKey) {
 		t.Fatalf("retry did not preserve key and save node: %v", err)
 	}
-	if err = c.Enroll(context.Background(), strings.Repeat("a", 64)); err == nil {
+	if err = c.Register(context.Background(), strings.Repeat("a", 64), ""); err == nil {
 		t.Fatal("completed enrollment must not repeat")
 	}
 	if len(keys) != 2 || keys[0] == "" || keys[0] != keys[1] {

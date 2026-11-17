@@ -84,7 +84,7 @@ Agent 不转发用户的代理业务流量；由 Xray、sing-box、Realm 承担�
 - `protocol/v1` 类型由 Panel Schema 生成，生成文件标注源摘要，发布 tag 尚待固定。
 - `internal/state` 初期可使用文件/受控嵌入数据存储，任务日志有容量限制和原子写入要求。
 
-详见 [RUNTIMES.md](RUNTIMES.md) 和 [ENROLLMENT.md](ENROLLMENT.md)。
+详见 [RUNTIMES.md](RUNTIMES.md) 和 [REGISTRATION.md](REGISTRATION.md)。
 
 ### Panel 重连后的监控补报
 

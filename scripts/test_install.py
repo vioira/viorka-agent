@@ -66,7 +66,7 @@ fi
 printf '%s\\n' "$1" >> calls
 case "$1" in
  config-check) test "$FAILURE" != config ;;
- enroll|register)
+ register)
    token=$(cat)
    test "${#token}" -eq 64
    if [ "$FAILURE" = enroll ]; then
@@ -196,7 +196,7 @@ else:
                 self.assertNotIn(b'--token=', output)
                 self.assertNotIn(b'systemctl', output)
                 self.assertNotIn(b'rc-service', output)
-                self.assertEqual(calls, ["config-check", "register" if registration else "enroll", "run"])
+                self.assertEqual(calls, ["config-check", "register", "run"])
                 config = json.loads((install / "agent.json").read_text())
                 self.assertEqual(config["state_dir"], str(install.resolve() / "state"))
                 self.assertEqual(config["panel_url"], "https://localhost:8143")
@@ -219,7 +219,7 @@ else:
                 if failure == "config":
                     self.assertEqual(calls, ["config-check"])
                 if failure == "enroll":
-                    self.assertEqual(calls, ["config-check", "register" if registration else "enroll"])
+                    self.assertEqual(calls, ["config-check", "register"])
                 if failure in ("checksum", "manifest"):
                     self.assertFalse(list(install.glob(".install-*")))
                     self.assertFalse((install / "viorka-agent").exists())
@@ -291,7 +291,7 @@ else:
                     self.assertIn('安装前检查：检测到 Agent 进程正在运行。'.encode(), result.stdout)
                     self.assertIn('常用命令'.encode(), result.stdout)
                 after_calls = (install / "calls").read_text().splitlines()[len(calls):]
-                expected = ["config-check"] if running else (["config-check", "run"] if before and failure != "enroll" and not reenroll else ["config-check", "enroll", "run"])
+                expected = ["config-check"] if running else (["config-check", "run"] if before and failure != "enroll" and not reenroll else ["config-check", "register", "run"])
                 if replacement:
                     expected = ["config-check"] if choice == "1" else []
                     if choice is None and not retry_omit_url:
@@ -299,7 +299,7 @@ else:
                     elif choice != "1" and not retry_omit_url:
                         self.assertIn("已退出".encode(), result.stderr)
                     if replaced:
-                        expected = ["config-check", "enroll", "run"]
+                        expected = ["config-check", "register", "run"]
                         backups = list(install.glob("retired-node-*"))
                         self.assertEqual(len(backups), 1)
                         self.assertEqual((backups[0] / "state/identity.json").read_bytes(), before)
@@ -313,7 +313,7 @@ else:
                 if retry_failure:
                     expected = ["config-check"] if retry_failure == "config" else []
                     if replacement and retry_failure == "enroll":
-                        expected = ["config-check", "enroll"]
+                        expected = ["config-check", "register"]
                         backups = list(install.glob("retired-node-*"))
                         self.assertEqual(len(backups), 1)
                         self.assertEqual((backups[0] / "state/identity.json").read_bytes(), before)
