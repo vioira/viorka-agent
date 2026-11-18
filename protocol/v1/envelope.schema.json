@@ -1759,6 +1759,9 @@
             "running",
             "stopped"
           ]
+        },
+        "endpoint_backup": {
+          "$ref": "#/$defs/EngineEndpointBackup"
         }
       },
       "required": [
@@ -1952,6 +1955,70 @@
       "required": [
         "day_start",
         "revision"
+      ]
+    },
+    "EnginePublicEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "service_id",
+        "host",
+        "port"
+      ]
+    },
+    "EngineEndpointBackup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "engine_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "name": {
+          "type": "string",
+          "enum": [
+            "sing-box",
+            "xray",
+            "realm"
+          ]
+        },
+        "command_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "endpoints": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/EnginePublicEndpoint"
+          }
+        }
+      },
+      "required": [
+        "engine_id",
+        "name",
+        "command_sha256",
+        "endpoints"
       ]
     }
   }

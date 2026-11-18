@@ -44,6 +44,9 @@ func (m *Managed) RecoverySnapshots(ctx context.Context) ([]*v1.EngineRecovery, 
 			return nil, fmt.Errorf("cannot recover %s: %s", name, result.ErrorCode)
 		}
 		snapshot.Status = result.Status
+		if err := m.loadEndpointBackup(snapshot); err != nil {
+			return nil, fmt.Errorf("read %s published endpoints: %w", name, err)
+		}
 		items = append(items, snapshot)
 	}
 	return items, nil

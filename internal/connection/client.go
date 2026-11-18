@@ -296,7 +296,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	}
 	capabilities := []string{"node.inspect", "node.inventory.v1"}
 	if managed.Supported() {
-		capabilities = append(capabilities, v1.EngineCapability)
+		capabilities = append(capabilities, v1.EngineCapability, v1.EngineEndpointsCapability)
 	}
 	if c.telemetryEnabled {
 		capabilities = append(capabilities, v1.TrafficCapability, v1.DailyTrafficCapability)
@@ -513,6 +513,16 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 				}
 				if handleErr != nil {
 					return connectionError("telemetry_control", "invalid_control", handleErr)
+				}
+				continue
+			}
+			if e.Type == "engine.endpoints" {
+				var b v1.EngineEndpointBackup
+				if !managed.Supported() || e.Revision != nil || e.CorrelationID != "" || v1.Decode(e.Payload, &b) != nil {
+					return errors.New("invalid engine endpoint backup")
+				}
+				if err := managed.NewManaged(c.log()).StoreEndpointBackup(ctx, b); err != nil {
+					c.log().Error("Published endpoints could not be saved", "error", err)
 				}
 				continue
 			}

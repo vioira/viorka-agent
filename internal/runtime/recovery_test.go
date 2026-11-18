@@ -40,6 +40,16 @@ func TestRecoverySnapshotsRetainIdentityAndConfig(t *testing.T) {
 				return nil
 			}
 			c := v1.EngineCommand{Name: name, Version: v1.EngineVersion(name), Revision: 7, RunIntent: "stopped", Services: []*v1.EngineService{}}
+			if name == "realm" {
+				c.Services = []*v1.EngineService{{ID: "svc", Name: "svc", Enabled: true, ListenHost: "127.0.0.1", ListenPort: 5443, TargetHost: "example.org", TargetPort: 443}}
+				data, err := Render(c)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(filepath.Join(dir, configName(name)), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err = os.WriteFile(filepath.Join(dir, name), []byte("fixture"), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -53,12 +63,40 @@ func TestRecoverySnapshotsRetainIdentityAndConfig(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			backup := v1.EngineEndpointBackup{EngineID: "original-engine", Name: name, CommandSHA256: v1.EndpointCommandDigest(c), Endpoints: []*v1.EnginePublicEndpoint{}}
+			if name == "realm" {
+				backup.Endpoints = append(backup.Endpoints, &v1.EnginePublicEndpoint{ServiceID: "svc", Host: "entry.example.org", Port: 15443})
+			}
+			if err := m.StoreEndpointBackup(context.Background(), backup); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "published-endpoints.json")
+			if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
+				t.Fatal("backup permissions", err)
+			}
 			snapshots, err := m.RecoverySnapshots(context.Background())
 			if err != nil || len(snapshots) != 1 {
 				t.Fatal("snapshot", err)
 			}
 			if snapshots[0].EngineID != "original-engine" || snapshots[0].Command.Revision != 7 || snapshots[0].Status != "stopped" {
 				t.Fatal("changed identity/revision")
+			}
+			stored := snapshots[0].EndpointBackup
+			if stored == nil || !stored.Matches("original-engine", c) {
+				t.Fatal("missing backup on registration")
+			}
+			if name == "realm" {
+				if len(stored.Endpoints) != 1 || stored.Endpoints[0].Port != 15443 {
+					t.Fatal("missing public mapping")
+				}
+				backup.Endpoints = []*v1.EnginePublicEndpoint{}
+				if err := m.StoreEndpointBackup(context.Background(), backup); err != nil {
+					t.Fatal(err)
+				}
+				snapshots, err = m.RecoverySnapshots(context.Background())
+				if err != nil || snapshots[0].EndpointBackup == nil || len(snapshots[0].EndpointBackup.Endpoints) != 0 {
+					t.Fatal("cleared endpoint returned", err)
+				}
 			}
 			after, err := os.ReadFile(filepath.Join(dir, "state.json"))
 			if err != nil || string(before) != string(after) {

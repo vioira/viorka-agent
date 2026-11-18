@@ -171,7 +171,7 @@ func ValidateEngineRecovery(items []*EngineRecovery) error {
 				return bad
 			}
 		}
-		if item.Command.Validate("engine.apply") != nil {
+		if item.Command.Validate("engine.apply") != nil || item.EndpointBackup != nil && !item.EndpointBackup.Matches(item.EngineID, *item.Command) {
 			return bad
 		}
 		names[item.Command.Name] = true

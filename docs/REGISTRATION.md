@@ -129,10 +129,12 @@ viorka-agent run --config /absolute/path/agent.json
 
 `--name` 可选，为 Panel 显示名称，最多 128 UTF-8 字节；省略时 Panel 使用令牌前缀加本机 hostname。它与本地配置的 `node_name` 启动标签独立。Panel 管理员之后可在节点详情修改显示名称，不会改本机 hostname、身份或代理配置。
 
-`register` 使用 `POST /api/v1/agents/register`，传 `token`、`public_key`、`protocol_version: "1.0"`、`hostname` 和可选 `name`。Panel 自动识别单节点或批量令牌：单节点令牌绑定预建节点并支持引擎恢复；批量令牌创建新节点，拒绝引擎恢复数据。它不自动替换已注册身份。安装器拒绝 `--registration` 与 `--reenroll-node` 或明文 `--token` 组合；共享令牌只经交互或标准输入传递。单节点注册同样使用 `register`；显式换钥使用 `register --replace-node`，不再提供 `enroll` 命令。
+`register` 使用 `POST /api/v1/agents/register`，传 `token`、`public_key`、`protocol_version: "1.0"`、`hostname` 和可选 `name`。Panel 自动识别单节点或批量令牌：单节点令牌绑定预建节点，批量令牌创建新节点。部署支持批量引擎恢复的 Panel 后，两种注册均可携带本机托管引擎快照。若引擎仍归属其他节点，Panel 返回 409 并回滚注册及配额。旧版 Panel 会拒绝携带快照的批量注册请求。它不自动替换已注册身份。安装器拒绝 `--registration` 与 `--reenroll-node` 或明文 `--token` 组合；共享令牌只经交互或标准输入传递。单节点注册同样使用 `register`；显式换钥使用 `register --replace-node`，不再提供 `enroll` 命令。
 
 请求前落盘密钥，响应丢失或进程重启后复用原密钥；有效令牌下同一公钥重试不重复创建节点或扣配额。过期/撤销令牌不能用于恢复响应，禁用/删除节点也不会被重新创建。需管理员核对注册记录再走显式恢复流程，不能删掉身份文件盲目重试。不要把状态目录或私钥放进可克隆镜像。
 
 注册成功后不保存批量令牌。后续仍以各自私钥签名 Challenge、使用短期 Session 和 WSS；令牌撤销不影响已注册节点。Panel 快照恢复会撤销所有批量令牌，删除节点不返还配额。
 
 兼容边界：本次新增 REST bootstrap，不变更 Envelope 1.0 或能力协商。先发布支持 `register` 的 Agent 二进制和支持 `--registration` 的安装脚本，再启用配套 Panel/Web。统一入口需要配套新版 Panel 和 Agent；本地源码和测试不代表制品已发布。
+
+支持 `engine.endpoints.v1` 的 Agent 在原 Panel 管理连接上定期接收已发布且已确认的服务公网入口，并在托管引擎目录内原子保存 `published-endpoints.json`（0600）。迁移前确认 Agent 日志出现 `Published endpoints saved` 且已同步最后一次入口修改。保留该目录及引擎状态，以新身份注册到支持本协议的 Panel 时，匹配有效配置的入口随引擎一起恢复。
