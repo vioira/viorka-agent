@@ -21,10 +21,12 @@
 在 Panel 添加节点后，复制安装命令到 Linux 节点运行，命令已包含一次性令牌，无需再次输入：
 
 ```sh
-curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- install --url='https://panel.example.com' --token='面板生成的一次性令牌'
+(installer=$(mktemp) && trap 'rm -f "$installer"' 0 && curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' > "$installer" && printf '%s\n' '面板生成的一次性令牌' | sh "$installer" install --url='https://panel.example.com' --token-stdin)
 ```
 
-需要入口脚本和正式 Release 已发布。默认以 root 安装 systemd/OpenRC 后台服务并设置开机自启；无服务管理器时使用 `--foreground` 前台运行。已有安装可省略 `--url` 和 `--token`，更新版本、复用配置和身份并重启后台 Agent；下载失败后可直接重试。详细参数、私有 CA、失败恢复与发布前提见 [安装说明](packaging/README.md)。
+单节点首次注册使用一次性令牌。原节点重新注册的命令另带 `--reenroll-node=ID`，批量注册命令另带 `--registration`。三种命令都含有令牌，请勿分享完整命令。
+
+需要入口脚本和正式 Release 已发布。默认以 root 安装 systemd/OpenRC 后台服务并设置开机自启；无服务管理器时使用 `--foreground` 前台运行。升级已有安装时无需提供面板地址和注册令牌，更新版本、复用配置和身份并重启后台 Agent；下载失败后可直接重试。详细参数、私有 CA、失败恢复与发布前提见 [安装说明](packaging/README.md)。
 
 一键卸载（保留身份、配置和代理服务；需先发布包含卸载入口的脚本）：
 

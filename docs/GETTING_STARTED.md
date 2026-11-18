@@ -2,7 +2,7 @@
 
 已实现 `register --config PATH --token-stdin`、`run --config PATH`：Ed25519 本地身份、HTTPS challenge、WSS、心跳、退避重连和只读 `node.inspect`。`doctor` 不连接 Panel，明确报告 `not-checked`。
 
-Linux 用户可直接使用 Panel 生成的一行安装命令，命令携带一次性令牌，执行后自动注册；省略 `--token` 时可隐藏输入。安装器参数、发布前提和重启方式见 [安装说明](../packaging/README.md)。本地源码开发仍可使用下述命令。
+Linux 用户可直接使用 Panel 生成的一行安装命令，安装器通过 `--token-stdin` 读取命令中的令牌，执行时无需再次粘贴。批量注册命令另带 `--registration`，原节点重新注册命令另带 `--reenroll-node=ID`。安装器参数、发布前提和重启方式见 [安装说明](../packaging/README.md)。本地源码开发仍可使用下述命令。
 
 配置沿用 `examples/agent.example.json`，可选 `ca_file` 用于私有 CA，仍严格验证主机名。Panel URL 必须为 HTTPS Origin，不带路径、query 或凭证，且与 Panel 的 `VIORKA_ORIGIN` 一致。节点显示名称由管理员创建注册令牌时指定。
 
