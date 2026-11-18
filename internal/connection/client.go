@@ -39,7 +39,7 @@ var ErrIdentityRejected = errors.New("agent identity rejected; contact administr
 type Client struct {
 	dailyPersistFailed    bool // owned by the telemetry sender
 	dailyTrafficSupported atomic.Bool
-	dailyPending          func(context.Context) ([]*v1.TelemetryDailyTraffic, error)
+	dailyPending          func(context.Context, bool) ([]*v1.TelemetryDailyTraffic, error)
 	dailyAck              func([]*v1.TelemetryDailyTrafficAck)
 	tcpProbeSupported     atomic.Bool
 	trafficCalibrate      func(context.Context, string, v1.TrafficCalibration, time.Time) (*v1.TrafficCalibration, error)

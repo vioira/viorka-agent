@@ -98,3 +98,55 @@ func TestDailyTrafficTimezoneAndDST(t *testing.T) {
 		t.Fatal(snap.Daily)
 	}
 }
+
+func TestRealtimeDailyUsesLastCheckpoint(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	l, err := OpenTrafficLedger(store, "https://panel.test", "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writes := 0
+	l.write = func(name string, v any) error {
+		writes++
+		return store.Write(name, v)
+	}
+	ctx := context.Background()
+	start := time.Now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
+	observe := func(seconds int) {
+		t.Helper()
+		_, err := l.Observe(start.Add(time.Duration(seconds)*time.Second), "11111111-1111-4111-8111-111111111111", strings.Repeat("a", 64), trafficTestInterface(uint64(seconds), 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe(0)
+	if records, err := l.PendingDaily(ctx, false); err != nil || len(records) != 0 || writes != 0 {
+		t.Fatalf("before first checkpoint: records=%v writes=%d err=%v", records, writes, err)
+	}
+	if err := l.Save(ctx, start, false); err != nil {
+		t.Fatal(err)
+	}
+	for seconds := 2; seconds <= 60; seconds += 2 {
+		observe(seconds)
+		records, err := l.PendingDaily(ctx, false)
+		if err != nil || len(records) != 1 || records[0].RXBytes != "0" || writes != 1 {
+			t.Fatalf("realtime at %ds: records=%v writes=%d err=%v", seconds, records, writes, err)
+		}
+	}
+	if err := l.Save(ctx, start.Add(time.Minute), false); err != nil {
+		t.Fatal(err)
+	}
+	records, err := l.PendingDaily(ctx, false)
+	if err != nil || len(records) != 1 || records[0].RXBytes != "60" || writes != 2 {
+		t.Fatalf("after checkpoint: records=%v writes=%d err=%v", records, writes, err)
+	}
+	observe(62)
+	records, err = l.PendingDaily(ctx, true)
+	if err != nil || len(records) != 1 || records[0].RXBytes != "62" || writes != 3 {
+		t.Fatalf("HTTP flush: records=%v writes=%d err=%v", records, writes, err)
+	}
+}

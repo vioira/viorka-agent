@@ -138,14 +138,19 @@ func (l *TrafficLedger) observeDaily(next *TrafficSnapshot, previous *TrafficSna
 	return nil
 }
 
-// PendingDaily exposes only durable snapshots. A concurrent save can defer this
-// report, but cannot publish a version whose restart baseline is not on disk.
-func (l *TrafficLedger) PendingDaily(ctx context.Context) ([]*v1.TelemetryDailyTraffic, error) {
-	if err := l.Save(ctx, time.Now(), true); err != nil {
-		return nil, err
+// PendingDaily returns durable records. HTTP flushes pending changes first;
+// realtime reports reuse the last checkpoint without filesystem I/O.
+func (l *TrafficLedger) PendingDaily(ctx context.Context, flush bool) ([]*v1.TelemetryDailyTraffic, error) {
+	if flush {
+		if err := l.Save(ctx, time.Now(), true); err != nil {
+			return nil, err
+		}
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.blocked != nil {
+		return nil, l.blocked
+	}
 	records := l.durableDaily
 	if len(records) <= 16 {
 		return cloneDaily(records), nil

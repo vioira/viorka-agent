@@ -38,7 +38,7 @@ func (c *Client) telemetryTransport(node, run string, delivery func() telemetryF
 			}
 		}
 		if c.dailyTrafficSupported.Load() && c.dailyPending != nil {
-			daily, err := c.dailyPending(ctx)
+			daily, err := c.dailyPending(ctx, request.send.attempt.HTTP)
 			if err == nil {
 				c.dailyPersistFailed = false
 				flight = &telemetryFlight{samples: flight.samples, daily: daily}

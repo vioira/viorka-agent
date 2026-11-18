@@ -19,7 +19,7 @@ type telemetryWorkResult struct {
 	err   error
 }
 type telemetrySources struct {
-	dailyPending   func(context.Context) ([]*v1.TelemetryDailyTraffic, error)
+	dailyPending   func(context.Context, bool) ([]*v1.TelemetryDailyTraffic, error)
 	dailyAck       func([]*v1.TelemetryDailyTrafficAck)
 	configureProbe func(*v1.TelemetryTCPProbeSettings)
 	validate       func(v1.TelemetryTrafficSettings) error
