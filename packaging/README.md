@@ -61,16 +61,38 @@ rc-service viorka-agent start
 rc-service viorka-agent stop
 rc-service viorka-agent restart
 rc-service viorka-agent status
-# 日志由 logger 写入系统 syslog，需启用 syslog 服务；常见查看方式：
+```
+
+OpenRC 通过 `logger` 将 Agent 输出交给系统 syslog。当 `/dev/log` 是套接字时，安装器分别检查默认日志文件和内存缓冲区。两者都可读时会列出两组命令。切换日志配置后，旧文件可能仍可读，新日志去向以当前 syslog 配置为准。
+
+查看默认日志文件：
+
+```sh
 grep 'viorka-agent' /var/log/messages | tail -n 100
 tail -f /var/log/messages | grep 'viorka-agent'
-# 若 syslog 使用内存缓冲区：
+```
+
+使用 BusyBox syslog 内存缓冲区时执行以下命令。
+
+```sh
+logread | grep 'viorka-agent' | tail -n 100
 logread -f | grep 'viorka-agent'
 ```
 
+若套接字存在且两个来源都不可读，请查看 syslog 配置中的实际日志去向。若 `/dev/log` 被普通文件、指向非套接字的符号链接或悬空链接等占用，请先检查文件类型、链接目标和 syslog 配置。此时直接启动 syslogd 可能替换现有文件。
+
+仅当 `/dev/log` 路径完全缺失时，安装器才提示启用 syslog 的方式。Agent 可以先启动，启用 syslog 后即可收集新日志。已有 OpenRC `syslog` 服务时，以 root 执行 `rc-service syslog start`。精简 Alpine 容器已有 BusyBox `syslogd`、但缺少 OpenRC `syslog` 服务时，可以以 root 临时启用日志收集。
+
+```sh
+busybox syslogd -O /var/log/messages
+tail -F /var/log/messages | grep 'viorka-agent'
+```
+
+临时启动的 syslogd 随容器停止。启用前未写入的日志无法补回。安装器只检查日志来源，启用 syslog 由用户执行。
+
 旧版 OpenRC 服务在容器 PID 1 未回收已退出的监督进程时，可能卡在 `Stopping Viorka Agent`。用修复版安装脚本执行 `sh install.sh service` 可原地更新匹配的旧模板，然后执行 `rc-service viorka-agent stop`。新版在确认 Agent 与监督进程均已退出、监督进程已清理 PID 文件后输出 `[ ok ]`，最多等待约 30 秒。
 
-安装和更新成功后，安装器会按实际使用的 systemd、OpenRC 或前台模式输出管理及日志命令。开头的进程检查明确标注为「安装前检查」，不代表安装后的状态。OpenRC 日志文件位置取决于系统 syslog 配置。
+安装和更新成功后，安装器会按实际使用的 systemd、OpenRC 或前台模式输出管理及日志提示。开头标有「安装前检查」的进程状态对应安装前的环境。
 
 更新时，安装器先用本地二进制的 `version` 命令显示当前磁盘版本，读取失败会提示并继续。下载前显示目标 Release 标签和架构。后台安装在服务启动或重启并通过状态检查后显示已安装版本。前台安装显示已写入磁盘的版本，已有前台进程需要重启才能加载本次安装的程序。
 

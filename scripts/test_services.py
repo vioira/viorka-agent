@@ -5,6 +5,7 @@ The separate Linux smoke test exercises real service managers.
 """
 import os
 import re
+import socket
 import sys
 from pathlib import Path
 import subprocess
@@ -15,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Services(unittest.TestCase):
-    def exercise(self, manager, failure=''):
+    def exercise(self, manager, failure='', log_mode='missing'):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             home = root / 'root'
@@ -64,6 +65,32 @@ exit 0
                 executable(name, 'exit 0\n')
             service = root / ('etc/systemd/system/viorka-agent.service' if manager == 'systemd' else 'etc/init.d/viorka-agent')
             service.parent.mkdir(parents=True)
+            if manager == 'openrc':
+                log_socket = root / 'dev/log'
+                log_socket.parent.mkdir()
+                messages = root / 'var/log/messages'
+                messages.parent.mkdir(parents=True)
+                if log_mode in ('file', 'memory', 'both', 'custom'):
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as syslog:
+                        syslog.bind(str(log_socket))
+                if log_mode in ('file', 'both', 'busybox'):
+                    messages.write_text('existing log\n')
+                if log_mode in ('syslog-service', 'busybox', 'occupied', 'linked-file', 'dangling'):
+                    (root / 'etc/alpine-release').touch()
+                    executable('busybox', '''printf 'busybox %s\\n' "$*" >> "$CALLS"
+[ "$1" = --list ] && echo syslogd
+''')
+                if log_mode in ('syslog-service', 'linked-file'):
+                    syslog_service = service.with_name('syslog')
+                    syslog_service.touch(mode=0o700)
+                if log_mode == 'occupied':
+                    log_socket.touch()
+                if log_mode in ('linked-file', 'dangling'):
+                    target = root / 'log-target'
+                    if log_mode == 'linked-file':
+                        target.touch()
+                    log_socket.symlink_to(target)
+                executable('logread', "echo 'logread probe output'\nexit " + ('0' if log_mode in ('memory', 'both') else '1') + '\n')
             runtime = root / ('run/systemd/system' if manager == 'systemd' else 'run/openrc')
             runtime.mkdir(parents=True)
             openrc = root / 'sbin/openrc-run'
@@ -76,7 +103,8 @@ exit 0
                 service.symlink_to(root / 'missing')
             script = (ROOT / 'install.sh').read_text()
             # Relocate only fixed filesystem constants, never add installer override knobs.
-            script = re.sub(r'/(?:root|etc|run|sbin)\b', lambda match: str(root) + match[0], script)
+            script = re.sub(r'/(?:root|etc|run|sbin|dev/log|var/log/messages)\b',
+                            lambda match: str(root) + match[0], script)
             local = root / 'install.sh'
             local.write_text(script)
             calls = root / 'calls'
@@ -98,7 +126,7 @@ exit 0
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 self.assertIn(f'[安装中] 正在配置并启动 Agent 后台服务（{manager}）…'.encode(), result.stdout)
                 self.assertIn('后台服务已启动'.encode(), result.stdout)
-                self.assert_commands(result.stdout, manager)
+                self.assert_commands(result.stdout.replace(os.fsencode(root), b''), manager, log_mode)
                 self.assertTrue(service.exists())
                 self.assertIn(str(install), service.read_text())
                 self.assertEqual(service.stat().st_mode & 0o777, 0o644 if manager == 'systemd' else 0o755)
@@ -157,9 +185,11 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                     if not upgrade_failure:
                         self.assertIn(b'new release', agent.read_bytes())
                         self.assertIn('已安装 Agent 版本：0.1.0 (linux/amd64)'.encode(), result.stdout)
-                        self.assert_commands(result.stdout, manager)
+                        self.assert_commands(result.stdout.replace(os.fsencode(root), b''), manager, log_mode)
+                self.assertNotIn('syslog start', calls.read_text())
+                self.assertNotIn('busybox syslogd', calls.read_text())
 
-    def assert_commands(self, output, manager):
+    def assert_commands(self, output, manager, log_mode):
         for action in ('start', 'stop', 'restart', 'status'):
             command = f'systemctl {action} viorka-agent' if manager == 'systemd' else f'rc-service viorka-agent {action}'
             self.assertIn(command.encode(), output)
@@ -168,8 +198,23 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
             self.assertIn(b'journalctl -u viorka-agent -f', output)
             self.assertNotIn(b'rc-service', output)
         else:
-            self.assertIn(b"tail -f /var/log/messages | grep 'viorka-agent'", output)
-            self.assertIn(b"logread -f | grep 'viorka-agent'", output)
+            log_commands = (
+                (b"grep 'viorka-agent' /var/log/messages | tail -n 100", ('file', 'both')),
+                (b"tail -f /var/log/messages | grep 'viorka-agent'", ('file', 'both')),
+                (b"logread | grep 'viorka-agent' | tail -n 100", ('memory', 'both')),
+                (b"logread -f | grep 'viorka-agent'", ('memory', 'both')),
+                (b'rc-service syslog start', ('syslog-service',)),
+                (b'busybox syslogd -O /var/log/messages', ('busybox',)),
+                (b"tail -F /var/log/messages | grep 'viorka-agent'", ('busybox',)),
+                ('请检查 syslog 配置中的实际日志去向'.encode(), ('custom',)),
+                ('请启用系统 syslog 服务'.encode(), ('missing',)),
+                ('/dev/log 已被占用'.encode(), ('occupied', 'linked-file', 'dangling')),
+            )
+            for command, modes in log_commands:
+                self.assertEqual(command in output, log_mode in modes, output.decode())
+            self.assertEqual('缺少 /dev/log 套接字'.encode() in output,
+                             log_mode in ('missing', 'syslog-service', 'busybox'))
+            self.assertNotIn(b'logread probe output', output)
             self.assertNotIn(b'systemctl', output)
         self.assertIn(b'install.sh\' | sh -s -- install\n', output)
         self.assertNotIn(b'--url=', output)
@@ -182,6 +227,12 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
             for failure in ('', 'nonroot', 'existing', 'symlink', 'start', 'status', 'pending'):
                 with self.subTest(manager=manager, failure=failure):
                     self.exercise(manager, failure)
+
+    def test_openrc_log_commands(self):
+        for log_mode in ('file', 'memory', 'both', 'custom', 'syslog-service', 'busybox',
+                         'occupied', 'linked-file', 'dangling'):
+            with self.subTest(log_mode=log_mode):
+                self.exercise('openrc', log_mode=log_mode)
 
 
 if __name__ == '__main__':

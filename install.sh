@@ -333,6 +333,39 @@ RC
         rm -f "$install_dir/viorka-agent" "$install_dir/viorka-agent.previous" || fail '删除 Agent 程序失败，请检查权限后重试。'
         printf 'Agent 卸载完成（重复执行安全）。\n配置、身份和其他数据保留在：%s\n未停止或删除代理服务、代理配置及服务商映射；Panel 节点记录需在面板单独处理。\n' "$install_dir"
     }
+    print_openrc_log_commands() {
+        if [ ! -S /dev/log ]; then
+            if [ -e /dev/log ] || [ -L /dev/log ]; then
+                printf '  /dev/log 已被占用，请先检查文件类型、符号链接目标和 syslog 配置。\n'
+                return
+            fi
+            printf '  Agent 日志当前无法收集（缺少 /dev/log 套接字）。\n'
+            if [ -x /etc/init.d/syslog ]; then
+                printf '  启用系统日志：rc-service syslog start\n'
+                printf '  启用后按 syslog 配置查看新日志。\n'
+            elif [ -f /etc/alpine-release ] && command -v busybox >/dev/null &&
+                busybox --list 2>/dev/null | grep -qx syslogd; then
+                printf '  可临时启动 BusyBox syslog，再查看新日志：\n'
+                printf '    busybox syslogd -O /var/log/messages\n'
+                printf "    tail -F /var/log/messages | grep 'viorka-agent'\n"
+            else
+                printf '  请启用系统 syslog 服务，然后按其配置查看新日志。\n'
+            fi
+            return
+        fi
+        readable_log_file=0
+        if [ -f /var/log/messages ] && [ -r /var/log/messages ]; then
+            readable_log_file=1
+            printf "  文件最近日志：grep 'viorka-agent' /var/log/messages | tail -n 100\n"
+            printf "  跟踪日志文件：tail -f /var/log/messages | grep 'viorka-agent'\n"
+        fi
+        if command -v logread >/dev/null && timeout -k 1 2 logread </dev/null >/dev/null 2>&1; then
+            printf "  缓冲区最近日志：logread | grep 'viorka-agent' | tail -n 100\n"
+            printf "  跟踪日志缓冲区：logread -f | grep 'viorka-agent'\n"
+        elif [ "$readable_log_file" -eq 0 ]; then
+            printf '  未发现可读的默认日志文件或内存缓冲区，请检查 syslog 配置中的实际日志去向。\n'
+        fi
+    }
     print_commands() {
         printf '\n常用命令（请使用本次安装用户执行）：\n'
         case "${service_manager:-foreground}" in
@@ -346,15 +379,12 @@ RC
                 printf '  实时日志：journalctl -u viorka-agent -f\n'
                 ;;
             openrc)
-                printf '  服务管理：OpenRC\n'
+                printf '  服务管理：OpenRC（以 root 执行）\n'
+                printf '  状态：rc-service viorka-agent status\n'
                 printf '  启动：rc-service viorka-agent start\n'
                 printf '  停止：rc-service viorka-agent stop\n'
                 printf '  重启：rc-service viorka-agent restart\n'
-                printf '  状态：rc-service viorka-agent status\n'
-                printf "  最近日志：grep 'viorka-agent' /var/log/messages | tail -n 100\n"
-                printf "  实时日志：tail -f /var/log/messages | grep 'viorka-agent'\n"
-                printf "  若 syslog 使用内存缓冲区：logread -f | grep 'viorka-agent'\n"
-                printf '  日志由 logger 写入系统 syslog，需运行 syslog 服务；文件位置取决于 syslog 配置。\n'
+                print_openrc_log_commands
                 ;;
             foreground)
                 printf '  运行方式：前台\n'
@@ -376,7 +406,7 @@ RC
         printf '\n卸载 Agent（保留配置、身份和代理服务）：\n'
         printf "  curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- uninstall"
         [ "$foreground" -eq 0 ] || printf ' --foreground'
-        printf '\n\nPanel 在线状态：请查看面板，或确认日志出现 Panel connected; session established。\n\n'
+        printf '\n\nPanel 在线状态：请查看面板。握手成功时 Agent 会输出 Panel connected; session established。\n\n'
     }
     install_service() {
         if [ "${existing_service:-0}" -eq 1 ]; then
