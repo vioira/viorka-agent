@@ -22,6 +22,10 @@ func TestSingboxNativeEgressCheck(t *testing.T) {
 		{ID: "http", Name: "HTTP", Type: "http", Server: "example.com", ServerPort: 443, Tls: true},
 	}
 	c.Routing = &v1.EngineRouting{OutboundIds: []string{"plain", "proxy", "socks", "http"}, Final: "reject", Sniff: true, Rules: []*v1.EngineRouteRule{{ID: "domain", Name: "Domain", Enabled: true, DomainSuffix: []string{"example.com"}, PortRange: []string{"80:443"}, Network: []string{"tcp"}, Outbound: "http"}, {ID: "ip", Name: "IP", Enabled: true, IpCidr: []string{"192.0.2.0/24"}, Outbound: "socks"}}}
+	c.Routing.Rules = append(c.Routing.Rules,
+		&v1.EngineRouteRule{ID: "geo", Name: "Geo", Enabled: true, Geosite: []string{"cn", "apple@cn"}, Geoip: []string{"cn", "private"}, Outbound: "direct"},
+	)
+
 	files, err := renderSingboxFiles(c)
 	if err != nil {
 		t.Fatal(err)

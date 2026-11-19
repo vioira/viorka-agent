@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-const EngineCapability = "engine.manage.v7"
+const EngineCapability = "engine.manage.v8"
 
 func EngineOperation(op string) bool {
 	switch op {

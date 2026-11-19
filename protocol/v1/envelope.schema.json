@@ -1607,6 +1607,26 @@
           },
           "maxItems": 64
         },
+        "geoip": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 32,
+            "pattern": "^[a-z0-9_-]{2,32}$"
+          },
+          "maxItems": 64
+        },
+        "geosite": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9_@!-]{1,64}$"
+          },
+          "maxItems": 64
+        },
         "port": {
           "type": "array",
           "items": {

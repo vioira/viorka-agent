@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/netip"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -68,6 +69,29 @@ func (o EngineOutbound) Validate() error {
 	}
 	return nil
 }
+
+var (
+	geoIPCode   = regexp.MustCompile(`^[a-z0-9_-]{2,32}$`)
+	geoSiteCode = regexp.MustCompile(`^[a-z0-9_@!-]{1,64}$`)
+)
+
+func (r EngineRouteRule) ValidGeoConditions() bool {
+	if len(r.Geoip) > 64 || len(r.Geosite) > 64 {
+		return false
+	}
+	for _, code := range r.Geoip {
+		if !geoIPCode.MatchString(code) {
+			return false
+		}
+	}
+	for _, code := range r.Geosite {
+		if !geoSiteCode.MatchString(code) {
+			return false
+		}
+	}
+	return true
+}
+
 func (r EngineRouting) Validate(services []*EngineService) error {
 	bad := errors.New("invalid routing configuration")
 	if len(r.OutboundIds) > 32 || len(r.Rules) > 128 {
@@ -90,13 +114,27 @@ func (r EngineRouting) Validate(services []*EngineService) error {
 		}
 	}
 	seen := map[string]bool{}
+	geoRuleSets := map[string]struct{}{}
 	for _, rule := range r.Rules {
 		if rule == nil || !routingID(rule.ID) || seen[rule.ID] || !routingName(rule.Name) || !exits[rule.Outbound] {
 			return bad
 		}
 		seen[rule.ID] = true
-		if len(rule.Inbound) > 32 || len(rule.Domain) > 64 || len(rule.DomainSuffix) > 64 || len(rule.IpCidr) > 64 || len(rule.Port) > 64 || len(rule.PortRange) > 64 || len(rule.Network) > 2 {
+		if len(rule.Inbound) > 32 || len(rule.Domain) > 64 || len(rule.DomainSuffix) > 64 || len(rule.IpCidr) > 64 || len(rule.Port) > 64 || len(rule.PortRange) > 64 || len(rule.Network) > 2 || !rule.ValidGeoConditions() {
 			return bad
+		}
+		if rule.Enabled {
+			for _, code := range rule.Geoip {
+				if code != "private" {
+					geoRuleSets["geoip-"+code] = struct{}{}
+				}
+			}
+			for _, code := range rule.Geosite {
+				geoRuleSets["geosite-"+code] = struct{}{}
+			}
+			if len(geoRuleSets) > 128 {
+				return bad
+			}
 		}
 		for _, id := range rule.Inbound {
 			if !ins[id] {
@@ -137,7 +175,7 @@ func (r EngineRouting) Validate(services []*EngineService) error {
 				return bad
 			}
 		}
-		conditions := len(rule.Domain) + len(rule.DomainSuffix) + len(rule.IpCidr) + len(rule.Port) + len(rule.PortRange) + len(rule.Network)
+		conditions := len(rule.Domain) + len(rule.DomainSuffix) + len(rule.IpCidr) + len(rule.Geoip) + len(rule.Geosite) + len(rule.Port) + len(rule.PortRange) + len(rule.Network)
 		if conditions == 0 && !rule.MatchAll || conditions > 0 && rule.MatchAll {
 			return bad
 		}

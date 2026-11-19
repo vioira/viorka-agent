@@ -356,3 +356,32 @@ func TestSingboxSharedOutboundsAndOrderedRules(t *testing.T) {
 		t.Fatal("ordered routing semantics failed")
 	}
 }
+
+func TestSingboxGeoRoutingRender(t *testing.T) {
+	c := renderCommand(t, "sing-box")
+	c.Services = append(c.Services, &v1.EngineService{ID: "disabled", Enabled: false})
+	c.Routing = &v1.EngineRouting{Final: "direct", Rules: []*v1.EngineRouteRule{
+		{ID: "combined", Enabled: true, Geoip: []string{"cn", "private", "cn"}, Geosite: []string{"cn", "apple@cn"}, Network: []string{"tcp"}, Outbound: "direct"},
+		{ID: "private", Enabled: true, Geoip: []string{"private"}, Outbound: "reject"},
+		{ID: "disabled", Geosite: []string{"google"}, Outbound: "reject"},
+		{ID: "inactive", Enabled: true, Inbound: []string{"disabled"}, Geosite: []string{"openai"}, Outbound: "reject"},
+		{ID: "repeat", Enabled: true, Geosite: []string{"cn"}, Outbound: "reject"},
+	}}
+	route := singboxEgress(c)["route"].(map[string]any)
+	actual, err := json.Marshal(route["rules"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"action":"resolve","server":"sb-egress-dns"},{"action":"route","mode":"and","outbound":"sb-egress-direct","rules":[{"network":["tcp"]},{"mode":"or","rules":[{"ip_is_private":true},{"rule_set":["geoip-cn"]}],"type":"logical"},{"rule_set":["geosite-cn","geosite-apple@cn"]}],"type":"logical"},{"action":"reject","ip_is_private":true},{"action":"reject","rule_set":["geosite-cn"]}]`
+	if string(actual) != want {
+		t.Fatalf("unexpected native routing: %s", actual)
+	}
+	sets := route["rule_set"].([]any)
+	if len(sets) != 3 {
+		t.Fatalf("want deduplicated, enabled rule sets: %+v", sets)
+	}
+	site := sets[2].(map[string]any)
+	if site["url"] != "https://raw.githubusercontent.com/SagerNet/sing-geosite/"+singboxGeoSiteRevision+"/geosite-apple@cn.srs" {
+		t.Fatalf("unexpected rule-set source: %+v", site)
+	}
+}

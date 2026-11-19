@@ -4,7 +4,7 @@
 
 `internal/runtime/managed.go` 实现类型化任务运行时，`render.go` 生成 sing-box/Xray 的 VLESS REALITY 配置和 Realm TCP 配置，`download.go` 下载校验固定发行资源，`preflight.go` 进行端口和目标预检。旧 `Engine` 接口仅为接口定义，实际任务通过 `Managed.Execute` 路径执行。
 
-支持范围为 Linux + systemd/OpenRC + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v7`。运行目录 `/var/lib/viorka-engines/<name>`，systemd unit 为 `viorka-engine-<name>.service`；OpenRC 服务脚本为 `/etc/init.d/viorka-engine-<name>`（0755）。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
+支持范围为 Linux + systemd/OpenRC + root，架构 amd64/arm64；其他环境不声明 `engine.manage.v8`。运行目录 `/var/lib/viorka-engines/<name>`，systemd unit 为 `viorka-engine-<name>.service`；OpenRC 服务脚本为 `/etc/init.d/viorka-engine-<name>`（0755）。第三方同类进程、常见安装和 unit 会阻止安装，不自动接管。尚无持续第三方资产发现。
 
 安装不启动。配置以结构化任务为输入，不接受任意 Shell、URL 或原生配置。sing-box 执行 `check -C`，Xray 执行 `run -test -c`；Realm 2.9.6 没有原生配置检查命令，使用严格结构化渲染校验和启动后的本地检查。修改运行配置可能重启整个引擎。停止意愿会 disable/stop，停止时应用配置不启动。
 
@@ -90,4 +90,9 @@ engine.manage.v5 的安装、升级、应用和启动默认自动修复白名单
 
 `engine.manage.v6` 支持 `engine.inspect` 的 `include_config=true`。完成托管归属、活动文件一致性和运行健康检查后，读取本机完整原生配置：sing-box 返回活动 `conf.d` 文件列表，Xray 返回 `config.json`，Realm 返回 `config.toml`。读取不会应用配置、启停或重启服务；返回配置修订号来自本地持久状态。配置缺失、被修改或超出 32 KiB 时拒绝返回，结果 Journal 沿用 0600 文件权限，Panel 加密保存配置正文并要求节点管理授权查看。Panel 必须配套升级。
 
-当前能力为 `engine.manage.v7`。备份恢复时，Panel 可在管理者发起后派发 `engine.inspect` 的 `recovery_check=true`；该选项与 `include_config` 互斥。Agent 只读确认托管归属、活动配置和状态，返回本机实际托管配置及修订；新安装、停止且没有活动配置的引擎返回空服务列表，未安装且未检测到第三方服务时明确返回未安装状态。不应用、启停或重启引擎。结果含敏感信息，传输和 Journal 维持既有认证及 0600 权限，Panel 加密保存并限制普通任务输出。需配套更新 Panel，本地代码同步不代表已发布或实机验收。
+当前能力为 `engine.manage.v8`。备份恢复时，Panel 可在管理者发起后派发 `engine.inspect` 的 `recovery_check=true`；该选项与 `include_config` 互斥。Agent 只读确认托管归属、活动配置和状态，返回本机实际托管配置及修订；新安装、停止且没有活动配置的引擎返回空服务列表，未安装且未检测到第三方服务时明确返回未安装状态。不应用、启停或重启引擎。结果含敏感信息，传输和 Journal 维持既有认证及 0600 权限，Panel 加密保存并限制普通任务输出。需配套更新 Panel，本地代码同步不代表已发布或实机验收。
+
+
+## GeoIP 与 GeoSite 分流
+
+`engine.manage.v8` 支持在 sing-box 1.14.4 的分流规则中使用 GeoIP 与 GeoSite。同一字段值按 OR，字段之间按 AND。GeoIP `private` 使用原生非公网 IP 条件，其余代码由节点上的 sing-box 直连 HTTPS 读取固定提交的 SagerNet 二进制 rule-set。GeoIP 域名目标沿用本地 DNS 解析。节点启动含外部引用的配置时须能访问规则集来源，且代码须存在；停用的规则及仅引用停用服务的规则不会加载规则集。保持停止时，配置校验和启动是两个阶段，规则集可达性由实际运行检查。
