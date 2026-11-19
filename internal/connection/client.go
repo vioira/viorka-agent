@@ -36,7 +36,11 @@ import (
 
 var ErrIdentityRejected = errors.New("agent identity rejected; contact administrator")
 
+// Private management WSS close code defined by Panel api/agent/v1.
+const agentStopping = websocket.StatusCode(4001)
+
 type Client struct {
+	activeSocket          atomic.Pointer[websocket.Conn]
 	dailyPersistFailed    bool // owned by the telemetry sender
 	dailyTrafficSupported atomic.Bool
 	dailyPending          func(context.Context, bool) ([]*v1.TelemetryDailyTraffic, error)
@@ -211,13 +215,30 @@ func (c *Client) Run(ctx context.Context) (runErr error) {
 		return err
 	}
 	exec.Logger = c.log()
-	runCtx, stopSampling := context.WithCancel(ctx)
+	// Keep socket I/O alive until the graceful close frame is sent. Canceling
+	// an in-flight websocket.Read first would tear down the transport.
+	runCtx, stopSampling := context.WithCancel(context.WithoutCancel(ctx))
+	shutdownDone := make(chan struct{})
+	stopShutdown := context.AfterFunc(ctx, func() {
+		defer close(shutdownDone)
+		defer stopSampling()
+		if conn := c.activeSocket.Load(); conn != nil && ctx.Err() == context.Canceled {
+			if err := conn.Close(agentStopping, "agent stopping"); err != nil {
+				c.log().Debug("graceful stop notification unavailable")
+			}
+		}
+	})
+	defer func() {
+		if !stopShutdown() {
+			<-shutdownDone
+		}
+	}()
 	c.runCtx = runCtx
 	defer func() { stopSampling(); runErr = errors.Join(runErr, c.waitCollectors()) }()
 	delay := time.Second
 	for {
 		started := time.Now()
-		err = c.connect(ctx, id, exec)
+		err = c.connect(runCtx, id, exec)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -338,6 +359,8 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		}
 		inventory = c.assets.wake
 	}
+	c.activeSocket.Store(conn)
+	defer c.activeSocket.CompareAndSwap(conn, nil)
 	c.lifecycle().Info("Panel connected; session established", "protocol_version", ack.ProtocolVersion, "heartbeat_seconds", ack.HeartbeatSeconds)
 	incoming := make(chan v1.Envelope, 8)
 	done := make(chan struct{})
