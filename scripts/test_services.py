@@ -26,7 +26,7 @@ class Services(unittest.TestCase):
             (install / 'state/identity.json').write_text(identity)
             (install / 'agent.json').write_text('{}')
             agent = install / 'viorka-agent'
-            agent.write_text('#!/bin/sh\nexit 0\n')
+            agent.write_text('#!/bin/sh\n[ "$1" != version ] || echo "viorka-agent 0.0.9 (linux/amd64)"\nexit 0\n')
             agent.chmod(0o700)
             bin_dir = root / 'bin'
             bin_dir.mkdir()
@@ -130,14 +130,18 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                 command = ['sh', str(local), 'install', '--version=v0.1.0']
                 for upgrade_failure in ('download', 'upgrade', 'rollback', '', ''):
                     old_binary = agent.read_bytes()
+                    current_version = '0.1.0' if b'new release' in old_binary else '0.0.9'
                     prior_calls = calls.read_text()
                     result = subprocess.run(command, env=dict(env, FAILURE=upgrade_failure), capture_output=True, timeout=15)
                     self.assertEqual(result.returncode == 0, not upgrade_failure, result.stderr.decode())
+                    self.assertIn(f'当前 Agent 版本（磁盘）：{current_version} (linux/amd64)'.encode(), result.stdout)
+                    self.assertIn('目标 Agent 版本：v0.1.0 (linux/amd64)'.encode(), result.stdout)
                     self.assertEqual(service.read_bytes(), initial_service)
                     self.assertEqual((install / 'agent.json').read_bytes(), initial_config)
                     self.assertEqual((install / 'state/identity.json').read_text(), identity)
                     self.assertFalse(list(install.glob('.install-*')))
                     if upgrade_failure:
+                        self.assertNotIn('已安装 Agent 版本：'.encode(), result.stdout)
                         self.assertEqual(agent.read_bytes(), old_binary)
                         if upgrade_failure in ('upgrade', 'rollback'):
                             self.assertIn('已恢复旧 Agent 二进制'.encode(), result.stderr)
@@ -149,6 +153,7 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                     self.assertNotIn('xray', calls.read_text())
                     if not upgrade_failure:
                         self.assertIn(b'new release', agent.read_bytes())
+                        self.assertIn('已安装 Agent 版本：0.1.0 (linux/amd64)'.encode(), result.stdout)
                         self.assert_commands(result.stdout, manager)
 
     def assert_commands(self, output, manager):

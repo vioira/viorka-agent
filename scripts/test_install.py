@@ -24,7 +24,7 @@ TOKEN = "a" * 64
 
 
 class InstallerTests(unittest.TestCase):
-    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False, replacement=False, choice=None, locked_state=False, omit_url=False, retry_omit_url=False, registration=False, token_stdin=False):
+    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False, replacement=False, choice=None, locked_state=False, omit_url=False, retry_omit_url=False, registration=False, token_stdin=False, retry_latest=False, current_probe=""):
         with tempfile.TemporaryDirectory(prefix="viorka-install-") as tmp:
             home = pathlib.Path(tmp) / 'home "quote" \\ slash'
             home.mkdir()
@@ -55,6 +55,15 @@ except subprocess.TimeoutExpired:
             fixture = b'''#!/bin/sh
 set -eu
 if [ "$1" = version ]; then
+  if [ "$0" = ./viorka-agent ]; then
+    case "${CURRENT_PROBE:-}" in
+      unavailable) exit 1 ;;
+      oversized) exec yes 'excessive version output' ;;
+      multiline) printf 'viorka-agent 0.1.0 (linux/%s)\\nextra output\\n' "$TEST_ARCH"; exit 0 ;;
+    esac
+    echo "viorka-agent 0.1.0 (linux/$TEST_ARCH)"
+    exit 0
+  fi
   case "$FAILURE" in
     version_timeout) exec sleep 30 ;;
     version) echo 'viorka-agent 9.9.9 (linux/amd64)' ;;
@@ -65,7 +74,12 @@ if [ "$1" = version ]; then
 fi
 printf '%s\\n' "$1" >> calls
 case "$1" in
- config-check) test "$FAILURE" != config ;;
+ config-check)
+   if [ "$FAILURE" = config ]; then
+     echo 'invalid configuration: fixture error' >&2
+     exit 2
+   fi
+   echo 'configuration format OK (connection not attempted)' ;;
  register)
    token=$(cat)
    test "${#token}" -eq 64
@@ -186,8 +200,15 @@ else:
                     self.assertNotIn(TOKEN.encode(), path.read_bytes(), f"token persisted in {path.name}")
             code = os.waitstatus_to_exitcode(status)
             calls = (install / "calls").read_text().splitlines() if (install / "calls").exists() else []
+            platform = "linux/arm64" if arch == "aarch64" else "linux/amd64"
+            current_label = '当前 Agent 版本（磁盘）：'
+            installed_label = '已安装 Agent 版本：'
+            self.assertNotIn(current_label.encode(), output)
             if failure in ("", "existing") and not extra and arch != "riscv64":
                 self.assertEqual(code, 0, output.decode())
+                self.assertIn(f'目标 Agent 版本：v0.1.0 ({platform})'.encode(), output)
+                self.assertIn(f'{installed_label}0.1.0 ({platform})'.encode(), output)
+                self.assertNotIn(b'configuration format OK', output)
                 self.assertIn('安装前检查：未检测到正在运行的 Agent 进程。'.encode(), output)
                 self.assertIn('运行方式：前台'.encode(), output)
                 self.assertIn(b'Ctrl+C', output)
@@ -205,6 +226,7 @@ else:
                 self.assertEqual((install / "state").stat().st_mode & 0o777, 0o700)
             else:
                 self.assertNotEqual(code, 0, output.decode())
+                self.assertNotIn(installed_label.encode(), output)
                 self.assertNotIn("run", calls)
                 if failure not in ("config", "enroll"):
                     self.assertEqual(calls, [])
@@ -218,6 +240,9 @@ else:
                     self.assertIn(b'--version=', output)
                 if failure == "config":
                     self.assertEqual(calls, ["config-check"])
+                    self.assertIn(b'invalid configuration: fixture error', output)
+                    self.assertFalse((install / "agent.json").exists())
+                    self.assertFalse((install / "state").exists())
                 if failure == "enroll":
                     self.assertEqual(calls, ["config-check", "register"])
                 if failure in ("checksum", "manifest"):
@@ -229,7 +254,7 @@ else:
             if retry:
                 before = (install / "state/identity.json").read_bytes() if (install / "state/identity.json").exists() else None
                 config = (install / "agent.json").read_bytes() if (install / "agent.json").exists() else None
-                env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}", FAILURE=retry_failure, PAYLOAD=str(payload))
+                env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}", FAILURE=retry_failure, PAYLOAD=str(payload), CURRENT_PROBE=current_probe)
                 if replacement:
                     env["NODE_ID"] = "node-2"
                     (install / "state/old-journal.json").write_text("old node history")
@@ -248,6 +273,8 @@ else:
                 retry_args = ["sh", str(retry_script), "install", "--foreground", "--url=https://localhost:8143", "--version=v0.1.0", *((["--token=" + TOKEN, "--reenroll-node=node-1"] if reenroll else (["--token=" + TOKEN] if replacement else [])) if before and failure != "enroll" else ["--token=" + TOKEN])]
                 if retry_omit_url:
                     retry_args.remove("--url=https://localhost:8143")
+                if retry_latest:
+                    retry_args.remove("--version=v0.1.0")
                 if choice is None:
                     result = subprocess.run(retry_args, env=env, capture_output=True, start_new_session=True, timeout=15)
                 else:
@@ -287,6 +314,13 @@ else:
                     held_lock.close()
                 replaced = replacement and choice == "1" and not retry_failure and not running and not locked_state
                 self.assertEqual(result.returncode == 0, replaced or not (retry_failure or replacement), result.stderr.decode())
+                if old_binary is not None and retry_failure != "missing_url":
+                    current = '无法读取，将继续安装。' if current_probe else f'0.1.0 ({platform})'
+                    self.assertIn(f'{current_label}{current}'.encode(), result.stdout)
+                if result.returncode == 0:
+                    self.assertIn(f'{installed_label}0.1.0 ({platform})'.encode(), result.stdout)
+                else:
+                    self.assertNotIn(installed_label.encode(), result.stdout)
                 if running and not retry_failure and not replacement:
                     self.assertIn('安装前检查：检测到 Agent 进程正在运行。'.encode(), result.stdout)
                     self.assertIn('常用命令'.encode(), result.stdout)
@@ -336,6 +370,17 @@ else:
         for failure in ("download", "checksum", "config"):
             with self.subTest(failure=failure):
                 self.run_install(token_arg=True, retry=True, retry_omit_url=True, retry_failure=failure)
+
+    def test_current_version_printed_when_latest_lookup_fails(self):
+        self.run_install(token_arg=True, retry=True, retry_omit_url=True, retry_latest=True, retry_failure="download")
+
+    def test_unreadable_current_version_does_not_block_update(self):
+        for probe in ("unavailable", "oversized", "multiline"):
+            with self.subTest(probe=probe):
+                self.run_install(token_arg=True, retry=True, retry_omit_url=True, current_probe=probe)
+
+    def test_empty_release_tag_is_rejected(self):
+        self.run_install(extra=("--version=",), token_arg=True)
 
     def test_missing_url_requires_registered_install(self):
         self.run_install(failure="missing_url", token_arg=True, omit_url=True)

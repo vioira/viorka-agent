@@ -25,7 +25,7 @@
 
 - 通过 Linux `/proc/PID/exe` 检查本安装路径的 Agent 进程；空目录或下载残留不再视为安装成功，下载 404 后修正 `--version` 即可重试，无需删除目录。
 - 已存在 `state/identity.json` 时保留身份和配置，跳过注册，无需提供 `--url` 和 `--token`；本次 URL、CA 不会改动已有节点；若普通单节点安装同时提供新令牌，安装器通过 `/dev/tty` 提供「覆盖重新安装 / 退出并查看恢复说明」选择，默认退出；无终端时退出，不自动覆盖。覆盖需要 `flock`，停止本安装器管理的 Agent 后备份旧配置和整个 `state`，按本次 URL、CA 和令牌创建新配置及身份；前台或外部 supervisor 进程需先手动停止。删除旧节点后新建节点的恢复步骤见 [身份生命周期](../docs/REGISTRATION.md#删除旧节点后注册新节点)。已注册但停止的 Agent 同样复用身份。身份存在但配置缺失时拒绝重新注册，需恢复原配置。
-- 二进制和校验文件下载到独立临时目录，SHA-256 和新二进制 `config-check` 成功后才原子替换。下载或校验失败不替换旧二进制，退出时清理本次临时文件。
+- 二进制和校验文件下载到独立临时目录，SHA-256、版本和 `config-check` 验证通过后才替换二进制。首次安装生成的配置也在临时目录校验通过后才写入正式路径。退出时清理本次临时文件。
 - 现有服务必须与安装器模板完全匹配且权限安全（systemd 不允许 drop-in），才能复用并重启。自定义或第三方服务拒绝接管。更新前保留 `viorka-agent.previous`；服务重启失败返回非零并尝试恢复旧二进制和服务，恢复失败明确提示人工处理。
 - 已运行的前台 Agent 不重复启动；只更新磁盘二进制，提示通过原 supervisor 或终端重启。未运行时启动前台 Agent。进程状态和服务状态不代表 Panel 握手成功。
 
@@ -71,6 +71,10 @@ logread -f | grep 'viorka-agent'
 旧版 OpenRC 服务在容器 PID 1 未回收已退出的监督进程时，可能卡在 `Stopping Viorka Agent`。用修复版安装脚本执行 `sh install.sh service` 可原地更新匹配的旧模板，然后执行 `rc-service viorka-agent stop`。新版在确认 Agent 与监督进程均已退出、监督进程已清理 PID 文件后输出 `[ ok ]`，最多等待约 30 秒。
 
 安装和更新成功后，安装器会按实际使用的 systemd、OpenRC 或前台模式输出管理及日志命令。开头的进程检查明确标注为「安装前检查」，不代表安装后的状态。OpenRC 日志文件位置取决于系统 syslog 配置。
+
+更新时，安装器先用本地二进制的 `version` 命令显示当前磁盘版本，读取失败会提示并继续。下载前显示目标 Release 标签和架构。后台安装在服务启动或重启并通过状态检查后显示已安装版本。前台安装显示已写入磁盘的版本，已有前台进程需要重启才能加载本次安装的程序。
+
+如果 OpenRC 提示 `/sys/fs/cgroup/openrc.viorka-agent` 所在文件系统只读，或在依赖缓存阶段报告 `hwdrivers`、`machine-id` 缺少 `dev`，请结合 `rc-service viorka-agent status` 与 Agent 日志判断结果。状态为 `started` 表示 OpenRC 已启动服务，Panel 在线仍以握手日志或面板状态为准。安装器沿用宿主机的 OpenRC 与 cgroup 设置。[OpenRC 服务与 cgroup 文档](https://github.com/OpenRC/openrc/blob/master/user-guide.md#ulimit-and-cgroups)
 
 输出中的更新命令不含注册令牌，复用现有配置和身份，默认选择最新正式版，也可追加 `--version=vX.Y.Z`。后台模式更新成功后自动重启 Agent；前台模式保留 `--foreground`，已有进程需自行重启。更新命令无需提供 `--url` 和 `--token`；首次安装、注册未完成或使用令牌重新安装时仍需提供 `--url`。请使用原安装用户执行这些命令；后台模式为 root。
 

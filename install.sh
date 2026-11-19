@@ -19,13 +19,43 @@ main() {
         # Paths containing control characters are rejected before reaching here.
         printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
     }
+    semver_pattern='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+)(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?'
     validate_version() {
-        printf '%s\n' "$1" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+)(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$' || fail '版本须为 v 开头的 SemVer。'
+        printf '%s\n' "$1" | grep -Eq "^v${semver_pattern}$" || fail '版本须为 v 开头的 SemVer。'
         pre=${1%%+*}
         case "$pre" in *-*)
             pre=${pre#*-}
             if printf '%s\n' "$pre" | grep -Eq '(^|\.)0[0-9]+(\.|$)'; then fail '预发布数字标识不能有前导零。'; fi ;;
         esac
+    }
+    resolve_release() {
+        [ -z "$release_tag" ] || return 0
+        release_url=$(download --output /dev/null --write-out '%{url_effective}' https://github.com/vioira/viorka-agent/releases/latest) || fail '查询正式 Release 失败，请检查 GitHub 访问及发布状态。'
+        case "$release_url" in
+            https://github.com/vioira/viorka-agent/releases/tag/*) release_tag=${release_url##*/} ;;
+            *) fail '未找到可用的正式 Release。请在 https://github.com/vioira/viorka-agent/releases 审核并发布含 Linux 二进制及 .sha256 的正式版本；草稿不可下载，已公开的预发布需显式指定 --version=vX.Y.Z。' ;;
+        esac
+        plain_text "$release_tag"
+        validate_version "$release_tag"
+        case "${release_tag%%+*}" in *-*) fail 'Latest 指向预发布，请显式指定 --version。' ;; esac
+    }
+    read_agent_version() {
+        # Limit both runtime and stdout before reading the version into the shell.
+        (ulimit -f 2 && timeout -k 2 10 "$1" version </dev/null > "$staging/version") || return 1
+        cat "$staging/version"
+    }
+    print_current_version() {
+        current_version=
+        if [ -x ./viorka-agent ]; then
+            current_version=$(read_agent_version ./viorka-agent 2>/dev/null) || current_version=
+        fi
+        case "$current_version" in *'
+'*) current_version= ;; esac
+        if printf '%s\n' "$current_version" | grep -Eq "^viorka-agent ${semver_pattern} \(linux/(amd64|arm64)\)$"; then
+            printf '当前 Agent 版本（磁盘）：%s\n' "${current_version#viorka-agent }"
+        else
+            printf '当前 Agent 版本（磁盘）：无法读取，将继续安装。\n'
+        fi
     }
     validate_token() {
         [ "${#enrollment_token}" -eq 64 ] || fail '注册令牌格式无效。'
@@ -356,7 +386,6 @@ RC
             fi
             restart_service || fail '新版 Agent 服务启动失败。'
             printf '\nAgent 服务已重启。\n'
-            print_commands
             return
         fi
         # Do not clobber existing files, including dangling symlinks, on retries.
@@ -372,7 +401,6 @@ RC
                 timeout 15 rc-service viorka-agent status || fail '服务启动失败；身份已保留，请检查 rc-service viorka-agent status 和系统日志，勿重新注册。'
         fi
         printf '\nAgent 后台服务已启动并设置开机自启。\n'
-        print_commands
     }
     action=${1:-}
     case "$action" in install|service|uninstall) ;; *) fail '用法：sh install.sh install --url=https://panel.example.com [--token=TOKEN] [--version=vX.Y.Z] [--ca-file=/path/ca.pem] [--foreground] [--reenroll-node=ID] [--registration] [--token-stdin]；已有安装转后台：sh install.sh service；卸载：sh install.sh uninstall [--foreground]' ;; esac
@@ -389,7 +417,9 @@ RC
             --foreground) foreground=1 ;;
             --reenroll-node=*) reenroll_node=${arg#*=} ;;
             --url=*|-url=*) panel_url=${arg#*=} ;;
-            --version=*) release_tag=${arg#*=} ;;
+            --version=*)
+                release_tag=${arg#*=}
+                [ -n "$release_tag" ] || fail '请为 --version 提供 v 开头的 SemVer。' ;;
             --ca-file=*) ca_file=${arg#*=} ;;
             --token=*)
                 [ "$token_supplied" -eq 0 ] || fail '请勿重复指定 --token。'
@@ -427,6 +457,7 @@ RC
         fi
         ./viorka-agent config-check --config agent.json
         install_service
+        print_commands
         return
     fi
     if [ "$registration" -eq 1 ]; then
@@ -499,16 +530,8 @@ RC
         [ "$token_supplied" -eq 0 ] && [ -z "$reenroll_node" ] ||
             fail '使用令牌重新安装或重新注册时，请提供 --url=https://面板地址。'
     fi
-    if [ -z "$release_tag" ]; then
-        release_url=$(download --output /dev/null --write-out '%{url_effective}' https://github.com/vioira/viorka-agent/releases/latest) || fail '查询正式 Release 失败，请检查 GitHub 访问及发布状态；尚未创建安装目录。'
-        case "$release_url" in
-            https://github.com/vioira/viorka-agent/releases/tag/*) release_tag=${release_url##*/} ;;
-            *) fail '未找到可用的正式 Release。请在 https://github.com/vioira/viorka-agent/releases 审核并发布含 Linux 二进制及 .sha256 的正式版本；草稿不可下载，已公开的预发布需显式指定 --version=vX.Y.Z。尚未创建安装目录。' ;;
-        esac
-        plain_text "$release_tag"
-        validate_version "$release_tag"
-        case "${release_tag%%+*}" in *-*) fail 'Latest 指向预发布，请显式指定 --version。' ;; esac
-    fi
+    # Keep failed Release lookups from leaving a new installation directory.
+    if [ ! -d "$install_dir" ]; then resolve_release; fi
     mkdir -p "$install_dir"
     cd "$install_dir"
     install_dir=$(pwd -P)
@@ -538,6 +561,10 @@ RC
     }
     trap cleanup 0
     trap 'exit 1' 1 2 15
+    if [ -f viorka-agent ]; then
+        staging=$(mktemp -d "$install_dir/.install-XXXXXX")
+        print_current_version
+    fi
     registered=0
     if [ -f "$install_dir/state/identity.json" ]; then
         [ -f "$install_dir/agent.json" ] || fail '身份存在但配置缺失，请恢复原配置，勿重复注册。'
@@ -588,8 +615,10 @@ RC
     if [ "$running" -eq 1 ] && [ "$foreground" -eq 0 ] && [ "${existing_service:-0}" -eq 0 ]; then
         fail '检测到未由本安装器服务管理的 Agent，请先停止前台进程再转为后台。'
     fi
-    staging=$(mktemp -d "$install_dir/.install-XXXXXX")
+    resolve_release
+    if [ -z "$staging" ]; then staging=$(mktemp -d "$install_dir/.install-XXXXXX"); fi
     printf '安装目录：%s\n' "$install_dir"
+    printf '目标 Agent 版本：%s (linux/%s)\n' "$release_tag" "$arch"
     asset="viorka-agent-linux-$arch"
     base="https://github.com/vioira/viorka-agent/releases/download/$release_tag"
     download --max-filesize 134217728 --output "$staging/viorka-agent" "$base/$asset" || fail "下载 Agent 失败：请确认 Release $release_tag 及 $asset 已发布（版本标签必须精确匹配），可直接重试。"
@@ -604,13 +633,17 @@ RC
     checksum=$(printf '%s' "$checksum" | tr 'A-F' 'a-f')
     [ "$actual" = "$checksum" ] || fail '安装包 SHA-256 校验失败。'
     chmod 700 "$staging/viorka-agent"
-    binary_version=$(timeout -k 2 10 "$staging/viorka-agent" version) || fail '无法执行下载的 Agent。'
+    binary_version=$(read_agent_version "$staging/viorka-agent") || fail '无法执行下载的 Agent。'
     [ "$binary_version" = "viorka-agent ${release_tag#v} (linux/$arch)" ] || fail '下载的 Agent 版本或平台与指定 Release 不符。'
+    config_path=agent.json
+    if [ ! -f "$config_path" ] || [ "$reinstall" -eq 1 ]; then
+        config_path="$staging/agent.json"
+        printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"warn","ca_file":"%s"}\n' \
+            "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$config_path"
+    fi
+    "$staging/viorka-agent" config-check --config "$config_path" >/dev/null
     migrate_openrc_service
     if [ "$reinstall" -eq 1 ]; then
-        printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"warn","ca_file":"%s"}\n' \
-            "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$staging/agent.json"
-        "$staging/viorka-agent" config-check --config "$staging/agent.json"
         command -v flock >/dev/null || fail '覆盖安装需要 flock，以确认旧状态未被 Agent 使用。'
         if [ "${existing_service:-0}" -eq 1 ]; then
             if [ "$service_manager" = systemd ]; then
@@ -638,19 +671,13 @@ RC
         cp -p agent.json "$retired/agent.json"
         mv state "$retired/state"
         # Keep the old state lock until exit, including while enrolling the new identity.
-        mv "$staging/agent.json" agent.json
         registered=0
         running=0
         printf '旧节点配置和状态已备份至：%s\n' "$retired"
     fi
     mkdir -p state
-    if [ ! -f agent.json ]; then
-        printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"warn","ca_file":"%s"}\n' \
-            "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$staging/agent.json"
-        mv "$staging/agent.json" agent.json
-    fi
-    if [ "$reinstall" -eq 0 ]; then
-        "$staging/viorka-agent" config-check --config agent.json
+    if [ "$config_path" != agent.json ]; then
+        mv "$config_path" agent.json
     fi
     if [ -f viorka-agent ]; then
         cp viorka-agent "$staging/previous"
@@ -688,21 +715,24 @@ RC
     if [ "$reinstall" -eq 1 ]; then exec 9>&-; fi
     if [ "$foreground" -eq 0 ]; then
         install_service
-        committed=1
-        return
     fi
     committed=1
+    printf '已安装 Agent 版本：%s\n' "${binary_version#viorka-agent }"
+    if [ "$foreground" -eq 0 ]; then
+        print_commands
+        return
+    fi
     rm -rf "$staging"
     staging=
     rmdir .install-lock
     trap - 0 1 2 15
     if [ "$running" -eq 1 ]; then
-        printf '磁盘上的 Agent 已更新；已有进程继续运行旧版本，请通过原 supervisor 或终端重启。\n'
+        printf '磁盘上的 Agent 已更新。请通过原 supervisor 或终端重启已有进程以加载本次安装的程序。\n'
         print_commands
         return
     fi
     print_commands
-    printf '注册完成，正在前台连接 Panel。请保持终端运行；是否在线以面板状态为准。\n'
+    printf '正在以前台方式启动 Agent。请保持终端运行，是否在线以面板状态为准。\n'
     exec ./viorka-agent run --config "$install_dir/agent.json"
 }
 main "$@"
