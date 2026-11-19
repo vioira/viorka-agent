@@ -203,10 +203,23 @@ else:
             platform = "linux/arm64" if arch == "aarch64" else "linux/amd64"
             current_label = '当前 Agent 版本（磁盘）：'
             installed_label = '已安装 Agent 版本：'
+            release_progress = '[安装中] 正在查询 GitHub 上的最新正式版…'
+            download_progress = '[安装中] 正在下载 Agent 安装包…'
             self.assertNotIn(current_label.encode(), output)
             if failure in ("", "existing") and not extra and arch != "riscv64":
                 self.assertEqual(code, 0, output.decode())
                 self.assertIn(f'目标 Agent 版本：v0.1.0 ({platform})'.encode(), output)
+                progress = [line for line in output.decode().splitlines() if line.startswith('[安装中]')]
+                self.assertEqual(progress, [
+                    *([] if pinned else [release_progress]),
+                    download_progress,
+                    '[安装中] 正在下载 SHA-256 校验文件…',
+                    '[安装中] 正在校验安装包的 SHA-256、版本和架构…',
+                    '[安装中] 正在校验 Agent 配置…',
+                    '[安装中] 正在写入 Agent 程序…',
+                    '[安装中] 正在向 Panel 提交 Agent 注册请求…',
+                ])
+                self.assertLess(output.index('安装目录：'.encode()), output.index(download_progress.encode()))
                 self.assertIn(f'{installed_label}0.1.0 ({platform})'.encode(), output)
                 self.assertNotIn(b'configuration format OK', output)
                 self.assertIn('安装前检查：未检测到正在运行的 Agent 进程。'.encode(), output)
@@ -232,6 +245,9 @@ else:
                     self.assertEqual(calls, [])
                 if failure in ("no_release", "invalid_release") or (failure == "download" and not pinned):
                     self.assertFalse(install.exists(), "release lookup must not leave an installation directory")
+                if failure == "download":
+                    self.assertIn((download_progress if pinned else release_progress).encode(), output)
+                    self.assertNotIn('[安装中] 正在下载 SHA-256 校验文件…'.encode(), output)
                 if failure == "legacy":
                     self.assertFalse(install.exists())
                     self.assertEqual((legacy / "agent.json").read_text(), "preserve")

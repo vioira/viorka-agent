@@ -74,6 +74,8 @@ logread -f | grep 'viorka-agent'
 
 更新时，安装器先用本地二进制的 `version` 命令显示当前磁盘版本，读取失败会提示并继续。下载前显示目标 Release 标签和架构。后台安装在服务启动或重启并通过状态检查后显示已安装版本。前台安装显示已写入磁盘的版本，已有前台进程需要重启才能加载本次安装的程序。
 
+安装器在查询最新正式版、下载、校验、注册及启动或重启服务前显示对应的「安装中」提示。
+
 如果 OpenRC 提示 `/sys/fs/cgroup/openrc.viorka-agent` 所在文件系统只读，或在依赖缓存阶段报告 `hwdrivers`、`machine-id` 缺少 `dev`，请结合 `rc-service viorka-agent status` 与 Agent 日志判断结果。状态为 `started` 表示 OpenRC 已启动服务，Panel 在线仍以握手日志或面板状态为准。安装器沿用宿主机的 OpenRC 与 cgroup 设置。[OpenRC 服务与 cgroup 文档](https://github.com/OpenRC/openrc/blob/master/user-guide.md#ulimit-and-cgroups)
 
 输出中的更新命令不含注册令牌，复用现有配置和身份，默认选择最新正式版，也可追加 `--version=vX.Y.Z`。后台模式更新成功后自动重启 Agent；前台模式保留 `--foreground`，已有进程需自行重启。更新命令无需提供 `--url` 和 `--token`；首次安装、注册未完成或使用令牌重新安装时仍需提供 `--url`。请使用原安装用户执行这些命令；后台模式为 root。

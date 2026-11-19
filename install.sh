@@ -30,6 +30,7 @@ main() {
     }
     resolve_release() {
         [ -z "$release_tag" ] || return 0
+        printf '[安装中] 正在查询 GitHub 上的最新正式版…\n'
         release_url=$(download --output /dev/null --write-out '%{url_effective}' https://github.com/vioira/viorka-agent/releases/latest) || fail '查询正式 Release 失败，请检查 GitHub 访问及发布状态。'
         case "$release_url" in
             https://github.com/vioira/viorka-agent/releases/tag/*) release_tag=${release_url##*/} ;;
@@ -379,6 +380,7 @@ RC
     }
     install_service() {
         if [ "${existing_service:-0}" -eq 1 ]; then
+            printf '[安装中] 正在配置并重启 Agent 后台服务（%s）…\n' "$service_manager"
             if [ "$service_manager" = systemd ]; then
                 timeout 30 systemctl daemon-reload && timeout 30 systemctl enable viorka-agent.service || fail '设置 Agent 服务失败。'
             else
@@ -388,6 +390,7 @@ RC
             printf '\nAgent 服务已重启。\n'
             return
         fi
+        printf '[安装中] 正在配置并启动 Agent 后台服务（%s）…\n' "$service_manager"
         # Do not clobber existing files, including dangling symlinks, on retries.
         if [ "$service_manager" = systemd ]; then
             (set -C; render_service > "$service_file") || fail '创建 systemd 服务失败，身份已保留。'
@@ -621,8 +624,11 @@ RC
     printf '目标 Agent 版本：%s (linux/%s)\n' "$release_tag" "$arch"
     asset="viorka-agent-linux-$arch"
     base="https://github.com/vioira/viorka-agent/releases/download/$release_tag"
+    printf '[安装中] 正在下载 Agent 安装包…\n'
     download --max-filesize 134217728 --output "$staging/viorka-agent" "$base/$asset" || fail "下载 Agent 失败：请确认 Release $release_tag 及 $asset 已发布（版本标签必须精确匹配），可直接重试。"
+    printf '[安装中] 正在下载 SHA-256 校验文件…\n'
     download --max-filesize 128 --output "$staging/viorka-agent.sha256" "$base/$asset.sha256" || fail '下载校验文件失败，可直接重试。'
+    printf '[安装中] 正在校验安装包的 SHA-256、版本和架构…\n'
     checksum=$(cat "$staging/viorka-agent.sha256")
     [ "${#checksum}" -eq 64 ] || fail '安装包校验文件无效。'
     case "$checksum" in *[!a-fA-F0-9]*) fail '安装包校验文件无效。' ;; esac
@@ -641,6 +647,7 @@ RC
         printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"warn","ca_file":"%s"}\n' \
             "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$config_path"
     fi
+    printf '[安装中] 正在校验 Agent 配置…\n'
     "$staging/viorka-agent" config-check --config "$config_path" >/dev/null
     migrate_openrc_service
     if [ "$reinstall" -eq 1 ]; then
@@ -675,6 +682,7 @@ RC
         running=0
         printf '旧节点配置和状态已备份至：%s\n' "$retired"
     fi
+    printf '[安装中] 正在写入 Agent 程序…\n'
     mkdir -p state
     if [ "$config_path" != agent.json ]; then
         mv "$config_path" agent.json
@@ -704,6 +712,7 @@ RC
             printf '\n' >&3
         fi
         validate_token
+        printf '[安装中] 正在向 Panel 提交 Agent 注册请求…\n'
         if [ -n "$reenroll_node" ]; then
             printf '%s' "$enrollment_token" | ./viorka-agent register --config agent.json --token-stdin --replace-node="$reenroll_node"
         else
