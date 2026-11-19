@@ -103,6 +103,15 @@ exit 0
                 self.assertEqual(service.stat().st_mode & 0o777, 0o644 if manager == 'systemd' else 0o755)
                 if manager == 'openrc':
                     subprocess.run(['sh', '-n', str(service)], check=True)
+                    current = service.read_text()
+                    # The shipped legacy template ends immediately after start_pre.
+                    legacy_end = current.index('\n}', current.index('start_pre()')) + 3
+                    service.write_text(current[:legacy_end])
+                    prior_calls = calls.read_bytes()
+                    subprocess.run(['sh', str(local), 'service'], env=env, check=True,
+                                   capture_output=True, timeout=10)
+                    self.assertEqual(service.read_text(), current)
+                    self.assertEqual(calls.read_bytes(), prior_calls)
                 else:
                     self.assertIn('enable --now viorka-agent.service', calls.read_text())
 

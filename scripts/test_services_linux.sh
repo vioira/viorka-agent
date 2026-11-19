@@ -69,7 +69,12 @@ if [ -d /run/systemd/system ]; then
     systemctl stop viorka-agent
 else
     test -L /etc/runlevels/default/viorka-agent
-    rc-service viorka-agent stop
+    stop_output=$(timeout 35 rc-service -C viorka-agent stop)
+    printf '%s\n' "$stop_output"
+    printf '%s\n' "$stop_output" | grep -Eq 'Stopping Viorka Agent.*\[ *ok *\]'
+    status=0
+    rc-service viorka-agent status || status=$?
+    [ "$status" -eq 3 ]
 fi
 sleep 2
 if kill -0 "$(cat "$agent_dir/fixture.pid")" 2>/dev/null; then exit 1; fi

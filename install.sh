@@ -101,7 +101,53 @@ start_pre() {
     "$command" config-check --config /root/.viorka-agent/agent.json
 }
 RC
+            [ "${1:-}" != legacy ] || return 0
+            cat <<'RC'
+# PID 1 in a container may leave an exited process visible in /proc.
+process_exited() {
+    [ ! -d "/proc/$1" ] || grep -q '^State:[[:space:]]*Z' "/proc/$1/status"
+}
+stop_agent() {
+    local supervisor_pid child_pid service_arg remaining pid
+    read -r supervisor_pid < "$pidfile" || return 1
+    child_pid=$(service_get_value child_pid)
+    for pid in "$supervisor_pid" "$child_pid"; do
+        case "$pid" in ''|0*|1|*[!0-9]*) return 1 ;; esac
+    done
+    [ "$(readlink "/proc/$supervisor_pid/exe")" = /sbin/supervise-daemon ] || return 1
+    service_arg=$(tr '\000' '\n' < "/proc/$supervisor_pid/cmdline" | sed -n '2p')
+    [ "$service_arg" = "$RC_SVCNAME" ] || return 1
+
+    # The supervisor handles its child's TERM/KILL schedule and removes its
+    # pidfile on shutdown. Its native --stop client waits for PID reaping too.
+    kill -TERM "$supervisor_pid" || return 1
+    remaining=30
+    while [ "$remaining" -gt 0 ]; do
+        if [ ! -e "$pidfile" ] && process_exited "$supervisor_pid" && process_exited "$child_pid"; then
+            return 0
         fi
+        sleep 1
+        remaining=$((remaining - 1))
+    done
+    return 1
+}
+stop() {
+    ebegin "Stopping ${name}"
+    stop_agent
+    eend $? "Could not confirm that Viorka Agent stopped"
+}
+RC
+        fi
+    }
+    migrate_openrc_service() {
+        [ "${legacy_openrc:-0}" = 1 ] || return 0
+        render_service legacy | cmp -s - "$service_file" || fail '旧服务模板已变化，拒绝迁移。'
+        tmp_service=$(mktemp "$service_file.XXXXXX") || fail '无法创建临时服务文件。'
+        if render_service > "$tmp_service" && chmod 755 "$tmp_service" && mv -f "$tmp_service" "$service_file"; then
+            return 0
+        fi
+        rm -f "$tmp_service"
+        fail '更新 OpenRC 服务模板失败。'
     }
     service_preflight() {
         existing_service=0
@@ -136,12 +182,17 @@ RC
             fail '未检测到运行中的 systemd/OpenRC；请使用 install --foreground 或外部 supervisor。'
         fi
         if [ -e "$service_file" ] || [ -L "$service_file" ]; then
-            [ "$action" = install ] || [ "$action" = uninstall ] || fail '服务文件已存在，请使用服务管理器管理。'
             [ -f "$service_file" ] && [ ! -L "$service_file" ] || fail '服务文件不安全。'
             [ "$(stat -c %u "$service_file")" = 0 ] || fail '服务文件必须归 root 所有。'
             mode=$(stat -c %a "$service_file")
             case "$mode" in *[2367][0-7]|*[0-7][2367]) fail '服务文件权限不安全。' ;; esac
-            render_service | cmp -s - "$service_file" || fail '已有服务与安装器模板不符，拒绝覆盖。'
+            if render_service | cmp -s - "$service_file"; then
+                [ "$action" != service ] || fail '服务文件已存在，请使用服务管理器管理。'
+            elif [ "$service_manager" = openrc ] && render_service legacy | cmp -s - "$service_file"; then
+                legacy_openrc=1
+            else
+                fail '已有服务与安装器模板不符，拒绝覆盖。'
+            fi
             if [ "$service_manager" = systemd ]; then
                 [ "$(timeout 15 systemctl show viorka-agent.service -p FragmentPath --value)" = "$service_file" ] || fail 'systemd 服务来源不符。'
                 drop_ins=$(timeout 15 systemctl show viorka-agent.service -p DropInPaths --value) || fail '无法检查 systemd 覆盖配置。'
@@ -199,6 +250,7 @@ RC
                 case "$mode" in *[2367][0-7]|*[0-7][2367]) fail '服务目录权限不安全。' ;; esac
                 path=$(dirname "$path")
             done
+            migrate_openrc_service
             if [ "$existing_service" -eq 1 ]; then
                 printf '正在停止 Agent 服务并取消开机自启（%s）...\n' "$service_manager"
                 if [ "$service_manager" = systemd ]; then
@@ -359,6 +411,11 @@ RC
         mkdir .install-lock 2>/dev/null || fail '另一个安装或卸载正在进行，请稍后重试。'
         trap 'rmdir .install-lock' 0
         trap 'exit 1' 1 2 15
+        if [ "${legacy_openrc:-0}" = 1 ]; then
+            migrate_openrc_service
+            printf 'OpenRC 服务模板已更新。\n'
+            return
+        fi
         for path in viorka-agent agent.json state state/identity.json; do
             [ -e "$path" ] && [ ! -L "$path" ] || fail '已有安装不完整或包含符号链接。'
             [ "$(stat -c %u "$path")" = 0 ] || fail '已有安装必须归 root 所有。'
@@ -549,6 +606,7 @@ RC
     chmod 700 "$staging/viorka-agent"
     binary_version=$(timeout -k 2 10 "$staging/viorka-agent" version) || fail '无法执行下载的 Agent。'
     [ "$binary_version" = "viorka-agent ${release_tag#v} (linux/$arch)" ] || fail '下载的 Agent 版本或平台与指定 Release 不符。'
+    migrate_openrc_service
     if [ "$reinstall" -eq 1 ]; then
         printf '{"panel_url":"%s","node_name":"viorka-node","state_dir":"%s/state","log_level":"warn","ca_file":"%s"}\n' \
             "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$staging/agent.json"

@@ -68,6 +68,8 @@ tail -f /var/log/messages | grep 'viorka-agent'
 logread -f | grep 'viorka-agent'
 ```
 
+旧版 OpenRC 服务在容器 PID 1 未回收已退出的监督进程时，可能卡在 `Stopping Viorka Agent`。用修复版安装脚本执行 `sh install.sh service` 可原地更新匹配的旧模板，然后执行 `rc-service viorka-agent stop`。新版在确认 Agent 与监督进程均已退出、监督进程已清理 PID 文件后输出 `[ ok ]`，最多等待约 30 秒。
+
 安装和更新成功后，安装器会按实际使用的 systemd、OpenRC 或前台模式输出管理及日志命令。开头的进程检查明确标注为「安装前检查」，不代表安装后的状态。OpenRC 日志文件位置取决于系统 syslog 配置。
 
 输出中的更新命令不含注册令牌，复用现有配置和身份，默认选择最新正式版，也可追加 `--version=vX.Y.Z`。后台模式更新成功后自动重启 Agent；前台模式保留 `--foreground`，已有进程需自行重启。更新命令无需提供 `--url` 和 `--token`；首次安装、注册未完成或使用令牌重新安装时仍需提供 `--url`。请使用原安装用户执行这些命令；后台模式为 root。
