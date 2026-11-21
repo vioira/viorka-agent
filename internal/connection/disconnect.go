@@ -67,6 +67,8 @@ func connectionReasonChinese(reason string) string {
 		return "Panel 响应格式无效"
 	case "response_too_large":
 		return "Panel 响应超过大小限制"
+	case "activation_timeout":
+		return "等待 Panel 确认遥测会话激活超时"
 	case "session_rotation", "session_changed":
 		return "会话已更新，正在重新连接"
 	case "canceled":

@@ -323,7 +323,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		capabilities = append(capabilities, v1.TrafficCapability, v1.DailyTrafficCapability)
 	}
 	if c.telemetryEnabled {
-		capabilities = append(capabilities, v1.TelemetryCapability, v1.TCPProbeCapability, v1.TCPProbeSettingsCapability)
+		capabilities = append(capabilities, v1.TelemetryCapability, v1.TelemetryActivationCapability, v1.TCPProbeCapability, v1.TCPProbeSettingsCapability)
 	}
 	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: capabilities, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
 		return err
@@ -404,8 +404,8 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	defer tick.Stop()
 	telemetry := &telemetryClientSession{client: c, identity: id, credential: credential}
 	defer telemetry.close()
-	// Only ready confirms telemetry on this management connection; retain HTTP
-	// across reconnects while waiting for the new session generation.
+	// Keep the negotiation deadline until the Panel confirms activation when
+	// the capability was negotiated.
 	var negotiationTimer *time.Timer
 	var negotiationExpired <-chan time.Time
 	if c.telemetryEnabled {
@@ -483,8 +483,12 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		select {
 		case <-negotiationExpired:
 			negotiationExpired = nil
-			if telemetry.generation == "" {
-				return connectionError("telemetry_negotiation", "ready_timeout", nil)
+			if telemetry.generation == "" || telemetry.awaitingActivation {
+				reason := "ready_timeout"
+				if telemetry.awaitingActivation {
+					reason = "activation_timeout"
+				}
+				return connectionError("telemetry_negotiation", reason, nil)
 			}
 		case <-runnerDone:
 			return fmt.Errorf("%w: %v", errTelemetryStopped, c.telemetry.err)
@@ -530,7 +534,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 				return connectionError("read", "message_rate_exceeded", nil)
 			}
 			if handled, handleErr := telemetry.handle(e, send); handled {
-				if telemetry.generation != "" && negotiationTimer != nil {
+				if telemetry.generation != "" && !telemetry.awaitingActivation && negotiationTimer != nil {
 					negotiationTimer.Stop()
 					negotiationExpired = nil
 				}

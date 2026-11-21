@@ -6,6 +6,7 @@
   "sent_at": "2026-11-02T00:00:00Z",
   "payload": {
     "session_generation": "session-1",
+    "activation_ack": true,
     "settings": {
       "revision": 1,
       "collection_seconds": 30,

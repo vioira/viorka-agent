@@ -11,6 +11,7 @@ import (
 // TelemetryCapability is a contract identifier, not an advertisement of support.
 // Neither peer advertises it until storage, transport and scheduling are ready.
 const TelemetryCapability = "node.telemetry.v3"
+const TelemetryActivationCapability = "node.telemetry.activation.v1"
 const TCPProbeCapability = "node.tcp_probe.v2"
 const TCPProbeSettingsCapability = "node.tcp_probe.settings.v2"
 const (
@@ -149,7 +150,7 @@ func TelemetryMessageAllowed(kind string, negotiated bool) bool {
 		return false
 	}
 	switch kind {
-	case "node.telemetry.ready", "node.settings.v3", "node.settings.v3_result", "node.metrics.v3", "node.metrics.receipt", "node.metrics.demand", "node.metrics.demand_result":
+	case "node.telemetry.ready", "node.telemetry.activated", "node.settings.v3", "node.settings.v3_result", "node.metrics.v3", "node.metrics.receipt", "node.metrics.demand", "node.metrics.demand_result":
 		return true
 	}
 	return false

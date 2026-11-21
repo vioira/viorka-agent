@@ -19,6 +19,8 @@ type telemetryClientSession struct {
 	credential          sessionCredential
 	port                *telemetryWSSPort
 	generation, readyID string
+	activationResultID  string
+	awaitingActivation  bool
 	applied             bool
 }
 
@@ -65,14 +67,19 @@ func (t *telemetryClientSession) control(control telemetryControl, send func(v1.
 	if err := send(message); err != nil {
 		return err
 	}
-	if control.settings != nil && control.correlation == t.readyID {
-		t.applied = control.settings.State == "applied"
+	if control.settings != nil {
+		if control.correlation == t.readyID {
+			t.applied = control.settings.State == "applied"
+		}
+		if t.awaitingActivation && control.settings.State == "applied" {
+			t.activationResultID = message.MessageID
+		}
 	}
 	return nil
 }
 func (t *telemetryClientSession) handle(e v1.Envelope, send func(v1.Envelope) error) (bool, error) {
 	switch e.Type {
-	case "node.telemetry.ready", "node.settings.v3", "node.metrics.demand", "node.metrics.receipt":
+	case "node.telemetry.ready", "node.telemetry.activated", "node.settings.v3", "node.metrics.demand", "node.metrics.receipt":
 	default:
 		return false, nil
 	}
@@ -84,6 +91,19 @@ func (t *telemetryClientSession) handle(e v1.Envelope, send func(v1.Envelope) er
 			return true, fmt.Errorf("telemetry receipt before ready")
 		}
 		t.port.receipt(e)
+		return true, nil
+	}
+	if e.Type == "node.telemetry.activated" {
+		var activation v1.TelemetryActivated
+		if !t.awaitingActivation || !t.applied || t.activationResultID == "" || e.CorrelationID != t.activationResultID ||
+			v1.ValidateTelemetryJSON(e.Payload, "TelemetryActivated", false) != nil ||
+			v1.DecodeTelemetry(e.Payload, &activation, false) != nil || activation.SessionGeneration != t.generation {
+			return true, fmt.Errorf("invalid telemetry activation")
+		}
+		if err := t.enqueue(telemetryEvent{kind: "activated", credential: t.credential, serverGeneration: t.generation}); err != nil {
+			return true, err
+		}
+		t.awaitingActivation = false
 		return true, nil
 	}
 	if e.CorrelationID != "" {
@@ -102,6 +122,7 @@ func (t *telemetryClientSession) handle(e v1.Envelope, send func(v1.Envelope) er
 		t.client.tcpProbeSupported.Store(ready.TcpProbe)
 		t.generation = ready.SessionGeneration
 		t.readyID = e.MessageID
+		t.awaitingActivation = ready.ActivationAck
 		t.port = t.client.telemetryBridge.attach()
 		t.port.dailyAck = func(acks []*v1.TelemetryDailyTrafficAck) {
 			if t.client.dailyAck != nil {
@@ -109,7 +130,7 @@ func (t *telemetryClientSession) handle(e v1.Envelope, send func(v1.Envelope) er
 			}
 		}
 		if t.client.telemetry != nil {
-			return true, t.enqueue(telemetryEvent{kind: "ready", correlation: e.MessageID, settings: *ready.Settings, credential: t.credential, serverGeneration: ready.SessionGeneration})
+			return true, t.enqueue(telemetryEvent{kind: "ready", correlation: e.MessageID, settings: *ready.Settings, credential: t.credential, serverGeneration: ready.SessionGeneration, awaitActivation: t.awaitingActivation})
 		}
 		return true, t.start(ready, send)
 	case "node.settings.v3":
@@ -120,17 +141,17 @@ func (t *telemetryClientSession) handle(e v1.Envelope, send func(v1.Envelope) er
 		if v1.ValidateTelemetryJSON(e.Payload, "TelemetrySettings", false) != nil || v1.DecodeTelemetry(e.Payload, &settings, false) != nil {
 			return true, fmt.Errorf("invalid telemetry settings")
 		}
-		if !t.applied {
+		if !t.applied || t.awaitingActivation {
 			t.readyID = e.MessageID
 			if t.client.telemetry == nil {
 				return true, t.start(v1.TelemetryReady{SessionGeneration: t.generation, Settings: &settings}, send)
 			}
-			return true, t.enqueue(telemetryEvent{kind: "ready", correlation: e.MessageID, settings: settings, credential: t.credential, serverGeneration: t.generation})
+			return true, t.enqueue(telemetryEvent{kind: "ready", correlation: e.MessageID, settings: settings, credential: t.credential, serverGeneration: t.generation, awaitActivation: t.awaitingActivation})
 		}
 		return true, t.enqueue(telemetryEvent{kind: "settings", correlation: e.MessageID, settings: settings})
 	case "node.metrics.demand":
-		if !t.applied {
-			return true, fmt.Errorf("demand before telemetry ready applied")
+		if !t.applied || t.awaitingActivation {
+			return true, fmt.Errorf("demand before telemetry activation")
 		}
 		var demand v1.TelemetryDemand
 		if v1.ValidateTelemetryJSON(e.Payload, "TelemetryDemand", false) != nil || v1.DecodeTelemetry(e.Payload, &demand, false) != nil {
@@ -184,6 +205,6 @@ func (t *telemetryClientSession) start(ready v1.TelemetryReady, send func(v1.Env
 		return errors.Join(err, schedule.workers.stop(ctx))
 	}
 	schedule.window.maxBytes = c.cfg.TelemetryBufferBytes
-	c.telemetry = startTelemetryRunner(c.runCtx, schedule, t.credential, settings, c.telemetryTransport(t.identity.NodeID, runID, c.telemetryBridge.delivery), time.Now)
+	c.telemetry = startTelemetryRunner(c.runCtx, schedule, t.credential, settings, c.telemetryTransport(t.identity.NodeID, runID, c.telemetryBridge.delivery), time.Now, t.awaitingActivation)
 	return nil
 }

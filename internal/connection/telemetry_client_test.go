@@ -103,11 +103,14 @@ func testTelemetryClientReconnect(t *testing.T) {
 				return err
 			}
 			var payload v1.Hello
-			if v1.Decode(hello.Payload, &payload) != nil || !slices.Contains(payload.Capabilities, v1.TelemetryCapability) {
+			if v1.Decode(hello.Payload, &payload) != nil || !slices.Contains(payload.Capabilities, v1.TelemetryCapability) ||
+				!slices.Contains(payload.Capabilities, v1.TelemetryActivationCapability) {
 				return fmt.Errorf("v3 capability missing")
 			}
+			allowed := []string{"node.inspect", "node.inventory.v1", v1.TelemetryCapability, v1.TelemetryActivationCapability,
+				v1.TrafficCapability, v1.DailyTrafficCapability, v1.TCPProbeCapability, v1.TCPProbeSettingsCapability}
 			for _, capability := range payload.Capabilities {
-				if capability != "node.inspect" && capability != "node.inventory.v1" && capability != v1.TelemetryCapability && capability != v1.TrafficCapability && capability != v1.DailyTrafficCapability && capability != v1.TCPProbeCapability && capability != v1.TCPProbeSettingsCapability {
+				if !slices.Contains(allowed, capability) {
 					return fmt.Errorf("unexpected or retired capability: %s", capability)
 				}
 			}
@@ -115,6 +118,7 @@ func testTelemetryClientReconnect(t *testing.T) {
 			if err = send(v1.Message("system.hello_ack", "node-demo", "ack", ack)); err != nil {
 				return err
 			}
+			// This Panel uses the base v3 exchange without an activation acknowledgement.
 			if err = send(v1.Message("node.telemetry.ready", "node-demo", "ready", v1.TelemetryReady{SessionGeneration: generation, Settings: &settings})); err != nil {
 				return err
 			}
@@ -320,5 +324,62 @@ func TestTelemetryClientSettingsRetryAndControlGeneration(t *testing.T) {
 	}
 	if sends != 1 || !session.applied {
 		t.Fatal("new ready result not applied")
+	}
+}
+
+func TestTelemetryActivationMatchesLatestSettingsResult(t *testing.T) {
+	runner := &telemetryRunner{events: make(chan telemetryEvent, 1), done: make(chan struct{})}
+	session := &telemetryClientSession{
+		client:     &Client{telemetryEnabled: true, telemetry: runner},
+		identity:   state.Identity{NodeID: "node"},
+		credential: sessionCredential{Generation: 2},
+		generation: "generation-2", readyID: "ready",
+		awaitingActivation: true, applied: true,
+	}
+	settings := v1.DefaultTelemetrySettings()
+	settings.Revision++
+	var sent v1.Envelope
+	send := func(message v1.Envelope) error { sent = message; return nil }
+
+	// Settings can supersede Ready while the Panel is still waiting to activate.
+	update := v1.Message("node.settings.v3", "node", "settings-2", settings)
+	if handled, err := session.handle(update, send); !handled || err != nil {
+		t.Fatal("pending settings", err)
+	}
+	select {
+	case event := <-runner.events:
+		if event.kind != "ready" || !event.awaitActivation || event.serverGeneration != "generation-2" {
+			t.Fatalf("superseding settings lost activation context: %+v", event)
+		}
+	default:
+		t.Fatal("settings not forwarded")
+	}
+	result := &v1.TelemetrySettingsResult{Revision: 2, AppliedRevision: 2, State: "applied"}
+	if err := session.control(telemetryControl{generation: "generation-2", correlation: update.MessageID, settings: result}, send); err != nil {
+		t.Fatal(err)
+	}
+
+	confirm := func(generation, correlation string) error {
+		message := v1.Message("node.telemetry.activated", "node", "activated", v1.TelemetryActivated{SessionGeneration: generation})
+		message.CorrelationID = correlation
+		handled, err := session.handle(message, send)
+		if !handled {
+			t.Fatal("activation not handled")
+		}
+		return err
+	}
+	if confirm("generation-1", sent.MessageID) == nil || confirm("generation-2", "old-result") == nil || !session.awaitingActivation || len(runner.events) != 0 {
+		t.Fatal("stale activation unlocked uploads")
+	}
+	if err := confirm("generation-2", sent.MessageID); err != nil || session.awaitingActivation {
+		t.Fatal("current activation not accepted", err)
+	}
+	select {
+	case event := <-runner.events:
+		if event.kind != "activated" || event.serverGeneration != "generation-2" || event.credential.Generation != 2 {
+			t.Fatalf("activation lost session identity: %+v", event)
+		}
+	default:
+		t.Fatal("activation not forwarded")
 	}
 }

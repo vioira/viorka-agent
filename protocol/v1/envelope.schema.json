@@ -1211,12 +1211,29 @@
         "daily_traffic": {
           "type": "boolean",
           "description": "Requires node.traffic.daily.v1; daily acknowledgements follow durable commit."
+        },
+        "activation_ack": {
+          "type": "boolean",
+          "description": "Requires node.telemetry.activation.v1; wait for node.telemetry.activated before uploading."
         }
       },
       "required": [
         "session_generation",
         "settings"
       ]
+    },
+    "TelemetryActivated": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_generation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+        }
+      },
+      "required": ["session_generation"]
     },
     "TelemetryTrafficSettings": {
       "type": "object",

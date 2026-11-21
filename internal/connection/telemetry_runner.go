@@ -17,6 +17,7 @@ type telemetryEvent struct {
 	settings         v1.TelemetrySettings
 	credential       sessionCredential
 	serverGeneration string
+	awaitActivation  bool
 }
 type telemetryControl struct {
 	generation  string
@@ -52,13 +53,13 @@ type telemetryRunner struct {
 	err         error // published by closing done
 }
 
-func startTelemetryRunner(parent context.Context, s *telemetrySchedule, credential sessionCredential, settings *telemetrySettings, transmit telemetryTransmit, now func() time.Time) *telemetryRunner {
+func startTelemetryRunner(parent context.Context, s *telemetrySchedule, credential sessionCredential, settings *telemetrySettings, transmit telemetryTransmit, now func() time.Time, awaitActivation bool) *telemetryRunner {
 	ctx, cancel := context.WithCancel(parent)
 	r := &telemetryRunner{diagnostics: make(chan telemetryDiagnostics, 1), events: make(chan telemetryEvent, 8), controls: make(chan telemetryControl, 8), done: make(chan struct{}), cancel: cancel}
-	go r.run(ctx, s, credential, settings, transmit, now)
+	go r.run(ctx, s, credential, settings, transmit, now, awaitActivation)
 	return r
 }
-func (r *telemetryRunner) run(ctx context.Context, s *telemetrySchedule, credential sessionCredential, settings *telemetrySettings, transmit telemetryTransmit, now func() time.Time) {
+func (r *telemetryRunner) run(ctx context.Context, s *telemetrySchedule, credential sessionCredential, settings *telemetrySettings, transmit telemetryTransmit, now func() time.Time, awaitActivation bool) {
 	logger := settings.logger
 	if logger == nil {
 		logger = slog.Default()
@@ -139,6 +140,16 @@ func (r *telemetryRunner) run(ctx context.Context, s *telemetrySchedule, credent
 	}
 	publish()
 	correlation := ""
+	credentialActive := !awaitActivation
+	activate := func(event telemetryEvent, at time.Time) error {
+		if err := s.reconnected(event.credential.Generation, event.serverGeneration, at); err != nil {
+			return err
+		}
+		credential = event.credential
+		credentialActive = true
+		awaitActivation = false
+		return nil
+	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -148,13 +159,15 @@ func (r *telemetryRunner) run(ctx context.Context, s *telemetrySchedule, credent
 				return
 			}
 		}
-		if send := s.take(at); send != nil {
-			operational.send = at
-			// Only take can create active ownership, so this fixed queue is never full.
-			select {
-			case requests <- telemetryTransmission{send, credential, s.cadence.settings.HttpReportSeconds}:
-			case <-ctx.Done():
-				return
+		if credentialActive && !awaitActivation {
+			if send := s.take(at); send != nil {
+				operational.send = at
+				// Only take can create active ownership, so this fixed queue is never full.
+				select {
+				case requests <- telemetryTransmission{send, credential, s.cadence.settings.HttpReportSeconds}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 		operational.record(ctx, logger, s, at)
@@ -226,20 +239,28 @@ func (r *telemetryRunner) run(ctx context.Context, s *telemetrySchedule, credent
 				}
 			case "disconnected":
 				s.disconnect(at)
+				awaitActivation = false
 			case "ready":
+				awaitActivation = event.awaitActivation
 				result := settings.apply(event.settings)
 				if result.State == "applied" {
 					if err := s.settings(event.settings, at); err != nil {
 						r.err = err
 						return
 					}
-					if err := s.reconnected(event.credential.Generation, event.serverGeneration, at); err != nil {
-						r.err = err
-						return
+					if !awaitActivation {
+						if err := activate(event, at); err != nil {
+							r.err = err
+							return
+						}
 					}
-					credential = event.credential
 				}
 				if !control(telemetryControl{generation: event.serverGeneration, correlation: event.correlation, settings: &result}) {
+					return
+				}
+			case "activated":
+				if err := activate(event, at); err != nil {
+					r.err = err
 					return
 				}
 			case "wake": // injectable-clock tests; no state mutation

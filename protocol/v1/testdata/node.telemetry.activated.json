@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "message_id": "activation-1",
+  "correlation_id": "result-1",
+  "node_id": "node-demo",
+  "type": "node.telemetry.activated",
+  "sent_at": "2026-11-02T00:00:00Z",
+  "payload": {
+    "session_generation": "session-1"
+  }
+}

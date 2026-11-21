@@ -83,7 +83,7 @@ func TestTelemetryLeaseAndCapability(t *testing.T) {
 	if d.Validate("generation-2") != nil {
 		t.Fatal("disable rejected")
 	}
-	for _, kind := range []string{"node.telemetry.ready", "node.settings.v3", "node.settings.v3_result", "node.metrics.v3", "node.metrics.receipt", "node.metrics.demand", "node.metrics.demand_result"} {
+	for _, kind := range []string{"node.telemetry.ready", "node.telemetry.activated", "node.settings.v3", "node.settings.v3_result", "node.metrics.v3", "node.metrics.receipt", "node.metrics.demand", "node.metrics.demand_result"} {
 		if TelemetryMessageAllowed(kind, false) || !TelemetryMessageAllowed(kind, true) {
 			t.Fatal("capability gate", kind)
 		}
@@ -114,7 +114,7 @@ func TestTelemetryReceiptCountConservation(t *testing.T) {
 }
 
 func TestTelemetryCanonicalPayloads(t *testing.T) {
-	fixtures := map[string]any{"node.telemetry.ready": &TelemetryReady{}, "node.settings.v3": &TelemetrySettings{}, "node.settings.v3_result": &TelemetrySettingsResult{}, "node.metrics.v3": &TelemetryBatch{}, "node.metrics.receipt": &TelemetryReceipt{}, "node.metrics.demand": &TelemetryDemand{}, "node.metrics.demand_result": &TelemetryDemandResult{}}
+	fixtures := map[string]any{"node.telemetry.ready": &TelemetryReady{}, "node.telemetry.activated": &TelemetryActivated{}, "node.settings.v3": &TelemetrySettings{}, "node.settings.v3_result": &TelemetrySettingsResult{}, "node.metrics.v3": &TelemetryBatch{}, "node.metrics.receipt": &TelemetryReceipt{}, "node.metrics.demand": &TelemetryDemand{}, "node.metrics.demand_result": &TelemetryDemandResult{}}
 	for kind, payload := range fixtures {
 		t.Run(kind, func(t *testing.T) {
 			path := "testdata/" + kind + ".json"

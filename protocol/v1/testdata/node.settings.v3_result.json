@@ -1,6 +1,7 @@
 {
   "version": "1.0",
-  "message_id": "example-1",
+  "message_id": "result-1",
+  "correlation_id": "example-1",
   "node_id": "node-demo",
   "type": "node.settings.v3_result",
   "sent_at": "2026-11-02T00:00:00Z",

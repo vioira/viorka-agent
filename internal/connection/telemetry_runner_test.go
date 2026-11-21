@@ -104,7 +104,7 @@ func TestTelemetryRunnerTLSPOSTThenRealtime(t *testing.T) {
 	}
 	transport := client.telemetryTransport(fixture.NodeID, fixture.RunID, func() telemetryFrameDelivery { return deliver })
 	saved := &telemetrySettings{current: &settings, write: func(string, any) error { return nil }}
-	runner := startTelemetryRunner(context.Background(), schedule, credential, saved, transport, now)
+	runner := startTelemetryRunner(context.Background(), schedule, credential, saved, transport, now, false)
 	defer func() {
 		unblock()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
