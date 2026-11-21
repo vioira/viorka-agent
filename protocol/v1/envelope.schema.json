@@ -101,6 +101,9 @@
           "enum": [
             1
           ]
+        },
+        "origin_migration": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -115,6 +118,11 @@
         "observed_config_revision": {
           "type": "integer",
           "minimum": 0
+        },
+        "applied_origin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
         }
       },
       "required": [

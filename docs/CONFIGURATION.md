@@ -232,3 +232,7 @@ Panel/Agent 协商 `node.tcp_probe.v2` 后启用独立探测。每 20 秒一轮�
 生命周期日志补充 `phase`、`reason`、`attempt_seconds`、`retry_seconds`，适用时包含 `close_code`、`http_status`。正常 `session_rotation` / `session_changed` 为 INFO，意外连接失败为 WARN，永久身份或证书失败为 ERROR。`attempt_seconds` 包含认证/拨号及会话存续时间；重试秒数是加入随机抖动前的基础间隔。不输出远端关闭文本、原始错误、凭证、URL 或采样内容。
 
 64 MiB 与 128 MiB 指整机/容器预算，不能据此推断 Agent 可用内存；默认选择 512 KiB。真实 Debian/Ubuntu、Alpine、cgroup 64/128 MiB 限额及与 sing-box/Xray/Realm 共存的运行验证须单独执行。资源证据和复现命令见 [TELEMETRY_REPLAY_VALIDATION.md](TELEMETRY_REPLAY_VALIDATION.md)。
+
+### Panel 公开地址迁移
+
+配置文件的 `panel_url` 是初始信任地址。与支持 `panel.origin.v1` 的 Panel 配合时，Agent 自动查找当前地址并校验证书及签名 challenge。新管理连接握手成功后，Agent 将 `active_origin` 原子写入私有 identity.json。下次启动直接连接已确认地址。节点 ID、密钥、任务记录和流量账本继续沿用。迁移期间旧域名应继续提供可信 HTTPS 并回源到同一 Panel，以便离线节点上线后获取新地址。

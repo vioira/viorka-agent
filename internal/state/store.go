@@ -13,9 +13,10 @@ import (
 )
 
 type Identity struct {
-	PanelURL   string `json:"panel_url"`
-	NodeID     string `json:"node_id"`
-	PrivateKey []byte `json:"private_key"`
+	ActiveOrigin string `json:"active_origin,omitempty"`
+	PanelURL     string `json:"panel_url"`
+	NodeID       string `json:"node_id"`
+	PrivateKey   []byte `json:"private_key"`
 }
 type Store struct {
 	dir  string

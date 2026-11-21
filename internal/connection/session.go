@@ -12,6 +12,7 @@ import (
 var errSessionChanged = errors.New("shared session changed")
 
 type sessionCredential struct {
+	Origin     string
 	Token      string
 	ExpiresAt  time.Time
 	Generation uint64
@@ -122,21 +123,15 @@ func (s *sessionCoordinator) Get(ctx context.Context, binding string, issue func
 // Reject fences delayed responses: an old request cannot revoke newer credentials.
 // expired is true only for an authenticated session_expired classification.
 func (s *sessionCoordinator) Reject(generation uint64, expired bool) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if generation == 0 || s.current.Generation != generation || s.running != nil {
-		return false
+	if expired {
+		return s.retire(generation, nil)
 	}
-	s.invalidate()
-	s.current = sessionCredential{}
-	if !expired {
-		s.blocked = ErrIdentityRejected
-	}
-	return true
+	return s.retire(generation, ErrIdentityRejected)
 }
 
-// block preserves TLS failure classification and fences stale transport results.
-func (s *sessionCoordinator) block(generation uint64, err error) bool {
+// retire fences late transport results. A nil cause allows a fresh handshake
+// after an expiry, a trusted migration notice or an unsuccessful trial.
+func (s *sessionCoordinator) retire(generation uint64, cause error) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if generation == 0 || s.current.Generation != generation || s.running != nil {
@@ -144,6 +139,6 @@ func (s *sessionCoordinator) block(generation uint64, err error) bool {
 	}
 	s.invalidate()
 	s.current = sessionCredential{}
-	s.blocked = err
+	s.blocked = cause
 	return true
 }

@@ -77,6 +77,16 @@ func connectionReasonChinese(reason string) string {
 		return "等待 Panel 确认遥测会话激活超时"
 	case "session_rotation", "session_changed":
 		return "会话已更新，正在重新连接"
+	case "invalid_target":
+		return "Panel 返回的迁移目标不是有效的 HTTPS 地址"
+	case "target_unavailable":
+		return "新地址的 TLS 或管理接口尚不可用，将从原地址重试"
+	case "session_unconfirmed":
+		return "原 Panel 未确认新地址的认证挑战，请检查两个地址的回源"
+	case "capability_missing":
+		return "新地址尚未协商地址迁移能力"
+	case "invalid_challenge":
+		return "挑战与连接地址、节点身份或有效期不匹配"
 	case "canceled":
 		return "连接操作已取消"
 	default:

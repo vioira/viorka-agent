@@ -90,7 +90,7 @@ func (c *Client) uploadTelemetryBody(ctx context.Context, credential sessionCred
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.PanelURL+"/api/v1/agents/metrics", bytes.NewReader(raw))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.credentialOrigin(credential)+"/api/v1/agents/metrics", bytes.NewReader(raw))
 	if err != nil {
 		return failed("invalid_batch", 0, 0, err)
 	}
@@ -100,7 +100,7 @@ func (c *Client) uploadTelemetryBody(ctx context.Context, credential sessionCred
 	if err != nil {
 		var certificate *tls.CertificateVerificationError
 		if errors.As(err, &certificate) {
-			if !c.sessions.block(credential.Generation, err) {
+			if !c.sessions.retire(credential.Generation, err) {
 				return failed("stale_session", 0, 0, err)
 			}
 			return failed("tls_error", 0, 0, err)

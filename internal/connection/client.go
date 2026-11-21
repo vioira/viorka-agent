@@ -3,12 +3,11 @@ package connection
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
+
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -40,6 +39,7 @@ var ErrIdentityRejected = errors.New("agent identity rejected; contact administr
 const agentStopping = websocket.StatusCode(4001)
 
 type Client struct {
+	activeOrigin          atomic.Pointer[string]
 	activeSocket          atomic.Pointer[websocket.Conn]
 	dailyPersistFailed    bool // owned by the telemetry sender
 	dailyTrafficSupported atomic.Bool
@@ -98,17 +98,23 @@ func New(cfg config.Local, s *state.Store) (*Client, error) {
 }
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 func (c *Client) post(ctx context.Context, path string, v, out any) error {
+	return c.postAt(ctx, c.origin(), path, v, out)
+}
+func (c *Client) postAt(ctx context.Context, origin, path string, v, out any) error {
 	ctx, stop := context.WithTimeout(ctx, 15*time.Second)
 	defer stop()
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	r, err := http.NewRequestWithContext(ctx, "POST", c.cfg.PanelURL+path, bytes.NewReader(b))
+	r, err := http.NewRequestWithContext(ctx, "POST", origin+path, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
 	r.Header.Set("Content-Type", "application/json")
+	if path == "/api/v1/agents/challenge" {
+		r.Header.Set("Viorka-Agent-Origin", origin)
+	}
 	res, err := c.http.Do(r)
 	if err != nil {
 		return err
@@ -151,35 +157,6 @@ func (c *Client) session(ctx context.Context, id state.Identity) (string, error)
 	v, err := c.credentials(ctx, id)
 	return v.Token, err
 }
-func (c *Client) issueSession(ctx context.Context, id state.Identity) (sessionCredential, error) {
-	if len(id.PrivateKey) != ed25519.PrivateKeySize {
-		return sessionCredential{}, fmt.Errorf("invalid identity key")
-	}
-	var ch struct {
-		ID        string    `json:"id"`
-		Message   string    `json:"message"`
-		ExpiresAt time.Time `json:"expires_at"`
-	}
-	if err := c.post(ctx, "/api/v1/agents/challenge", map[string]string{"node_id": id.NodeID}, &ch); err != nil {
-		return sessionCredential{}, err
-	}
-	expected := fmt.Sprintf("viorka-agent-session-v1\n%s\n%s\n%s\n%s", c.cfg.PanelURL, id.NodeID, ch.ID, ch.ExpiresAt.Format(time.RFC3339Nano))
-	if ch.Message != expected || !ch.ExpiresAt.After(time.Now()) || ch.ExpiresAt.After(time.Now().Add(2*time.Minute)) {
-		return sessionCredential{}, connectionError("authentication", "invalid_challenge", nil)
-	}
-	sig := ed25519.Sign(ed25519.PrivateKey(id.PrivateKey), []byte(ch.Message))
-	var result struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
-	}
-	if err := c.post(ctx, "/api/v1/agents/session", map[string]string{"challenge_id": ch.ID, "signature": base64.StdEncoding.EncodeToString(sig)}, &result); err != nil {
-		return sessionCredential{}, err
-	}
-	if len(result.Token) != 64 || !result.ExpiresAt.After(time.Now()) {
-		return sessionCredential{}, connectionError("authentication", "invalid_session", nil)
-	}
-	return sessionCredential{Token: result.Token, ExpiresAt: result.ExpiresAt}, nil
-}
 func ID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -202,6 +179,9 @@ func (c *Client) Run(ctx context.Context) (runErr error) {
 	}
 	if id.NodeID == "" {
 		return fmt.Errorf("enrollment incomplete")
+	}
+	if err = c.restoreOrigin(id); err != nil {
+		return err
 	}
 	saved, err := loadTelemetrySettings(c.store, id)
 	if err != nil {
@@ -280,13 +260,25 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			connectErr = connectionError("session", "session_rotation", errSessionRotation)
 		}
 	}()
+	// A failed trial must rediscover the latest target through the last
+	// confirmed origin, even if only the WSS upgrade or hello failed.
+	if credential.Origin != "" && credential.Origin != c.origin() {
+		defer func() {
+			if credential.Origin != c.origin() {
+				c.sessions.retire(credential.Generation, nil)
+			}
+		}()
+	}
 	dialCtx, stop := context.WithTimeout(ctx, 15*time.Second)
-	conn, res, err := websocket.Dial(dialCtx, "wss"+strings.TrimPrefix(c.cfg.PanelURL, "https")+"/api/v1/agents/ws", &websocket.DialOptions{HTTPClient: c.http, HTTPHeader: http.Header{"Authorization": []string{"Bearer " + token}}})
+	conn, res, err := websocket.Dial(dialCtx, "wss"+strings.TrimPrefix(c.credentialOrigin(credential), "https")+"/api/v1/agents/ws", &websocket.DialOptions{HTTPClient: c.http, HTTPHeader: http.Header{"Authorization": []string{"Bearer " + token}}})
 	stop()
 	if err != nil {
 		status := 0
 		if res != nil {
 			status = res.StatusCode
+		}
+		if credential.Origin != "" && credential.Origin != c.origin() {
+			return connectionError("migration", "target_unavailable", nil)
 		}
 		cause := err
 		if status == 401 || status == 403 {
@@ -315,7 +307,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		}
 		return nil
 	}
-	capabilities := []string{"node.inspect", "node.inventory.v1"}
+	capabilities := []string{"node.inspect", "node.inventory.v1", v1.OriginMigrationCapability}
 	if managed.Supported() {
 		capabilities = append(capabilities, v1.EngineCapability, v1.EngineEndpointsCapability, v1.EngineRecoveryCapability)
 	}
@@ -332,6 +324,9 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	_, b, err := conn.Read(hctx)
 	hstop()
 	if err != nil {
+		if websocket.CloseStatus(err) == v1.OriginRefreshCloseCode {
+			c.sessions.retire(credential.Generation, nil)
+		}
 		return connectionError("handshake", "", err)
 	}
 	envelope, err := v1.Parse(b, id.NodeID)
@@ -341,6 +336,21 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	var ack v1.HelloAck
 	if envelope.Type != "system.hello_ack" || v1.Decode(envelope.Payload, &ack) != nil || ack.ProtocolVersion != v1.Version || ack.HeartbeatSeconds < 5 || ack.HeartbeatSeconds > 60 {
 		return connectionError("handshake", "unsupported_hello", nil)
+	}
+	if ack.OriginMigration {
+		origin := c.credentialOrigin(credential)
+		if origin != c.origin() {
+			id.ActiveOrigin = origin
+			if err = c.store.Write("identity.json", id); err != nil {
+				return fmt.Errorf("persist migrated Panel origin: %w", err)
+			}
+			c.activeOrigin.Store(&origin)
+		}
+		if err = send(v1.Message("node.heartbeat", id.NodeID, ID(), v1.Heartbeat{AppliedOrigin: origin})); err != nil {
+			return err
+		}
+	} else if credential.Origin != "" && credential.Origin != c.origin() {
+		return connectionError("migration", "capability_missing", nil)
 	}
 	if c.runCtx == nil {
 		c.runCtx = ctx
@@ -370,6 +380,9 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		for {
 			typ, b, err := conn.Read(ctx)
 			if err != nil {
+				if websocket.CloseStatus(err) == v1.OriginRefreshCloseCode {
+					c.sessions.retire(credential.Generation, nil)
+				}
 				cancelCause(connectionError("read", "", err))
 				return
 			}
@@ -421,7 +434,11 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		if err != nil {
 			return connectionError("heartbeat", "", err)
 		}
-		return send(v1.Message("node.heartbeat", id.NodeID, ID(), v1.Heartbeat{}))
+		h := v1.Heartbeat{}
+		if ack.OriginMigration {
+			h.AppliedOrigin = c.credentialOrigin(credential)
+		}
+		return send(v1.Message("node.heartbeat", id.NodeID, ID(), h))
 	}
 	type engineCompletion struct {
 		reply v1.TaskReply

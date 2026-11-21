@@ -31,6 +31,11 @@ func (c *Client) Reenroll(ctx context.Context, token, node string) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	if err == nil {
+		if err = c.restoreOrigin(old); err != nil {
+			return err
+		}
+	}
 	if err == nil && old.NodeID != "" && old.NodeID != node {
 		return fmt.Errorf("existing identity belongs to another node; preserved")
 	}
@@ -65,6 +70,7 @@ func (c *Client) Reenroll(ctx context.Context, token, node string) error {
 	if result.NodeID != node || result.ProtocolVersion != v1.Version {
 		return fmt.Errorf("reenrollment response does not match target node; existing identity preserved")
 	}
+	pending.Identity.ActiveOrigin = old.ActiveOrigin
 	pending.Identity.NodeID = node
 	// The pending key remains for an exact retry after a lost response or write failure.
 	return c.store.Write("identity.json", pending.Identity)
