@@ -8,9 +8,16 @@ import (
 	"time"
 )
 
+const MaxMessageBytes = 64 << 10
+const MaxEngineRecoveryReplyBytes = 128 << 10
+
 // Decode rejects unknown fields, excessive nesting, trailing JSON and oversized frames.
 func Decode(data []byte, v any) error {
-	if len(data) > 65536 {
+	return decodeLimit(data, v, MaxMessageBytes)
+}
+
+func decodeLimit(data []byte, v any, limit int) error {
+	if len(data) > limit {
 		return errors.New("message too large")
 	}
 	depth := 0
@@ -49,8 +56,29 @@ func Decode(data []byte, v any) error {
 	return nil
 }
 func Parse(data []byte, node string) (Envelope, error) {
+	return parseLimit(data, node, MaxMessageBytes)
+}
+
+// ParseEngineRecoveryReply grants the larger observation budget only to the
+// result correlated with a recovery task dispatched on this session.
+func ParseEngineRecoveryReply(data []byte, node, task string) (Envelope, error) {
+	if len(data) <= MaxMessageBytes || task == "" {
+		return Parse(data, node)
+	}
+	e, err := parseLimit(data, node, MaxEngineRecoveryReplyBytes)
+	if err == nil && (e.Type != "task.result" || e.CorrelationID != task) {
+		return Envelope{}, errors.New("message too large")
+	}
+	return e, err
+}
+
+func DecodeEngineRecoveryReply(data []byte, reply *TaskReply) error {
+	return decodeLimit(data, reply, MaxEngineRecoveryReplyBytes)
+}
+
+func parseLimit(data []byte, node string, limit int) (Envelope, error) {
 	var e Envelope
-	if err := Decode(data, &e); err != nil {
+	if err := decodeLimit(data, &e, limit); err != nil {
 		return e, err
 	}
 	if e.Version != Version || e.NodeID != node || len(e.MessageID) == 0 || len(e.MessageID) > 128 || len(e.CorrelationID) > 128 || e.SentAt.IsZero() || len(e.Payload) == 0 || e.Payload[0] != '{' {

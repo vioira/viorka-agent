@@ -37,11 +37,12 @@ type Managed struct {
 	openrc         bool
 	runlevels      string
 	run            func(context.Context, string, ...string) error
+	readSupervisor func(context.Context, io.Writer, string, ...string) error
 	download       func(context.Context, v1.EngineRelease, string) (string, error)
 }
 
 func NewManaged(loggers ...*slog.Logger) *Managed {
-	m := &Managed{hostRoot: "/", root: managedRoot, units: unitRoot, run: runControlled, download: Download, supported: Supported}
+	m := &Managed{hostRoot: "/", root: managedRoot, units: unitRoot, run: runControlled, download: Download, readSupervisor: runControlledOutput, supported: Supported}
 	m.openrc = serviceManager("/") == "openrc"
 	if m.openrc {
 		m.units = "/etc/init.d"
@@ -248,6 +249,20 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 	}
 	if c.Validate(operation) != nil || !m.supported() {
 		return fail("engine_unsupported")
+	}
+	if operation == v1.EngineRecoverOperation {
+		if err := checkpoint(ctx, "inspect"); err != nil {
+			return fail("engine_io_failed")
+		}
+		snapshot, code := m.recoverySnapshot(ctx, c.Name)
+		if code != "" {
+			return fail(code)
+		}
+		if snapshot == nil {
+			return fail("engine_config_unavailable")
+		}
+		r.Status, r.Version, r.Recovery = snapshot.Status, snapshot.Command.Version, snapshot
+		return r, nil
 	}
 	if operation == "engine.inspect" {
 		if err := checkpoint(ctx, "inspect"); err != nil {

@@ -317,7 +317,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	}
 	capabilities := []string{"node.inspect", "node.inventory.v1"}
 	if managed.Supported() {
-		capabilities = append(capabilities, v1.EngineCapability, v1.EngineEndpointsCapability)
+		capabilities = append(capabilities, v1.EngineCapability, v1.EngineEndpointsCapability, v1.EngineRecoveryCapability)
 	}
 	if c.telemetryEnabled {
 		capabilities = append(capabilities, v1.TrafficCapability, v1.DailyTrafficCapability)
@@ -561,7 +561,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 				if engineBusy {
 					continue
 				}
-				if d.Engine == nil || d.Engine.Validate(d.Operation) != nil || d.Attempt == nil {
+				if d.Engine == nil || d.Engine.Validate(d.Operation) != nil || d.Attempt == nil || d.Operation == v1.EngineRecoverOperation && d.ResourceID != id.NodeID {
 					return connectionError("task", "invalid_engine_task", nil)
 				}
 				accept := v1.TaskReply{TaskID: d.TaskID, Attempt: *d.Attempt, ResourceID: d.ResourceID, State: "accepted"}

@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,6 +31,13 @@ func TestRecoverySnapshotsRetainIdentityAndConfig(t *testing.T) {
 			dir := filepath.Join(m.root, name)
 			if err = os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
+			}
+			m.readSupervisor = func(_ context.Context, w io.Writer, path string, args ...string) error {
+				if path != systemctl() || args[0] != "show" {
+					t.Fatal("unexpected supervisor command", path, args)
+				}
+				_, err := fmt.Fprintf(w, "ActiveState=inactive\nFragmentPath=%s\nDropInPaths=\nNeedDaemonReload=no\n", m.unitPath(name))
+				return err
 			}
 			m.run = func(_ context.Context, path string, args ...string) error {
 				if path == systemctl() {
@@ -82,8 +91,14 @@ func TestRecoverySnapshotsRetainIdentityAndConfig(t *testing.T) {
 				t.Fatal("changed identity/revision")
 			}
 			stored := snapshots[0].EndpointBackup
-			if stored == nil || !stored.Matches("original-engine", c) {
+			if name == "realm" && (stored == nil || !stored.Matches("original-engine", c)) || name == "sing-box" && (!snapshots[0].Unconfigured || stored != nil) {
 				t.Fatal("missing backup on registration")
+			}
+			preview, err := m.Execute(context.Background(), "replacement-node", v1.EngineRecoverOperation, v1.EngineCommand{
+				Name: name, Version: v1.EngineVersion(name), RunIntent: "running", Services: []*v1.EngineService{},
+			})
+			if err != nil || preview.ErrorCode != "" || preview.Recovery == nil || preview.Recovery.EngineID != "original-engine" {
+				t.Fatalf("online preview lost local owner: %+v %v", preview, err)
 			}
 			if name == "realm" {
 				if len(stored.Endpoints) != 1 || stored.Endpoints[0].Port != 15443 {
@@ -101,6 +116,13 @@ func TestRecoverySnapshotsRetainIdentityAndConfig(t *testing.T) {
 			after, err := os.ReadFile(filepath.Join(dir, "state.json"))
 			if err != nil || string(before) != string(after) {
 				t.Fatal("state mutated", err)
+			}
+			m.readSupervisor = func(_ context.Context, w io.Writer, _ string, _ ...string) error {
+				_, err := fmt.Fprintf(w, "ActiveState=inactive\nFragmentPath=%s\nDropInPaths=/etc/systemd/override.conf\nNeedDaemonReload=no\n", m.unitPath(name))
+				return err
+			}
+			if _, err = m.RecoverySnapshots(context.Background()); err == nil {
+				t.Fatal("override accepted")
 			}
 			if err = os.WriteFile(m.unitPath(name), []byte("third party"), 0600); err != nil {
 				t.Fatal(err)

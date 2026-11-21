@@ -33,9 +33,11 @@ func checkpoint(ctx context.Context, stage string) error {
 	if d == nil || d.stage == stage {
 		return nil
 	}
-	if err := d.persist(stage); err != nil {
-		d.failure = &v1.EngineDiagnostic{Stage: d.stage, Message: "无法保存任务执行阶段：" + safeFailure(err)}
-		return err
+	if d.persist != nil {
+		if err := d.persist(stage); err != nil {
+			d.failure = &v1.EngineDiagnostic{Stage: d.stage, Message: "无法保存任务执行阶段：" + safeFailure(err)}
+			return err
+		}
 	}
 	d.stage = stage
 	return nil

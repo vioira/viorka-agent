@@ -178,7 +178,8 @@
                   "engine.stop",
                   "engine.uninstall",
                   "engine.apply",
-                  "engine.inspect"
+                  "engine.inspect",
+                  "engine.recover"
                 ]
               }
             }
@@ -1799,6 +1800,10 @@
         },
         "endpoint_backup": {
           "$ref": "#/$defs/EngineEndpointBackup"
+        },
+        "unconfigured": {
+          "type": "boolean",
+          "description": "The verified stopped engine has no applied configuration files."
         }
       },
       "required": [

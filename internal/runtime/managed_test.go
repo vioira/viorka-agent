@@ -3,7 +3,9 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -76,6 +78,17 @@ func TestManagedInstallApplyAndManualStop(t *testing.T) {
 		}
 		return nil
 	}
+	m.readSupervisor = func(_ context.Context, w io.Writer, path string, args ...string) error {
+		if path != systemctl() || args[0] != "show" {
+			t.Fatalf("unexpected recovery supervisor operation: %v", args)
+		}
+		status := "inactive"
+		if listener != nil {
+			status = "active"
+		}
+		_, err := fmt.Fprintf(w, "ActiveState=%s\nFragmentPath=%s\nDropInPaths=\nNeedDaemonReload=no\n", status, m.unitPath("realm"))
+		return err
+	}
 	ctx := context.Background()
 	c := v1.EngineCommand{Name: "realm", Version: v1.EngineVersion("realm"), Revision: 1, RunIntent: "running", Services: []*v1.EngineService{}}
 	result, err := m.Execute(ctx, "engine", "engine.install", c)
@@ -127,6 +140,11 @@ func TestManagedInstallApplyAndManualStop(t *testing.T) {
 	foreign, err := m.Execute(ctx, "other", "engine.inspect", recovery)
 	if err != nil || foreign.ErrorCode != "engine_external" || foreign.Recovery != nil {
 		t.Fatalf("foreign engine recovery accepted: %+v %v", foreign, err)
+	}
+	live := listener
+	preview, err := m.Execute(ctx, "replacement-node", v1.EngineRecoverOperation, v1.EngineCommand{Name: c.Name, Version: c.Version, RunIntent: "running", Services: []*v1.EngineService{}})
+	if err != nil || preview.Recovery == nil || preview.Recovery.EngineID != "engine" || preview.Status != "running" || starts != 1 || listener != live {
+		t.Fatalf("recovery changed the live service: %+v %v", preview, err)
 	}
 	stop := c
 	stop.Revision = 3

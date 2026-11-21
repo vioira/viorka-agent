@@ -12,16 +12,21 @@ import (
 )
 
 const EngineCapability = "engine.manage.v8"
+const EngineRecoveryCapability = "engine.recovery.v1"
+const EngineRecoverOperation = "engine.recover"
 
 func EngineOperation(op string) bool {
 	switch op {
-	case "engine.install", "engine.upgrade", "engine.start", "engine.stop", "engine.uninstall", "engine.apply", "engine.inspect":
+	case "engine.install", "engine.upgrade", "engine.start", "engine.stop", "engine.uninstall", "engine.apply", "engine.inspect", EngineRecoverOperation:
 		return true
 	}
 	return false
 }
 func (c EngineCommand) Validate(operation string) error {
 	bad := errors.New("invalid engine command")
+	if operation == EngineRecoverOperation && (c.Revision != 0 || c.RunIntent != "running" || c.AllowUnreachable) {
+		return bad
+	}
 	if (c.IncludeConfig || c.RecoveryCheck) && operation != "engine.inspect" || c.IncludeConfig && c.RecoveryCheck {
 		return bad
 	}
@@ -171,7 +176,7 @@ func ValidateEngineRecovery(items []*EngineRecovery) error {
 				return bad
 			}
 		}
-		if item.Command.Validate("engine.apply") != nil || item.EndpointBackup != nil && !item.EndpointBackup.Matches(item.EngineID, *item.Command) {
+		if item.Command.Validate("engine.apply") != nil || item.Unconfigured && (item.Status != "stopped" || len(item.Command.Services) != 0 || item.Command.Routing != nil || len(item.Command.Outbounds) != 0 || item.EndpointBackup != nil) || item.EndpointBackup != nil && !item.EndpointBackup.Matches(item.EngineID, *item.Command) {
 			return bad
 		}
 		names[item.Command.Name] = true
