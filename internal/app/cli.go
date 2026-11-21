@@ -38,12 +38,17 @@ func Main(args []string, out, errOut io.Writer) int {
 		flags := flag.NewFlagSet("config-check", flag.ContinueOnError)
 		flags.SetOutput(errOut)
 		path := flags.String("config", "", "local JSON config (default ~/.viorka-agent/agent.json)")
+		registrationStatus := flags.Bool("registration-status", false, "also check local identity and print registered or needs-registration")
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		if _, err := loadConfig(*path); err != nil {
+		cfg, err := loadConfig(*path)
+		if err != nil {
 			fmt.Fprintf(errOut, "invalid configuration: %v\n", err)
 			return 2
+		}
+		if *registrationStatus {
+			return checkRegistration(cfg, out, errOut)
 		}
 		fmt.Fprintln(out, "configuration format OK (connection not attempted)")
 		return 0
@@ -60,7 +65,7 @@ func Main(args []string, out, errOut io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: viorka-agent [version|update-check [--prerelease] [--config PATH]|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH|register --config PATH --token-stdin [--name NAME] [--replace-node ID]|run --config PATH|help]")
+	fmt.Fprintln(w, "Usage: viorka-agent [version|update-check [--prerelease] [--config PATH]|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH [--registration-status]|register --config PATH --token-stdin [--name NAME] [--replace-node ID]|run --config PATH|help]")
 	fmt.Fprintln(w, "M0 supports enrollment, WSS and read-only node.inspect tasks.")
 }
 
@@ -125,6 +130,26 @@ func connect(args []string, out, errOut io.Writer) int {
 	}
 	if args[0] == "register" {
 		fmt.Fprintln(out, "identity registered and saved")
+	}
+	return 0
+}
+
+func checkRegistration(cfg config.Local, out, errOut io.Writer) int {
+	store, err := state.Open(cfg.StateDir)
+	if err != nil {
+		fmt.Fprintf(errOut, "check local registration: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	registered, err := store.Registered(cfg.PanelURL)
+	if err != nil {
+		fmt.Fprintf(errOut, "check local registration: %v\n", err)
+		return 1
+	}
+	if registered {
+		fmt.Fprintln(out, "registered")
+	} else {
+		fmt.Fprintln(out, "needs-registration")
 	}
 	return 0
 }

@@ -52,6 +52,8 @@ go run ./cmd/viorka-agent config-check --config ./examples/agent.example.json
 
 `run --config PATH` 使用已注册身份运行；配置无效、未注册、身份吊销或证书校验失败会明确退出。
 
+在服务器从 `main` 更新源码并运行测试节点，可使用 `bash scripts/run-test-node.sh`。首次注册和复用旧测试目录的步骤见[入门指南](docs/GETTING_STARTED.md#从-main-分支运行服务器测试节点)。
+
 ## 目录结构
 
 ```text

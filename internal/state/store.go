@@ -135,3 +135,24 @@ func (s *Store) Identity(origin string, create bool) (Identity, error) {
 	}
 	return v, nil
 }
+
+// Registered reports whether local enrollment has recorded a node ID.
+func (s *Store) Registered(origin string) (bool, error) {
+	id, err := s.Identity(origin, false)
+	if err == nil {
+		return id.NodeID != "", nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return false, fmt.Errorf("read state directory: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != "agent.lock" {
+			return false, fmt.Errorf("identity.json is missing from a state directory that contains existing data")
+		}
+	}
+	return false, nil
+}

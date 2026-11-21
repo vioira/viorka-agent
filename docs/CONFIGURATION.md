@@ -22,6 +22,8 @@ go run ./cmd/viorka-agent config-check --config examples/agent.example.json
 
 当前 `config-check` 只检验 JSON 结构与 HTTPS base URL 等基础字段；**不会连接服务器或启动 Agent**。文件内故意不放持久注册凭证。
 
+`config-check --registration-status` 额外打开并锁定本地状态目录，必要时创建空状态目录和锁文件。已有有效身份且保存了节点 ID 时输出 `registered`，首次注册或尚未保存节点 ID 时输出 `needs-registration`；身份损坏、Panel 地址不符、状态被其他进程占用或已有状态数据但身份缺失时返回非零。这个检查仅反映本地状态。
+
 可选 `ca_file` 指向私有 CA PEM，仍验证主机名；`register/run` 用法见 [GETTING_STARTED.md](GETTING_STARTED.md)。
 
 ## 2. Agent 配置分层

@@ -26,3 +26,15 @@ Token 通过标准输入安全提供（或从 0600 文件重定向），不放�
 本机已进行 Go/race、持久日志重投、身份权限和双进程 TLS 注册/任务/重连/吊销测试。Linux amd64/arm64 交叉构建单独验证；真实 NAT VPS、Debian/Alpine 运行、长期压力和内存占用仍待验收。已提供用户目录安装器；代理配置/引擎生命周期、升级签名和系统服务安装尚未实现。
 
 主机监控已增加 Linux CPU、内存/Swap、负载、根文件系统、运行时长和逐网卡流量采集，通过能力协商发送给支持监控的 Panel。默认 30 秒采样；非 Linux 明确报告不支持。完整语义和验收边界见 [MONITORING.md](MONITORING.md)。
+
+## 从 main 分支运行服务器测试节点
+
+服务器上准备好 Bash、Git 和 Go 1.26+，克隆仓库并切到 `main`。已有仓库首次使用此脚本前，先拉取包含脚本的提交。之后每次在仓库根目录运行同一条命令：
+
+```sh
+bash scripts/run-test-node.sh
+```
+
+每次执行都会从 `origin/main` 快进更新、重新构建，然后前台运行 Agent，用 `Ctrl+C` 退出。新节点使用 `~/.viorka-agent-test` 保存配置和身份，默认连接 `https://viorka.vioira.com`，本地节点名使用主机名。创建配置时可通过 `VIORKA_TEST_PANEL_URL` 和 `VIORKA_TEST_NODE_NAME` 指定其他值。首次注册和注册未完成时会隐藏输入并提示令牌，重试复用已保存的密钥。注册成功后，后续启动直接复用配置和身份。
+
+如果之前用 `mktemp` 创建过 `~/viorka-agent-test.*`，脚本会复用并记住唯一包含 `agent.json` 的旧目录。若有多个，可运行 `bash scripts/run-test-node.sh --test-dir "$HOME/viorka-agent-test.实际后缀"` 选择一次，后续继续用无参数命令。切换到脚本前先退出占用同一状态目录的旧测试进程。
