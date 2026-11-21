@@ -11,9 +11,14 @@ main() {
 '*) fail '参数或路径不能包含换行。' ;; esac
         if printf '%s' "$1" | grep -q '[[:cntrl:]]'; then fail '参数或路径不能包含控制字符。'; fi
     }
+    github_url() {
+        printf '%s%s' "${github_proxy:+$github_proxy/}" "$1"
+    }
     download() {
-        curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-            --tlsv1.2 --connect-timeout 15 --max-time 180 "$@"
+        target=$(github_url "$1")
+        shift
+        curl --fail --silent --show-error --location --globoff --proto '=https' --proto-redir '=https' \
+            --tlsv1.2 --connect-timeout 15 --max-time 180 "$@" "$target"
     }
     json_string() {
         # Paths containing control characters are rejected before reaching here.
@@ -28,13 +33,30 @@ main() {
             if printf '%s\n' "$pre" | grep -Eq '(^|\.)0[0-9]+(\.|$)'; then fail '预发布数字标识不能有前导零。'; fi ;;
         esac
     }
+    release_repo=https://github.com/vioira/viorka-agent/releases
     resolve_release() {
         [ -z "$release_tag" ] || return 0
         printf '[安装中] 正在查询 GitHub 上的最新正式版…\n'
-        release_url=$(download --output /dev/null --write-out '%{url_effective}' https://github.com/vioira/viorka-agent/releases/latest) || fail '查询正式 Release 失败，请检查 GitHub 访问及发布状态。'
+        if [ -n "$github_proxy" ]; then
+            # Read the tag redirect before a proxy tries to serve the HTML release page.
+            release_url=$(download "$release_repo/latest" --no-location --max-filesize 1048576 \
+                --output /dev/null --write-out '%{redirect_url}' 2>/dev/null) || release_url=
+            release_url=${release_url#"$github_proxy/"}
+        else
+            release_url=$(download "$release_repo/latest" --output /dev/null --write-out '%{url_effective}') ||
+                fail '查询正式 Release 失败，请检查 GitHub 访问及发布状态。'
+        fi
         case "$release_url" in
-            https://github.com/vioira/viorka-agent/releases/tag/*) release_tag=${release_url##*/} ;;
-            *) fail '未找到可用的正式 Release。请在 https://github.com/vioira/viorka-agent/releases 审核并发布含 Linux 二进制及 .sha256 的正式版本；草稿不可下载，已公开的预发布需显式指定 --version=vX.Y.Z。' ;;
+            "$release_repo/tag/"*) release_tag=${release_url#"$release_repo/tag/"} ;;
+            *)
+                [ -n "$github_proxy" ] ||
+                    fail '未找到可用的正式 Release。请在 https://github.com/vioira/viorka-agent/releases 审核并发布含 Linux 二进制及 .sha256 的正式版本；草稿不可下载，已公开的预发布需显式指定 --version=vX.Y.Z。'
+                # Some proxies follow the redirect on their server and return HTML.
+                metadata=$(download https://api.github.com/repos/vioira/viorka-agent/releases/latest \
+                    --max-filesize 1048576) || fail '代理查询正式 Release 失败，请更换代理或显式指定 --version=vX.Y.Z。'
+                release_tag=$(printf '%s\n' "$metadata" | sed -nE 's/(^|^.*[,{])[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"([A-Za-z0-9.+-]+)"[[:space:]]*([,}].*|$)/\2/p')
+                [ -n "$release_tag" ] || fail '代理未返回正式 Release 版本，请更换代理或显式指定 --version=vX.Y.Z。'
+                ;;
         esac
         plain_text "$release_tag"
         validate_version "$release_tag"
@@ -395,7 +417,9 @@ RC
                 ;;
         esac
         printf '\n更新 Agent（保留配置和身份，无需注册令牌）：\n'
-        printf "  curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- install"
+        installer_url=$(github_url https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh)
+        printf "  curl -fsSL --proto '=https' --proto-redir '=https' '%s' | sh -s -- install" "$installer_url"
+        [ -z "$github_proxy" ] || printf " --github-proxy='%s'" "$github_proxy"
         [ "$foreground" -eq 0 ] || printf ' --foreground'
         printf '\n  默认更新至最新正式版；指定版本可在命令末尾追加 --version=vX.Y.Z。\n'
         if [ "$foreground" -eq 0 ]; then
@@ -404,7 +428,7 @@ RC
             printf '  已运行的前台进程需自行重启才能使用新版。\n'
         fi
         printf '\n卸载 Agent（保留配置、身份和代理服务）：\n'
-        printf "  curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- uninstall"
+        printf "  curl -fsSL --proto '=https' --proto-redir '=https' '%s' | sh -s -- uninstall" "$installer_url"
         [ "$foreground" -eq 0 ] || printf ' --foreground'
         printf '\n\nPanel 在线状态：请查看面板。握手成功时 Agent 会输出 Panel connected; session established。\n\n'
     }
@@ -436,9 +460,9 @@ RC
         printf '\nAgent 后台服务已启动并设置开机自启。\n'
     }
     action=${1:-}
-    case "$action" in install|service|uninstall) ;; *) fail '用法：sh install.sh install --url=https://panel.example.com [--token=TOKEN] [--version=vX.Y.Z] [--ca-file=/path/ca.pem] [--foreground] [--reenroll-node=ID] [--registration] [--token-stdin]；已有安装转后台：sh install.sh service；卸载：sh install.sh uninstall [--foreground]' ;; esac
+    case "$action" in install|service|uninstall) ;; *) fail '用法：sh install.sh install --url=https://panel.example.com [--token=TOKEN] [--version=vX.Y.Z] [--github-proxy=https://proxy.example.com] [--ca-file=/path/ca.pem] [--foreground] [--reenroll-node=ID] [--registration] [--token-stdin]；已有安装转后台：sh install.sh service；卸载：sh install.sh uninstall [--foreground]' ;; esac
     shift
-    panel_url= release_tag= ca_file= enrollment_token= token_supplied=0 foreground=0 reenroll_node= registration=0 token_stdin=0
+    panel_url= release_tag= github_proxy= ca_file= enrollment_token= token_supplied=0 foreground=0 reenroll_node= registration=0 token_stdin=0
     for arg do
         plain_text "$arg"
         if [ "$action" = uninstall ]; then
@@ -453,12 +477,19 @@ RC
             --version=*)
                 release_tag=${arg#*=}
                 [ -n "$release_tag" ] || fail '请为 --version 提供 v 开头的 SemVer。' ;;
+            --github-proxy=*)
+                [ "$action" = install ] || fail 'service 不接受安装参数。'
+                [ -z "$github_proxy" ] || fail '请勿重复指定 --github-proxy。'
+                github_proxy=${arg#*=}
+                printf '%s\n' "$github_proxy" | grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$' ||
+                    fail '--github-proxy 需要 HTTPS 前缀，可带端口和路径，不含凭证、查询或片段。'
+                while [ "${github_proxy%/}" != "$github_proxy" ]; do github_proxy=${github_proxy%/}; done ;;
             --ca-file=*) ca_file=${arg#*=} ;;
             --token=*)
                 [ "$token_supplied" -eq 0 ] || fail '请勿重复指定 --token。'
                 enrollment_token=${arg#*=}
                 token_supplied=1 ;;
-            *) fail '不支持的参数。仅支持 --url、--token、--version、--ca-file、--foreground、--reenroll-node、--registration、--token-stdin；自动更新尚未实现。' ;;
+            *) fail '不支持的参数。仅支持 --url、--token、--version、--github-proxy、--ca-file、--foreground、--reenroll-node、--registration、--token-stdin；自动更新尚未实现。' ;;
         esac
     done
     unset arg
@@ -653,11 +684,11 @@ RC
     printf '安装目录：%s\n' "$install_dir"
     printf '目标 Agent 版本：%s (linux/%s)\n' "$release_tag" "$arch"
     asset="viorka-agent-linux-$arch"
-    base="https://github.com/vioira/viorka-agent/releases/download/$release_tag"
+    base="$release_repo/download/$release_tag"
     printf '[安装中] 正在下载 Agent 安装包…\n'
-    download --max-filesize 134217728 --output "$staging/viorka-agent" "$base/$asset" || fail "下载 Agent 失败：请确认 Release $release_tag 及 $asset 已发布（版本标签必须精确匹配），可直接重试。"
+    download "$base/$asset" --max-filesize 134217728 --output "$staging/viorka-agent" || fail "下载 Agent 失败：请确认 Release $release_tag 及 $asset 已发布（版本标签必须精确匹配），可直接重试。"
     printf '[安装中] 正在下载 SHA-256 校验文件…\n'
-    download --max-filesize 128 --output "$staging/viorka-agent.sha256" "$base/$asset.sha256" || fail '下载校验文件失败，可直接重试。'
+    download "$base/$asset.sha256" --max-filesize 128 --output "$staging/viorka-agent.sha256" || fail '下载校验文件失败，可直接重试。'
     printf '[安装中] 正在校验安装包的 SHA-256、版本和架构…\n'
     checksum=$(cat "$staging/viorka-agent.sha256")
     [ "${#checksum}" -eq 64 ] || fail '安装包校验文件无效。'

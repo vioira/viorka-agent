@@ -19,6 +19,8 @@
 
 入口脚本来自 GitHub main，通过 HTTPS 获取；运行前可先下载并审阅，或将 URL 中 main 替换为审核过且包含安装器的提交/tag。SHA-256 验证的是发行二进制，不是入口脚本的独立签名。必须先将 `install.sh` 发布到对应 Git 引用，并发布正式 Release 资产；本地有文件不代表线上命令已经可用。
 
+GitHub 下载默认直连。已下载脚本可用 `sh install.sh install --url=https://panel.example.com --github-proxy=https://ghfast.top`，通过代理查询最新正式版本并下载二进制和 SHA-256 文件。面板的安装弹层也可以生成代理命令，并将入口脚本的下载一并切换到代理。自定义地址须为 HTTPS 前缀，格式为 `https://代理地址/完整GitHub链接`，前缀可带端口和路径。代理若不支持最新版本查询，可用 `--version=vX.Y.Z` 指定版本。请使用信任的代理，因为代理同时提供安装文件和校验文件。注册令牌仍经标准输入传给安装器，Agent 仍直接连接面板。
+
 旧版 `$HOME/.local/share/viorka-agent` 不会自动迁移。迁移前先停止 Agent 管理进程并备份原目录，将完整目录（包括 `state` 身份）迁到 `$HOME/.viorka-agent`，更新 `agent.json` 的 `state_dir` 为新目录的绝对路径。原 systemd/OpenRC 服务仍引用旧路径；确认归本安装器所有后移除旧 Agent 服务文件，再用 `sh install.sh service` 创建新服务。保留备份，不要重新注册或停止代理引擎。
 
 安装到当前用户 `$HOME/.viorka-agent`，新目录 0700，配置 0600。可重复执行同一条安装命令：

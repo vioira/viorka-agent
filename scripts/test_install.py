@@ -24,7 +24,7 @@ TOKEN = "a" * 64
 
 
 class InstallerTests(unittest.TestCase):
-    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False, replacement=False, choice=None, locked_state=False, omit_url=False, retry_omit_url=False, registration=False, token_stdin=False, retry_latest=False, current_probe=""):
+    def run_install(self, failure="", extra=(), arch="x86_64", pinned=False, token_arg=False, retry=False, running=False, retry_failure="", reenroll=False, replacement=False, choice=None, locked_state=False, omit_url=False, retry_omit_url=False, registration=False, token_stdin=False, retry_latest=False, current_probe="", github_proxy="", expected_downloads=None):
         with tempfile.TemporaryDirectory(prefix="viorka-install-") as tmp:
             home = pathlib.Path(tmp) / 'home "quote" \\ slash'
             home.mkdir()
@@ -96,15 +96,26 @@ esac
             executable("curl", f'''#!{sys.executable}
 import hashlib, os, pathlib, sys
 args=sys.argv[1:]; url=args[-1]
+with pathlib.Path(os.environ['PAYLOAD']).with_name('download-urls').open('a') as log:
+    log.write(url+'\\n')
 if os.environ['FAILURE']=='download' or (os.environ['FAILURE']=='missing_checksum' and url.endswith('.sha256')): sys.exit(22)
 if url.endswith('/latest'):
+    if 'https://api.github.com/' in url:
+        print('{{"tag_name":"v0.1.0","prerelease":false}}' if os.environ['FAILURE'] != 'bad_proxy_metadata' else '{{}}')
+        sys.exit(0)
+    if url.startswith('https://api-proxy.example/'):
+        assert '--no-location' in args and '%{{redirect_url}}' in args
+        sys.exit(0)
+    prefix, _, _ = url.rpartition('https://github.com/')
+    if prefix:
+        assert '--no-location' in args and '%{{redirect_url}}' in args
     if os.environ['FAILURE']=='no_release':
         print('https://github.com/vioira/viorka-agent/releases', end='')
         sys.exit(0)
     if os.environ['FAILURE']=='invalid_release':
         print('https://github.com/vioira/viorka-agent/releases/tag/invalid', end='')
         sys.exit(0)
-    print('https://github.com/vioira/viorka-agent/releases/tag/v0.1.0', end='')
+    print(prefix+'https://github.com/vioira/viorka-agent/releases/tag/v0.1.0', end='')
 else:
     assert '/v0.1.0/viorka-agent-linux-' in url, url
     output=pathlib.Path(args[args.index('--output')+1])
@@ -136,6 +147,8 @@ else:
                     (install / "state").mkdir()
                     (install / "state/identity.json").write_text("preserve")
             args = ["sh", str(ROOT / "install.sh"), "install", "--foreground", "--url=https://localhost:8143", *extra]
+            if github_proxy:
+                args.append(f"--github-proxy={github_proxy}")
             if registration:
                 args.append("--registration")
             if omit_url:
@@ -195,6 +208,10 @@ else:
                         os.waitpid(pid, 0)
                     os.close(fd)
             self.assertNotIn(TOKEN.encode(), output, "token leaked to terminal")
+            if expected_downloads is not None:
+                log = payload.with_name("download-urls")
+                downloads = log.read_text().splitlines() if log.exists() else []
+                self.assertEqual(downloads, expected_downloads, output.decode())
             for path in install.rglob("*"):
                 if path.is_file():
                     self.assertNotIn(TOKEN.encode(), path.read_bytes(), f"token persisted in {path.name}")
@@ -225,7 +242,8 @@ else:
                 self.assertIn('安装前检查：未检测到正在运行的 Agent 进程。'.encode(), output)
                 self.assertIn('运行方式：前台'.encode(), output)
                 self.assertIn(b'Ctrl+C', output)
-                self.assertIn(b"| sh -s -- install --foreground", output)
+                proxy_arg = f" --github-proxy='{github_proxy.rstrip('/')}'" if github_proxy else ""
+                self.assertIn(f"| sh -s -- install{proxy_arg} --foreground".encode(), output)
                 self.assertIn(b'"$HOME/.viorka-agent/viorka-agent" run --config "$HOME/.viorka-agent/agent.json"', output)
                 self.assertNotIn(b'--token=', output)
                 self.assertNotIn(b'systemctl', output)
@@ -397,6 +415,36 @@ else:
 
     def test_empty_release_tag_is_rejected(self):
         self.run_install(extra=("--version=",), token_arg=True)
+
+    def test_github_proxy_pins_binary_and_checksum_to_resolved_release(self):
+        repo = "https://github.com/vioira/viorka-agent/releases"
+        prefix = "https://mirror.example:8443/github"
+        asset = f"{prefix}/{repo}/download/v0.1.0/viorka-agent-linux-amd64"
+        self.run_install(github_proxy=prefix + "///", token_stdin=True,
+                         expected_downloads=[f"{prefix}/{repo}/latest", asset, asset + ".sha256"])
+        self.run_install(github_proxy=prefix, pinned=True, token_stdin=True,
+                         expected_downloads=[asset, asset + ".sha256"])
+        self.run_install(failure="checksum", github_proxy=prefix, pinned=True, token_stdin=True,
+                         expected_downloads=[asset, asset + ".sha256"])
+
+    def test_github_proxy_resolves_latest_via_metadata_when_no_redirect(self):
+        prefix = "https://api-proxy.example"
+        repo = "https://github.com/vioira/viorka-agent/releases"
+        queries = [f"{prefix}/{repo}/latest",
+                   f"{prefix}/https://api.github.com/repos/vioira/viorka-agent/releases/latest"]
+        asset = f"{prefix}/{repo}/download/v0.1.0/viorka-agent-linux-arm64"
+        self.run_install(github_proxy=prefix, arch="aarch64", token_stdin=True,
+                         expected_downloads=[*queries, asset, asset + ".sha256"])
+        self.run_install(failure="bad_proxy_metadata", github_proxy=prefix, token_stdin=True,
+                         expected_downloads=queries)
+
+    def test_invalid_github_proxies_fail_before_download(self):
+        for proxy in ("", "http://proxy.example", "https://user:pass@proxy.example",
+                      "https://proxy.example/?url=", "https://proxy.example/#frag",
+                      "https://proxy.example/'$(id)'", "https://proxy.example/\n"):
+            with self.subTest(proxy=proxy):
+                self.run_install(extra=(f"--github-proxy={proxy}",), token_stdin=True,
+                                 expected_downloads=[])
 
     def test_missing_url_requires_registered_install(self):
         self.run_install(failure="missing_url", token_arg=True, omit_url=True)
