@@ -31,7 +31,7 @@ json_string() {
 
 usage() {
     printf '%s\n' '用法：bash scripts/run-test-node.sh [--test-dir /已有测试目录]' \
-        '新节点初始配置可通过 VIORKA_TEST_PANEL_URL 和 VIORKA_TEST_NODE_NAME 指定。'
+        '首次创建配置时会提示输入 Panel 域名，也可预设 VIORKA_TEST_PANEL_URL 和 VIORKA_TEST_NODE_NAME。'
 }
 
 requested_dir=
@@ -97,10 +97,18 @@ agent=$staging/viorka-agent
 go build -o "$agent" ./cmd/viorka-agent
 
 if ! present "$config"; then
+    panel_url=${VIORKA_TEST_PANEL_URL:-}
+    if [[ -z "$panel_url" ]]; then
+        if ! IFS= read -r -p '请输入 Panel 域名（可含 https://）：' panel_url </dev/tty; then
+            fail '无法读取 Panel 域名，请设置 VIORKA_TEST_PANEL_URL 后重试。'
+        fi
+        [[ -n "$panel_url" ]] || fail 'Panel 域名不能为空。'
+        [[ "$panel_url" == *://* ]] || panel_url="https://$panel_url"
+    fi
     node_name=${VIORKA_TEST_NODE_NAME:-$(hostname)}
     {
         printf '{\n  "panel_url": '
-        json_string "${VIORKA_TEST_PANEL_URL:-https://viorka.vioira.com}"
+        json_string "$panel_url"
         printf ',\n  "node_name": '
         json_string "$node_name"
         printf ',\n  "state_dir": '
