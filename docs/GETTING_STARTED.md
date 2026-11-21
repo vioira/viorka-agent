@@ -37,6 +37,14 @@ bash scripts/run-test-node.sh
 
 每次执行都会从 `origin/main` 快进更新、重新构建，然后前台运行 Agent，用 `Ctrl+C` 退出。新节点使用 `~/.viorka-agent-test` 保存配置和身份。首次创建配置时，若未设置 `VIORKA_TEST_PANEL_URL` 或其值为空，脚本会提示输入 Panel 域名（自动补全 `https://`）或完整 HTTPS 地址。本地节点名默认使用主机名，可通过 `VIORKA_TEST_NODE_NAME` 指定。首次注册和注册未完成时会隐藏输入并提示令牌，重试复用已保存的密钥。注册成功后，后续启动直接复用配置和身份。
 
+已注册节点切换 Panel 域名时，先退出正在运行的测试脚本，再执行以下命令（需要 Python 3）：
+
+```bash
+VIORKA_TEST_PANEL_URL='https://panel.example.com' bash scripts/run-test-node.sh
+```
+
+本地身份绑定到完整 Panel 地址。脚本为新地址选择独立测试目录，首次连接时需要新域名对应的注册令牌。旧目录保留；后续不带环境变量启动时复用最近选择的目录。要切回旧配置，也可以通过 `--test-dir` 指定旧目录。
+
 如果之前用 `mktemp` 创建过 `~/viorka-agent-test.*`，脚本会复用并记住唯一包含 `agent.json` 的旧目录。若有多个，可运行 `bash scripts/run-test-node.sh --test-dir "$HOME/viorka-agent-test.实际后缀"` 选择一次，后续继续用无参数命令。切换到脚本前先退出占用同一状态目录的旧测试进程。
 
 脚本使用独立的 Agent 身份与日志配置，托管引擎仍属于同一台主机。首次注册会读取本机已有的 Viorka 托管引擎。若使用另一节点的令牌，而原引擎 ID 仍由既有节点持有，Panel 会拒绝恢复。需要沿用既有节点时，在该节点的设置中取得重新注册令牌，再继续运行脚本。

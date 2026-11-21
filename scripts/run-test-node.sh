@@ -31,7 +31,8 @@ json_string() {
 
 usage() {
     printf '%s\n' '用法：bash scripts/run-test-node.sh [--test-dir /已有测试目录]' \
-        '首次创建配置时会提示输入 Panel 域名，也可预设 VIORKA_TEST_PANEL_URL 和 VIORKA_TEST_NODE_NAME。'
+        '首次创建配置时会提示输入 Panel 域名，也可预设 VIORKA_TEST_PANEL_URL 和 VIORKA_TEST_NODE_NAME。' \
+        '已有配置时，指定不同的 VIORKA_TEST_PANEL_URL 将选择该地址的独立测试目录。'
 }
 
 requested_dir=
@@ -89,6 +90,41 @@ elif [[ -n "$requested_dir" || "$test_dir" != "$workspace" ]] || present "$works
     fail "现有测试目录缺少配置：$config"
 fi
 
+panel_url=${VIORKA_TEST_PANEL_URL:-}
+if [[ -n "$panel_url" ]] && present "$config"; then
+    command -v python3 >/dev/null || fail '按 Panel 地址选择已有测试配置需要 python3。'
+    configured_panel() {
+        python3 -c 'import json, sys
+with open(sys.argv[1]) as f:
+    print(json.load(f)["panel_url"])' "$1"
+    }
+    saved_url=$(configured_panel "$config")
+    if [[ "$saved_url" != "$panel_url" ]]; then
+        [[ -z "$requested_dir" ]] || fail '指定目录的 Panel 地址与环境变量不符。请去掉 --test-dir 以切换 Panel。'
+        default_url=
+        if present "$workspace/agent.json"; then
+            check_file "$workspace/agent.json" 0022
+            default_url=$(configured_panel "$workspace/agent.json")
+        fi
+        if [[ "$default_url" == "$panel_url" ]]; then
+            test_dir=$workspace
+        else
+            panel_key=$(python3 -c 'import hashlib, os; print(hashlib.sha256(os.environ["VIORKA_TEST_PANEL_URL"].encode()).hexdigest())')
+            test_dir=$workspace/panel-$panel_key
+            mkdir -p -- "$test_dir"
+            check_directory "$test_dir"
+        fi
+        config=$test_dir/agent.json
+        if present "$config"; then
+            check_file "$config" 0022
+            saved_url=$(configured_panel "$config")
+            [[ "$saved_url" == "$panel_url" ]] || fail '目标测试目录的 Panel 地址不匹配。'
+        elif present "$test_dir/state"; then
+            fail "现有测试目录缺少配置：$config"
+        fi
+    fi
+fi
+
 printf '测试目录：%s\n' "$test_dir"
 git pull --ff-only origin main
 staging=$(mktemp -d "$workspace/.build-XXXXXX")
@@ -97,7 +133,6 @@ agent=$staging/viorka-agent
 go build -o "$agent" ./cmd/viorka-agent
 
 if ! present "$config"; then
-    panel_url=${VIORKA_TEST_PANEL_URL:-}
     if [[ -z "$panel_url" ]]; then
         if ! IFS= read -r -p '请输入 Panel 域名（可含 https://）：' panel_url </dev/tty; then
             fail '无法读取 Panel 域名，请设置 VIORKA_TEST_PANEL_URL 后重试。'
@@ -112,7 +147,7 @@ if ! present "$config"; then
         printf ',\n  "node_name": '
         json_string "$node_name"
         printf ',\n  "state_dir": '
-        json_string "$workspace/state"
+        json_string "$test_dir/state"
         printf ',\n  "log_level": "info"\n}\n'
     } > "$staging/agent.json"
     "$agent" config-check --config "$staging/agent.json"
