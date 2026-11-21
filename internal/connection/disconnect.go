@@ -34,7 +34,13 @@ func (e *connectionFailure) Error() string {
 func connectionReasonChinese(reason string) string {
 	switch reason {
 	case "engine_conflict":
-		return "引擎恢复冲突：引擎 ID 已绑定其他节点、引擎名称不一致，或目标节点已有同名引擎"
+		return "引擎恢复冲突：请核对 Panel 上原引擎归属、目标节点同名记录和端口占用"
+	case "engine_recovery_owned":
+		return "原引擎 ID 仍绑定另一节点或另一种引擎，请核对 Panel 记录"
+	case "engine_recovery_occupied":
+		return "目标节点已有同名引擎及业务或任务记录，无法自动替换"
+	case "engine_recovery_ports":
+		return "原配置的监听地址或端口已被目标节点中的服务保留"
 	case "conflict":
 		return "身份或资源状态冲突；注册时表示该公钥已绑定节点"
 	case "unauthorized", "identity_rejected":

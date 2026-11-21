@@ -38,3 +38,5 @@ bash scripts/run-test-node.sh
 每次执行都会从 `origin/main` 快进更新、重新构建，然后前台运行 Agent，用 `Ctrl+C` 退出。新节点使用 `~/.viorka-agent-test` 保存配置和身份，默认连接 `https://viorka.vioira.com`，本地节点名使用主机名。创建配置时可通过 `VIORKA_TEST_PANEL_URL` 和 `VIORKA_TEST_NODE_NAME` 指定其他值。首次注册和注册未完成时会隐藏输入并提示令牌，重试复用已保存的密钥。注册成功后，后续启动直接复用配置和身份。
 
 如果之前用 `mktemp` 创建过 `~/viorka-agent-test.*`，脚本会复用并记住唯一包含 `agent.json` 的旧目录。若有多个，可运行 `bash scripts/run-test-node.sh --test-dir "$HOME/viorka-agent-test.实际后缀"` 选择一次，后续继续用无参数命令。切换到脚本前先退出占用同一状态目录的旧测试进程。
+
+脚本使用独立的 Agent 身份与日志配置，托管引擎仍属于同一台主机。首次注册会读取本机已有的 Viorka 托管引擎。若使用另一节点的令牌，而原引擎 ID 仍由既有节点持有，Panel 会拒绝恢复。需要沿用既有节点时，在该节点的设置中取得重新注册令牌，再继续运行脚本。

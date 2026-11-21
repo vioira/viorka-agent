@@ -60,6 +60,9 @@ func TestDisconnectClassificationAndRedaction(t *testing.T) {
 func TestConnectionFailureChineseReason(t *testing.T) {
 	for _, tc := range []struct{ code, detail string }{
 		{"engine_conflict", "引擎恢复冲突"},
+		{"engine_recovery_owned", "仍绑定另一节点"},
+		{"engine_recovery_occupied", "目标节点已有同名引擎"},
+		{"engine_recovery_ports", "监听地址或端口"},
 		{"conflict", "该公钥已绑定节点"},
 		{"unauthorized", "身份认证失败"},
 		{"http_error", "响应中没有可识别的错误码"},
