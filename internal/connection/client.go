@@ -101,7 +101,7 @@ func (c *Client) post(ctx context.Context, path string, v, out any) error {
 	return c.postAt(ctx, c.origin(), path, v, out)
 }
 func (c *Client) postAt(ctx context.Context, origin, path string, v, out any) error {
-	ctx, stop := context.WithTimeout(ctx, 15*time.Second)
+	ctx, stop := context.WithTimeout(ctx, 30*time.Second)
 	defer stop()
 	b, err := json.Marshal(v)
 	if err != nil {

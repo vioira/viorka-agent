@@ -68,7 +68,6 @@ main() {
         cat "$staging/version"
     }
     print_current_version() {
-        current_version=
         if [ -x ./viorka-agent ]; then
             current_version=$(read_agent_version ./viorka-agent 2>/dev/null) || current_version=
         fi
@@ -600,7 +599,7 @@ RC
     cd "$install_dir"
     install_dir=$(pwd -P)
     mkdir .install-lock 2>/dev/null || fail '另一个安装正在进行；若此前被强制中断，确认无安装进程后删除 .install-lock 空目录。'
-    staging= tty_state= swapped=0 committed=0 reinstall=0 retired=
+    staging= tty_state= current_version= swapped=0 recover_service=0 committed=0 reinstall=0 retired=
     cleanup() {
         code=$?
         trap - 0
@@ -609,12 +608,13 @@ RC
         if [ "$swapped" -eq 1 ] && [ "$committed" -eq 0 ] && [ -f viorka-agent.previous ]; then
             if mv -f viorka-agent.previous viorka-agent; then
                 printf '更新失败，已恢复旧 Agent 二进制。\n' >&2
-                if [ "${existing_service:-0}" -eq 1 ] && [ -z "$retired" ]; then
-                    restart_service || printf '旧 Agent 服务恢复失败，请人工检查服务日志。\n' >&2
-                fi
             else
+                recover_service=0
                 printf '旧 Agent 二进制恢复失败，请人工处理。\n' >&2
             fi
+        fi
+        if [ "$recover_service" -eq 1 ] && [ "$committed" -eq 0 ] && [ -z "$retired" ]; then
+            restart_service || printf '旧 Agent 服务恢复失败，请人工检查服务日志。\n' >&2
         fi
         if [ "$code" -ne 0 ] && [ -n "$retired" ]; then
             printf '重新安装未完成。旧配置和状态保留在 %s；新注册状态保留以便重试，未自动启动旧身份。\n' "$retired" >&2
@@ -683,25 +683,32 @@ RC
     if [ -z "$staging" ]; then staging=$(mktemp -d "$install_dir/.install-XXXXXX"); fi
     printf '安装目录：%s\n' "$install_dir"
     printf '目标 Agent 版本：%s (linux/%s)\n' "$release_tag" "$arch"
-    asset="viorka-agent-linux-$arch"
-    base="$release_repo/download/$release_tag"
-    printf '[安装中] 正在下载 Agent 安装包…\n'
-    download "$base/$asset" --max-filesize 134217728 --output "$staging/viorka-agent" || fail "下载 Agent 失败：请确认 Release $release_tag 及 $asset 已发布（版本标签必须精确匹配），可直接重试。"
-    printf '[安装中] 正在下载 SHA-256 校验文件…\n'
-    download "$base/$asset.sha256" --max-filesize 128 --output "$staging/viorka-agent.sha256" || fail '下载校验文件失败，可直接重试。'
-    printf '[安装中] 正在校验安装包的 SHA-256、版本和架构…\n'
-    checksum=$(cat "$staging/viorka-agent.sha256")
-    [ "${#checksum}" -eq 64 ] || fail '安装包校验文件无效。'
-    case "$checksum" in *[!a-fA-F0-9]*) fail '安装包校验文件无效。' ;; esac
-    # GNU sha256sum escapes filenames containing backslashes and prefixes the
-    # digest with a backslash. Hash stdin so path spelling cannot affect parsing.
-    actual=$(sha256sum < "$staging/viorka-agent")
-    actual=${actual%% *}
-    checksum=$(printf '%s' "$checksum" | tr 'A-F' 'a-f')
-    [ "$actual" = "$checksum" ] || fail '安装包 SHA-256 校验失败。'
-    chmod 700 "$staging/viorka-agent"
-    binary_version=$(read_agent_version "$staging/viorka-agent") || fail '无法执行下载的 Agent。'
-    [ "$binary_version" = "viorka-agent ${release_tag#v} (linux/$arch)" ] || fail '下载的 Agent 版本或平台与指定 Release 不符。'
+    target_version="viorka-agent ${release_tag#v} (linux/$arch)"
+    if [ "$current_version" = "$target_version" ]; then
+        printf '[安装中] 本地 Agent 版本和架构与目标一致，跳过下载。\n'
+        candidate=./viorka-agent
+    else
+        asset="viorka-agent-linux-$arch"
+        base="$release_repo/download/$release_tag"
+        printf '[安装中] 正在下载 Agent 安装包…\n'
+        download "$base/$asset" --max-filesize 134217728 --output "$staging/viorka-agent" || fail "下载 Agent 失败：请确认 Release $release_tag 及 $asset 已发布（版本标签必须精确匹配），可直接重试。"
+        printf '[安装中] 正在下载 SHA-256 校验文件…\n'
+        download "$base/$asset.sha256" --max-filesize 128 --output "$staging/viorka-agent.sha256" || fail '下载校验文件失败，可直接重试。'
+        printf '[安装中] 正在校验安装包的 SHA-256、版本和架构…\n'
+        checksum=$(cat "$staging/viorka-agent.sha256")
+        [ "${#checksum}" -eq 64 ] || fail '安装包校验文件无效。'
+        case "$checksum" in *[!a-fA-F0-9]*) fail '安装包校验文件无效。' ;; esac
+        # GNU sha256sum escapes filenames containing backslashes and prefixes the
+        # digest with a backslash. Hash stdin so path spelling cannot affect parsing.
+        actual=$(sha256sum < "$staging/viorka-agent")
+        actual=${actual%% *}
+        checksum=$(printf '%s' "$checksum" | tr 'A-F' 'a-f')
+        [ "$actual" = "$checksum" ] || fail '安装包 SHA-256 校验失败。'
+        chmod 700 "$staging/viorka-agent"
+        binary_version=$(read_agent_version "$staging/viorka-agent") || fail '无法执行下载的 Agent。'
+        [ "$binary_version" = "$target_version" ] || fail '下载的 Agent 版本或平台与指定 Release 不符。'
+        candidate="$staging/viorka-agent"
+    fi
     config_path=agent.json
     if [ ! -f "$config_path" ] || [ "$reinstall" -eq 1 ]; then
         config_path="$staging/agent.json"
@@ -709,7 +716,7 @@ RC
             "$panel_url" "$(json_string "$install_dir")" "$(json_string "$ca_file")" > "$config_path"
     fi
     printf '[安装中] 正在校验 Agent 配置…\n'
-    "$staging/viorka-agent" config-check --config "$config_path" >/dev/null
+    "$candidate" config-check --config "$config_path" >/dev/null
     migrate_openrc_service
     if [ "$reinstall" -eq 1 ]; then
         command -v flock >/dev/null || fail '覆盖安装需要 flock，以确认旧状态未被 Agent 使用。'
@@ -743,17 +750,20 @@ RC
         running=0
         printf '旧节点配置和状态已备份至：%s\n' "$retired"
     fi
-    printf '[安装中] 正在写入 Agent 程序…\n'
     mkdir -p state
     if [ "$config_path" != agent.json ]; then
         mv "$config_path" agent.json
     fi
-    if [ -f viorka-agent ]; then
-        cp viorka-agent "$staging/previous"
-        mv -f "$staging/previous" viorka-agent.previous
+    if [ "$candidate" != ./viorka-agent ]; then
+        printf '[安装中] 正在写入 Agent 程序…\n'
+        if [ -f viorka-agent ]; then
+            cp viorka-agent "$staging/previous"
+            mv -f "$staging/previous" viorka-agent.previous
+        fi
+        swapped=1
+        mv -f "$staging/viorka-agent" viorka-agent
     fi
-    swapped=1
-    mv -f "$staging/viorka-agent" viorka-agent
+    recover_service=${existing_service:-0}
     if [ -n "$reenroll_node" ] && [ "${existing_service:-0}" -eq 1 ]; then
         if [ "$service_manager" = systemd ]; then
             timeout 45 systemctl stop viorka-agent.service || fail '停止 Agent 管理服务失败。'
@@ -787,7 +797,7 @@ RC
         install_service
     fi
     committed=1
-    printf '已安装 Agent 版本：%s\n' "${binary_version#viorka-agent }"
+    printf '已安装 Agent 版本：%s\n' "${target_version#viorka-agent }"
     if [ "$foreground" -eq 0 ]; then
         print_commands
         return
@@ -797,7 +807,11 @@ RC
     rmdir .install-lock
     trap - 0 1 2 15
     if [ "$running" -eq 1 ]; then
-        printf '磁盘上的 Agent 已更新。请通过原 supervisor 或终端重启已有进程以加载本次安装的程序。\n'
+        if [ "$swapped" -eq 1 ]; then
+            printf '磁盘上的 Agent 已更新。请通过原 supervisor 或终端重启已有进程以加载本次安装的程序。\n'
+        else
+            printf '已有 Agent 进程正在运行。如需加载磁盘上的程序或新身份，请通过原 supervisor 或终端重启。\n'
+        fi
         print_commands
         return
     fi

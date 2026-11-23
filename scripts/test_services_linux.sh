@@ -31,9 +31,9 @@ first=$(cat "$agent_dir/fixture.pid")
 kill -0 "$first"
 # An existing service must never be overwritten or enrolled again.
 if sh install.sh service; then echo 'existing service unexpectedly accepted' >&2; exit 1; fi
-# Repeat install through real supervisors with a local, checksummed release fixture.
+# Upgrade once, then repeat with the same version and unavailable assets.
 fixture_dir=$(mktemp -d)
-cp "$agent_dir/viorka-agent" "$fixture_dir/payload"
+sed 's/0\.1\.0-test/0.1.1-test/' "$agent_dir/viorka-agent" > "$fixture_dir/payload"
 cat > "$fixture_dir/curl" <<'CURL'
 #!/bin/sh
 set -eu
@@ -48,7 +48,8 @@ CURL
 chmod 700 "$fixture_dir/curl"
 export VIORKA_TEST_PAYLOAD="$fixture_dir/payload"
 for attempt in 1 2; do
-    PATH="$fixture_dir:$PATH" sh install.sh install --url=https://localhost --version=v0.1.0-test
+    if [ "$attempt" -eq 2 ]; then rm "$fixture_dir/payload"; fi
+    PATH="$fixture_dir:$PATH" sh install.sh install --url=https://localhost --version=v0.1.1-test
     sleep 2
     next=$(cat "$agent_dir/fixture.pid")
     [ "$next" != "$first" ]

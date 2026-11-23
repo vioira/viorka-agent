@@ -58,6 +58,8 @@ if [ "$1" = version ]; then
   if [ "$0" = ./viorka-agent ]; then
     case "${CURRENT_PROBE:-}" in
       unavailable) exit 1 ;;
+      older) echo 'viorka-agent 0.0.9 (linux/amd64)'; exit 0 ;;
+      other_arch) echo 'viorka-agent 0.1.0 (linux/arm64)'; exit 0 ;;
       oversized) exec yes 'excessive version output' ;;
       multiline) printf 'viorka-agent 0.1.0 (linux/%s)\\nextra output\\n' "$TEST_ARCH"; exit 0 ;;
     esac
@@ -130,6 +132,10 @@ else:
             fixture = fixture.replace(b"$TEST_ARCH", b"arm64" if arch == "aarch64" else b"amd64")
             payload.write_bytes(fixture)
             install = home / ".viorka-agent"
+            if failure == "preinstalled":
+                install.mkdir(mode=0o700)
+                (install / "viorka-agent").write_bytes(fixture)
+                (install / "viorka-agent").chmod(0o700)
             if failure == "legacy":
                 legacy = home / ".local/share/viorka-agent"
                 legacy.mkdir(parents=True)
@@ -222,21 +228,24 @@ else:
             installed_label = '已安装 Agent 版本：'
             release_progress = '[安装中] 正在查询 GitHub 上的最新正式版…'
             download_progress = '[安装中] 正在下载 Agent 安装包…'
-            self.assertNotIn(current_label.encode(), output)
-            if failure in ("", "existing") and not extra and arch != "riscv64":
+            skip_progress = '[安装中] 本地 Agent 版本和架构与目标一致，跳过下载。'
+            self.assertEqual(current_label.encode() in output, failure == "preinstalled")
+            if failure in ("", "existing", "preinstalled") and not extra and arch != "riscv64":
                 self.assertEqual(code, 0, output.decode())
                 self.assertIn(f'目标 Agent 版本：v0.1.0 ({platform})'.encode(), output)
                 progress = [line for line in output.decode().splitlines() if line.startswith('[安装中]')]
                 self.assertEqual(progress, [
                     *([] if pinned else [release_progress]),
-                    download_progress,
-                    '[安装中] 正在下载 SHA-256 校验文件…',
-                    '[安装中] 正在校验安装包的 SHA-256、版本和架构…',
+                    *([skip_progress] if failure == "preinstalled" else [
+                        download_progress,
+                        '[安装中] 正在下载 SHA-256 校验文件…',
+                        '[安装中] 正在校验安装包的 SHA-256、版本和架构…',
+                    ]),
                     '[安装中] 正在校验 Agent 配置…',
-                    '[安装中] 正在写入 Agent 程序…',
+                    *([] if failure == "preinstalled" else ['[安装中] 正在写入 Agent 程序…']),
                     '[安装中] 正在向 Panel 提交 Agent 注册请求…',
                 ])
-                self.assertLess(output.index('安装目录：'.encode()), output.index(download_progress.encode()))
+                self.assertLess(output.index('安装目录：'.encode()), output.index((skip_progress if failure == 'preinstalled' else download_progress).encode()))
                 self.assertIn(f'{installed_label}0.1.0 ({platform})'.encode(), output)
                 self.assertNotIn(b'configuration format OK', output)
                 self.assertIn('安装前检查：未检测到正在运行的 Agent 进程。'.encode(), output)
@@ -300,6 +309,10 @@ else:
                     retry_script = pathlib.Path(tmp) / "install.sh"
                     retry_script.write_text((ROOT / "install.sh").read_text().replace('/proc/', str(pathlib.Path(tmp) / 'proc') + '/'))
                 old_binary = (install / "viorka-agent").read_bytes() if (install / "viorka-agent").exists() else None
+                agent = install / "viorka-agent"
+                old_inode = agent.stat().st_ino if agent.exists() else None
+                log = payload.with_name("download-urls")
+                log.write_text("")
                 held_lock = None
                 if locked_state:
                     held_lock = (install / "state/agent.lock").open("a")
@@ -349,12 +362,25 @@ else:
                 replaced = replacement and choice == "1" and not retry_failure and not running and not locked_state
                 self.assertEqual(result.returncode == 0, replaced or not (retry_failure or replacement), result.stderr.decode())
                 if old_binary is not None and retry_failure != "missing_url":
-                    current = '无法读取，将继续安装。' if current_probe else f'0.1.0 ({platform})'
+                    current = {
+                        "": f'0.1.0 ({platform})',
+                        "older": '0.0.9 (linux/amd64)',
+                        "other_arch": '0.1.0 (linux/arm64)',
+                    }.get(current_probe, '无法读取，将继续安装。')
                     self.assertIn(f'{current_label}{current}'.encode(), result.stdout)
                 if result.returncode == 0:
                     self.assertIn(f'{installed_label}0.1.0 ({platform})'.encode(), result.stdout)
                 else:
                     self.assertNotIn(installed_label.encode(), result.stdout)
+                if result.returncode == 0 and old_inode is not None:
+                    urls = log.read_text().splitlines()
+                    if current_probe:
+                        self.assertEqual(len([url for url in urls if '/download/' in url]), 2)
+                    else:
+                        self.assertEqual(urls, ["https://github.com/vioira/viorka-agent/releases/latest"] if retry_latest else [])
+                        self.assertIn(skip_progress.encode(), result.stdout)
+                        self.assertEqual(agent.stat().st_ino, old_inode)
+                        self.assertFalse((install / "viorka-agent.previous").exists())
                 if running and not retry_failure and not replacement:
                     self.assertIn('安装前检查：检测到 Agent 进程正在运行。'.encode(), result.stdout)
                     self.assertIn('常用命令'.encode(), result.stdout)
@@ -403,13 +429,17 @@ else:
         self.run_install(token_arg=True, retry=True, retry_omit_url=True, running=True)
         for failure in ("download", "checksum", "config"):
             with self.subTest(failure=failure):
-                self.run_install(token_arg=True, retry=True, retry_omit_url=True, retry_failure=failure)
+                self.run_install(token_arg=True, retry=True, retry_omit_url=True, retry_failure=failure,
+                                 current_probe="" if failure == "config" else "older")
 
     def test_current_version_printed_when_latest_lookup_fails(self):
         self.run_install(token_arg=True, retry=True, retry_omit_url=True, retry_latest=True, retry_failure="download")
 
-    def test_unreadable_current_version_does_not_block_update(self):
-        for probe in ("unavailable", "oversized", "multiline"):
+    def test_first_registration_reuses_matching_binary(self):
+        self.run_install(failure="preinstalled", pinned=True, token_stdin=True, expected_downloads=[])
+
+    def test_mismatched_or_unreadable_current_version_downloads_release(self):
+        for probe in ("older", "other_arch", "unavailable", "oversized", "multiline"):
             with self.subTest(probe=probe):
                 self.run_install(token_arg=True, retry=True, retry_omit_url=True, current_probe=probe)
 
@@ -465,13 +495,14 @@ else:
     def test_reinstall_preserves_data_when_locked_or_download_invalid(self):
         self.run_install(token_arg=True, retry=True, replacement=True, choice="1", locked_state=True)
         for failure in ("checksum", "config", "enroll"):
-            self.run_install(token_arg=True, retry=True, replacement=True, choice="1", retry_failure=failure)
+            self.run_install(token_arg=True, retry=True, replacement=True, choice="1", retry_failure=failure,
+                             current_probe="older" if failure == "checksum" else "")
 
     def test_reinstall_rejects_running_foreground(self):
         self.run_install(token_arg=True, retry=True, replacement=True, choice="1", running=True)
 
     def test_explicit_reenrollment_preserves_config(self):
-        self.run_install(token_arg=True, retry=True, reenroll=True)
+        self.run_install(token_arg=True, retry=True, reenroll=True, retry_latest=True)
 
     def test_running_agent_does_not_start_duplicate(self):
         self.run_install(token_arg=True, retry=True, running=True)
@@ -479,7 +510,7 @@ else:
     def test_failed_update_preserves_install(self):
         for failure in ("download", "checksum", "manifest", "missing_checksum", "version", "platform", "version_timeout", "config"):
             with self.subTest(failure=failure):
-                self.run_install(token_arg=True, retry=True, retry_failure=failure)
+                self.run_install(token_arg=True, retry=True, retry_failure=failure, current_probe="older")
 
     def test_pinned_download_retry(self):
         self.run_install(failure="download", pinned=True, token_arg=True, retry=True)

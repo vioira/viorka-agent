@@ -15,7 +15,7 @@
 
 命令将安装脚本下载到临时文件，通过标准输入传入令牌，退出时清理脚本。单节点令牌绑定预建节点，有效期为 15 分钟。原节点重新注册时另带 `--reenroll-node=ID`。批量注册时另带 `--registration`，同一令牌可在有效期和剩余配额内注册多台新服务器。复制的完整命令包含令牌，可能留在剪贴板或 shell 历史中。手动安装时省略令牌及其输入选项，可按终端提示隐藏输入。单节点的 ID、名称和类型由 Panel 令牌绑定，无需传入 `-id` 或名称。`--url`（兼容 `-url`）仅接受 HTTPS Origin，不是 `/wss` 地址。未实现的 `-secret`、`-auto_update` 等参数明确拒绝。
 
-需要 Linux amd64/arm64、POSIX sh、curl、sha256sum，以及 stat、readlink、cmp、mktemp、timeout 等基础工具。默认后台安装要求 root、HOME=/root，以及运行中的 systemd 或 OpenRC（需 supervise-daemon、logger）。后台模式拒绝可由非 root 写入或含符号链接的安装路径。无 root 或无受支持服务管理器时，在安装器参数中添加 `--foreground`（放在复制命令末尾的右括号前）以前台运行。仅隐藏输入模式额外需要 stty 和交互终端。可选 `--version=vX.Y.Z` 固定安装版本；默认解析最新正式 Release，再从同一版本下载二进制和 SHA-256。私有 CA 可追加 `--ca-file=/absolute/path/ca.pem`，仍验证主机名。
+需要 Linux amd64/arm64、POSIX sh、curl、sha256sum，以及 stat、readlink、cmp、mktemp、timeout 等基础工具。默认后台安装要求 root、HOME=/root，以及运行中的 systemd 或 OpenRC（需 supervise-daemon、logger）。后台模式拒绝可由非 root 写入或含符号链接的安装路径。无 root 或无受支持服务管理器时，在安装器参数中添加 `--foreground`（放在复制命令末尾的右括号前）以前台运行。仅隐藏输入模式额外需要 stty 和交互终端。可选 `--version=vX.Y.Z` 固定安装版本；省略时查询最新正式 Release。首次安装、重新注册和更新都会检查安装目录内可执行的 Agent。若其报告的版本和平台与目标完全一致，直接复用本地程序，跳过安装包和 SHA-256 文件下载。配置校验、所选注册和服务启动流程照常执行。私有 CA 可追加 `--ca-file=/absolute/path/ca.pem`，仍验证主机名。
 
 入口脚本来自 GitHub main，通过 HTTPS 获取；运行前可先下载并审阅，或将 URL 中 main 替换为审核过且包含安装器的提交/tag。SHA-256 验证的是发行二进制，不是入口脚本的独立签名。必须先将 `install.sh` 发布到对应 Git 引用，并发布正式 Release 资产；本地有文件不代表线上命令已经可用。
 
@@ -28,7 +28,7 @@ GitHub 下载默认直连。已下载脚本可用 `sh install.sh install --url=h
 - 通过 Linux `/proc/PID/exe` 检查本安装路径的 Agent 进程；空目录或下载残留不再视为安装成功，下载 404 后修正 `--version` 即可重试，无需删除目录。
 - 已存在 `state/identity.json` 时保留身份和配置，跳过注册，无需提供 `--url` 和 `--token`；本次 URL、CA 不会改动已有节点；若普通单节点安装同时提供新令牌，安装器通过 `/dev/tty` 提供「覆盖重新安装 / 退出并查看恢复说明」选择，默认退出；无终端时退出，不自动覆盖。覆盖需要 `flock`，停止本安装器管理的 Agent 后备份旧配置和整个 `state`，按本次 URL、CA 和令牌创建新配置及身份；前台或外部 supervisor 进程需先手动停止。删除旧节点后新建节点的恢复步骤见 [身份生命周期](../docs/REGISTRATION.md#删除旧节点后注册新节点)。已注册但停止的 Agent 同样复用身份。身份存在但配置缺失时拒绝重新注册，需恢复原配置。
 - 二进制和校验文件下载到独立临时目录，SHA-256、版本和 `config-check` 验证通过后才替换二进制。首次安装生成的配置也在临时目录校验通过后才写入正式路径。退出时清理本次临时文件。
-- 现有服务必须与安装器模板完全匹配且权限安全（systemd 不允许 drop-in），才能复用并重启。自定义或第三方服务拒绝接管。更新前保留 `viorka-agent.previous`；服务重启失败返回非零并尝试恢复旧二进制和服务，恢复失败明确提示人工处理。
+- 现有服务必须与安装器模板完全匹配且权限安全（systemd 不允许 drop-in），才能复用并重启。自定义或第三方服务拒绝接管。替换二进制前将旧程序备份为 `viorka-agent.previous`；服务重启失败返回非零并尝试恢复旧二进制和服务，恢复失败明确提示人工处理。
 - 已运行的前台 Agent 不重复启动；只更新磁盘二进制，提示通过原 supervisor 或终端重启。未运行时启动前台 Agent。进程状态和服务状态不代表 Panel 握手成功。
 
 已安装的服务器可直接升级并重启后台 Agent：
@@ -37,7 +37,7 @@ GitHub 下载默认直连。已下载脚本可用 `sh install.sh install --url=h
 curl -fsSL --proto '=https' --proto-redir '=https' 'https://raw.githubusercontent.com/vioira/viorka-agent/main/install.sh' | sh -s -- install --version=v0.1.0-bate.9
 ```
 
-每次更新仍按 `--version` 精确下载指定 Release，省略时使用最新正式 Release；这不是定时自动更新。`v0.1.0-beta2` 与 `v0.1.0-beta.2` 是两个不同标签，不自动纠正版本。404 提示检查标签及对应架构资产是否已发布。
+`--version` 按完整标签匹配目标版本。`v0.1.0-beta2` 与 `v0.1.0-beta.2` 是两个不同标签，不自动纠正版本。404 提示检查标签及对应架构资产是否已发布。
 
 安装器使用 `.install-lock` 目录排斥并发安装。常规退出会释放；SIGKILL/断电可能残留锁，确认无安装进程后可用 `rmdir "$HOME/.viorka-agent/.install-lock"` 解除。旧二进制备份和身份会保留，但断电后的自动事务恢复尚未实现。隐藏输入模式会恢复终端回显，安装器通过标准输入将令牌传给 Agent。
 
@@ -154,7 +154,7 @@ sh install.sh install --version=v1.2.3
 sh install.sh install --version=v1.2.3 --foreground
 ```
 
-必须使用输出的精确版本；省略 `--version` 的旧入口仍跟随 GitHub Latest，可能与按 SemVer 排序的候选不同。指定预发布无需额外安装参数。安装器严格接受 v 开头的 SemVer；二进制下载上限 128 MiB，摘要文件上限 128 字节，缺失、格式错误或 SHA-256 不匹配均拒绝切换；校验通过后执行 `version`，其版本及平台必须与指定产物一致，再执行配置检查。后台安装升级会重启 Agent，失败恢复旧二进制并尝试重启旧 Agent；身份、配置和代理服务保持原状。前台已有进程继续运行旧版本，需通过原终端或 supervisor 重启；未运行时进入前台运行。
+必须使用输出的精确版本；省略 `--version` 的旧入口仍跟随 GitHub Latest，可能与按 SemVer 排序的候选不同。指定预发布无需额外安装参数。安装器严格接受 v 开头的 SemVer；二进制下载上限 128 MiB，摘要文件上限 128 字节，缺失、格式错误或 SHA-256 不匹配均拒绝切换；校验通过后执行 `version`，其版本及平台必须与指定产物一致，再执行配置检查。后台安装升级会重启 Agent，失败时仅在本次替换过程序的情况下恢复旧二进制，再尝试恢复服务；身份、配置和代理服务保持原状。前台已有进程继续运行旧版本，需通过原终端或 supervisor 重启；未运行时进入前台运行。
 
 实现参考了 [cfsm-agent 的版本筛选流程](https://github.com/huilang-me/cfsm-agent/blob/main/internal/cfprobe/update.go)，保留显式检查和用户执行安装的方式。没有周期更新任务；发布产物使用 SHA-256，未增加签名体系。
 

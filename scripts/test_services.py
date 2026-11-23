@@ -157,9 +157,12 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                 initial_service = service.read_bytes()
                 initial_config = (install / 'agent.json').read_bytes()
                 command = ['sh', str(local), 'install', '--version=v0.1.0']
-                for upgrade_failure in ('download', 'upgrade', 'rollback', '', ''):
+                for upgrade_failure in ('download', 'upgrade', 'rollback', '', 'rollback', ''):
                     old_binary = agent.read_bytes()
                     current_version = '0.1.0' if b'new release' in old_binary else '0.0.9'
+                    same_version = current_version == '0.1.0'
+                    if same_version:
+                        previous_binary = (install / 'viorka-agent.previous').read_bytes()
                     prior_calls = calls.read_text()
                     result = subprocess.run(command, env=dict(env, FAILURE=upgrade_failure), capture_output=True, timeout=15)
                     self.assertEqual(result.returncode == 0, not upgrade_failure, result.stderr.decode())
@@ -171,11 +174,14 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
                     self.assertEqual((install / 'agent.json').read_bytes(), initial_config)
                     self.assertEqual((install / 'state/identity.json').read_text(), identity)
                     self.assertFalse(list(install.glob('.install-*')))
+                    if same_version:
+                        self.assertIn('跳过下载'.encode(), result.stdout)
+                        self.assertEqual((install / 'viorka-agent.previous').read_bytes(), previous_binary)
                     if upgrade_failure:
                         self.assertNotIn('已安装 Agent 版本：'.encode(), result.stdout)
                         self.assertEqual(agent.read_bytes(), old_binary)
                         if upgrade_failure in ('upgrade', 'rollback'):
-                            self.assertIn('已恢复旧 Agent 二进制'.encode(), result.stderr)
+                            self.assertEqual('已恢复旧 Agent 二进制'.encode() in result.stderr, not same_version)
                             restart = 'restart viorka-agent.service' if manager == 'systemd' else 'viorka-agent restart'
                             self.assertEqual(calls.read_text().count(restart) - prior_calls.count(restart), 2)
                             if upgrade_failure == 'rollback':
