@@ -34,7 +34,7 @@ type telemetrySources struct {
 
 // Production sources are instantiated once per Agent run. Reconnecting or
 // changing cadence never reconstructs CPU/network/disk/traffic baselines.
-func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity, logger *slog.Logger, probeEnabled ...func() bool) (telemetrySources, error) {
+func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity, logger *slog.Logger, probeEnabled, slowUptime func() bool) (telemetrySources, error) {
 	fast, err := collector.NewTelemetryFast(cfg.NetworkFilter)
 	if err != nil {
 		return telemetrySources{}, err
@@ -63,7 +63,7 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 		},
 		probeChanged: probes.Changes(),
 		probe: func(ctx context.Context, at time.Time) error {
-			if len(probeEnabled) == 0 || !probeEnabled[0]() {
+			if !probeEnabled() {
 				return nil
 			}
 			_, err := probes.Sample(ctx, at)
@@ -74,10 +74,13 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 		configure:    fast.ApplyTraffic,
 		validate:     fast.ValidateTraffic,
 		calibrate:    ledger.CalibrateWithReceipt,
-		fast:         func(ctx context.Context, at time.Time) (any, error) { v, _, err := fast.Sample(ctx, at); return v, err },
+		fast: func(ctx context.Context, at time.Time) (any, error) {
+			v, _, err := fast.SampleWithUptime(ctx, at, !slowUptime())
+			return v, err
+		},
 		full: func(ctx context.Context, at time.Time) (any, error) {
 			var snapshot *v1.TelemetryTCPProbeBatch
-			if len(probeEnabled) > 0 && probeEnabled[0]() {
+			if probeEnabled() {
 				snapshot = probes.Snapshot(at)
 			}
 			value, err := full.Sample(ctx, at)
@@ -86,7 +89,9 @@ func newTelemetrySources(cfg config.Local, store *state.Store, id state.Identity
 			}
 			return value, err
 		},
-		ip:   func(ctx context.Context, at time.Time) (any, error) { return ip.Sample(ctx, at) },
+		ip: func(ctx context.Context, at time.Time) (any, error) {
+			return ip.SampleWithUptime(ctx, at, slowUptime())
+		},
 		save: ledger.Save,
 	}, nil
 }

@@ -12,6 +12,7 @@ import (
 // Neither peer advertises it until storage, transport and scheduling are ready.
 const TelemetryCapability = "node.telemetry.v3"
 const TelemetryActivationCapability = "node.telemetry.activation.v1"
+const SlowUptimeCapability = "node.uptime.slow.v1"
 const TCPProbeCapability = "node.tcp_probe.v2"
 const TCPProbeSettingsCapability = "node.tcp_probe.settings.v2"
 const (
@@ -125,6 +126,9 @@ func (b TelemetryBatch) ValidateIdentity(node string, now time.Time, reportSecon
 	for _, ip := range b.PublicIp {
 		if ip == nil || !check(ip.Sequence, previous, ip.SampledAt, 915*time.Second) {
 			return errors.New("invalid public IP observation identity")
+		}
+		if u := ip.Uptime; u != nil && !check(ip.Sequence, previous, u.SampledAt, 915*time.Second) {
+			return errors.New("invalid uptime observation time")
 		}
 		if ip.Ipv4 != "" {
 			a, e := netip.ParseAddr(ip.Ipv4)

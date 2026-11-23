@@ -118,6 +118,7 @@ func (t *telemetryClientSession) handle(e v1.Envelope, send func(v1.Envelope) er
 		if v1.ValidateTelemetryJSON(e.Payload, "TelemetryReady", false) != nil || v1.DecodeTelemetry(e.Payload, &ready, false) != nil || ready.Settings == nil || ready.Settings.Validate() != nil {
 			return true, fmt.Errorf("invalid telemetry ready")
 		}
+		t.client.slowUptimeSupported.Store(ready.SlowUptime)
 		t.client.dailyTrafficSupported.Store(ready.DailyTraffic)
 		t.client.tcpProbeSupported.Store(ready.TcpProbe)
 		t.generation = ready.SessionGeneration
@@ -173,7 +174,7 @@ func (t *telemetryClientSession) start(ready v1.TelemetryReady, send func(v1.Env
 	if c.telemetrySource != nil {
 		sources, err = c.telemetrySource()
 	} else {
-		sources, err = newTelemetrySources(c.cfg, c.store, t.identity, c.log(), c.tcpProbeSupported.Load)
+		sources, err = newTelemetrySources(c.cfg, c.store, t.identity, c.log(), c.tcpProbeSupported.Load, c.slowUptimeSupported.Load)
 	}
 	if err != nil {
 		return err

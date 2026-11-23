@@ -84,7 +84,7 @@ func (c *Client) uploadTelemetryBody(ctx context.Context, credential sessionCred
 		}
 		return failed("session_expired", 0, 0, nil)
 	}
-	batch, err := v1.DecodeTelemetryBatch(raw, node, time.Now(), reportSeconds, true)
+	batch, err := v1.DecodeTelemetryBatch(raw, node, time.Now(), reportSeconds, true, c.slowUptimeSupported.Load())
 	if err != nil {
 		return failed("invalid_batch", 0, 0, err)
 	}

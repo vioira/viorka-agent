@@ -6,6 +6,8 @@ import (
 	"errors"
 	"slices"
 	"time"
+
+	v1 "github.com/vioira/viorka-agent/protocol/v1"
 )
 
 // WSS delivery uses the sole management writer and waits for the matching
@@ -18,23 +20,13 @@ func (c *Client) telemetryTransport(node, run string, delivery func() telemetryF
 		flight := request.send.flight
 		// Buffered observations can survive a reconnect to an older Panel. Strip
 		// only the optional extension from a private copy, preserving sample identity.
-		if !c.tcpProbeSupported.Load() {
+		slow, tcp := c.slowUptimeSupported.Load(), c.tcpProbeSupported.Load()
+		if !tcp || !slow {
 			flight = &telemetryFlight{samples: slices.Clone(flight.samples)}
 			for i := range flight.samples {
-				sample := &flight.samples[i]
-				if sample.kind != 1 {
-					continue
-				}
-				var fields map[string]json.RawMessage
-				if err := json.Unmarshal(sample.raw, &fields); err != nil {
+				if err := flight.samples[i].adaptCapabilities(slow, tcp); err != nil {
 					return err
 				}
-				delete(fields, "tcp_probes")
-				raw, err := json.Marshal(fields)
-				if err != nil {
-					return err
-				}
-				sample.raw = raw
 			}
 		}
 		if c.dailyTrafficSupported.Load() && c.dailyPending != nil {
@@ -95,4 +87,40 @@ func (c *Client) telemetryTransport(node, run string, delivery func() telemetryF
 		}
 		return nil
 	}
+}
+
+// Adapt buffered observations on downgrade without changing the original cache.
+func (sample *telemetrySample) adaptCapabilities(slowUptime, tcpProbe bool) error {
+	var value any
+	switch {
+	case sample.kind == 0 && sample.slowUptime && !slowUptime:
+		var f v1.TelemetryFast
+		if err := json.Unmarshal(sample.raw, &f); err != nil {
+			return err
+		}
+		f.Errors = append(f.Errors, "uptime_unavailable")
+		value = &f
+	case sample.kind == 2 && sample.slowUptime && !slowUptime:
+		var ip v1.TelemetryPublicIP
+		if err := json.Unmarshal(sample.raw, &ip); err != nil {
+			return err
+		}
+		ip.Uptime = nil
+		value = &ip
+	case sample.kind == 1 && !tcpProbe:
+		var f v1.TelemetryFull
+		if err := json.Unmarshal(sample.raw, &f); err != nil {
+			return err
+		}
+		f.TcpProbes = nil
+		value = &f
+	default:
+		return nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	sample.raw = raw
+	return nil
 }

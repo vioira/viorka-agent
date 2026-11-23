@@ -3,6 +3,7 @@ package connection
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
@@ -20,10 +21,11 @@ const (
 )
 
 type telemetrySample struct {
-	kind     int
-	sequence uint64
-	at       time.Time
-	raw      json.RawMessage
+	slowUptime bool
+	kind       int
+	sequence   uint64
+	at         time.Time
+	raw        json.RawMessage
 }
 type telemetryWindow struct {
 	pending  []telemetrySample
@@ -89,6 +91,7 @@ func (w *telemetryWindow) trim() {
 }
 func (w *telemetryWindow) add(value any) error {
 	var kind int
+	var slowUptime bool
 	var sequence uint64
 	var at time.Time
 	var schema string
@@ -97,6 +100,7 @@ func (w *telemetryWindow) add(value any) error {
 		if s == nil {
 			return fmt.Errorf("nil fast sample")
 		}
+		slowUptime = s.UptimeSeconds == nil && !slices.Contains(s.Errors, "uptime_unavailable") && !slices.Contains(s.Errors, "unsupported_platform")
 		kind, sequence, at, schema = 0, s.Sequence, s.SampledAt, "TelemetryFast"
 	case *v1.TelemetryFull:
 		if s == nil {
@@ -107,6 +111,7 @@ func (w *telemetryWindow) add(value any) error {
 		if s == nil {
 			return fmt.Errorf("nil IP sample")
 		}
+		slowUptime = s.Uptime != nil
 		kind, sequence, at, schema = 2, s.Sequence, s.SampledAt, "TelemetryPublicIP"
 	default:
 		return fmt.Errorf("unknown telemetry sample")
@@ -125,7 +130,7 @@ func (w *telemetryWindow) add(value any) error {
 	if err := v1.ValidateTelemetryJSON(raw, schema, true); err != nil {
 		return err
 	}
-	sample := telemetrySample{kind: kind, sequence: sequence, at: at, raw: raw}
+	sample := telemetrySample{slowUptime: slowUptime, kind: kind, sequence: sequence, at: at, raw: raw}
 	w.sequence[kind] = sequence
 	w.latest[kind] = &sample
 	w.pending = append(w.pending, sample)

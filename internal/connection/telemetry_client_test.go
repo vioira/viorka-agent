@@ -108,7 +108,7 @@ func testTelemetryClientReconnect(t *testing.T) {
 				return fmt.Errorf("v3 capability missing")
 			}
 			allowed := []string{"node.inspect", "node.inventory.v1", v1.OriginMigrationCapability, v1.TelemetryCapability, v1.TelemetryActivationCapability,
-				v1.TrafficCapability, v1.DailyTrafficCapability, v1.TCPProbeCapability, v1.TCPProbeSettingsCapability}
+				v1.TrafficCapability, v1.DailyTrafficCapability, v1.SlowUptimeCapability, v1.TCPProbeCapability, v1.TCPProbeSettingsCapability}
 			for _, capability := range payload.Capabilities {
 				if !slices.Contains(allowed, capability) {
 					return fmt.Errorf("unexpected or retired capability: %s", capability)

@@ -6,7 +6,7 @@
 
 - 常规快速采集 C 为 1–60 秒，默认 30；HTTP 上报及完整采集 R 为 30–180 秒，默认 60；实时采集/上报 W 为 1–5 秒，默认 2。C 与 R 独立。
 - 无浏览器订阅时通过认证 HTTP POST 上报；有效实时需求租约使用 WSS。每组保留独立采样时间、水位与错误状态，未知值不补零。
-- fast 包含 CPU、内存/Swap、运行时长、网络与套接字；full 包含负载、进程数、文件系统和设备 IO；公网 IP 每 600 秒刷新。资产探测独立运行。
+- fast 包含 CPU、内存/Swap、网络与套接字。full 包含负载、进程数、文件系统和设备 IO。公网 IP 启动时采集，此后每 600 秒刷新。双方协商 `node.uptime.slow.v1` 后，主机运行时长随公网 IP 独立采样，保留实际读取时间。基础 v3 会话继续在 fast 组采集运行时长。资产探测独立运行。
 - 设置使用 `node.settings.v3` / `node.settings.v3_result`，保存于固定 `node-telemetry-settings.json`，先验证和原子持久化再确认。旧 `node-settings.json` 不再读取或写入。`metrics_seconds` 已删除，旧 bootstrap 中应移除此字段。
 - Panel 设置入口仅为 `/api/v1/nodes/{id}/telemetry-settings` 及 `/status`；保存 Desired 不代表 Agent 已应用。旧 `/settings` 接口返回 404。
 - 实时窗口最多 600 点、10 分钟；历史按 UTC 30 秒桶聚合，查询保留最近 168 小时。管理连接离线不使仍新鲜的 HTTP 数据自动过期。

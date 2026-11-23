@@ -37,6 +37,9 @@ func NewTelemetryFast(filter config.NetworkFilter) (*TelemetryFast, error) {
 	return &TelemetryFast{source: network.source, network: network}, nil
 }
 func (t *TelemetryFast) Sample(ctx context.Context, at time.Time) (*v1.TelemetryFast, NetworkObservation, error) {
+	return t.SampleWithUptime(ctx, at, true)
+}
+func (t *TelemetryFast) SampleWithUptime(ctx context.Context, at time.Time, includeUptime bool) (*v1.TelemetryFast, NetworkObservation, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -99,16 +102,12 @@ func (t *TelemetryFast) Sample(ctx context.Context, at time.Time) (*v1.Telemetry
 		f.SwapTotal = &swap
 		f.SwapUsed = &swapUsed
 	}
-	data, err = t.source.read(ctx, "uptime")
-	fields := strings.Fields(data)
-	if err == nil && len(fields) > 0 {
-		v, e := number(fields[0])
-		if e == nil && v <= 1e20 {
-			f.UptimeSeconds = &v
+	if includeUptime {
+		uptime := t.source.sampleUptime(ctx)
+		f.UptimeSeconds = uptime.Seconds
+		if uptime.Error != "" {
+			f.Errors = append(f.Errors, uptime.Error)
 		}
-	}
-	if f.UptimeSeconds == nil {
-		f.Errors = append(f.Errors, "uptime_unavailable")
 	}
 	tcp, udp, err := t.source.sampleSockets(ctx)
 	if err != nil {

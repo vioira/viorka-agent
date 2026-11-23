@@ -865,6 +865,9 @@
           },
           "maxItems": 2,
           "uniqueItems": true
+        },
+        "uptime": {
+          "$ref": "#/$defs/TelemetryUptime"
         }
       },
       "required": [
@@ -1224,6 +1227,10 @@
         "activation_ack": {
           "type": "boolean",
           "description": "Requires node.telemetry.activation.v1; wait for node.telemetry.activated before uploading."
+        },
+        "slow_uptime": {
+          "type": "boolean",
+          "description": "Enables node.uptime.slow.v1 for this telemetry session."
         }
       },
       "required": [
@@ -2069,6 +2076,53 @@
         "name",
         "command_sha256",
         "endpoints"
+      ]
+    },
+    "TelemetryUptime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sampled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1e+20
+        },
+        "error": {
+          "type": "string",
+          "enum": [
+            "uptime_unavailable",
+            "unsupported_platform"
+          ]
+        }
+      },
+      "required": [
+        "sampled_at"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "seconds"
+          ],
+          "not": {
+            "required": [
+              "error"
+            ]
+          }
+        },
+        {
+          "required": [
+            "error"
+          ],
+          "not": {
+            "required": [
+              "seconds"
+            ]
+          }
+        }
       ]
     }
   }

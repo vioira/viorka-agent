@@ -44,9 +44,10 @@ func baselineQuality(q []string) bool {
 
 // ValidateSemantics runs after Schema validation. It rejects contradictory
 // known/unknown values and ambiguous device identities before any state changes.
-func (b TelemetryBatch) ValidateSemantics() error {
+func (b TelemetryBatch) ValidateSemantics(slowUptime ...bool) error {
+	slow := len(slowUptime) > 0 && slowUptime[0]
 	for _, f := range b.Fast {
-		if f == nil || !validFast(f) {
+		if f == nil || !validFast(f, slow) {
 			return ErrTelemetryPayload
 		}
 	}
@@ -59,6 +60,9 @@ func (b TelemetryBatch) ValidateSemantics() error {
 		if ip == nil || (ip.Ipv4 == "") != slices.Contains(ip.Errors, "ipv4_unavailable") || (ip.Ipv6 == "") != slices.Contains(ip.Errors, "ipv6_unavailable") {
 			return ErrTelemetryPayload
 		}
+		if u := ip.Uptime; u != nil && (!slow || (u.Seconds == nil) != (u.Error != "")) {
+			return ErrTelemetryPayload
+		}
 		if ip.Ipv4 != "" && !PublicAddress(ip.Ipv4, true) {
 			return ErrTelemetryPayload
 		}
@@ -68,7 +72,7 @@ func (b TelemetryBatch) ValidateSemantics() error {
 	}
 	return nil
 }
-func validFast(f *TelemetryFast) bool {
+func validFast(f *TelemetryFast, slowUptime bool) bool {
 	unsupported := slices.Contains(f.Errors, "unsupported_platform")
 	failed := func(code string) bool { return unsupported || slices.Contains(f.Errors, code) }
 	if failed("cpu_unavailable") {
@@ -89,7 +93,7 @@ func validFast(f *TelemetryFast) bool {
 		if f.UptimeSeconds != nil {
 			return false
 		}
-	} else if f.UptimeSeconds == nil {
+	} else if f.UptimeSeconds == nil && !slowUptime {
 		return false
 	}
 	if failed("sockets_unavailable") {

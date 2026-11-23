@@ -42,6 +42,7 @@ type Client struct {
 	activeOrigin          atomic.Pointer[string]
 	activeSocket          atomic.Pointer[websocket.Conn]
 	dailyPersistFailed    bool // owned by the telemetry sender
+	slowUptimeSupported   atomic.Bool
 	dailyTrafficSupported atomic.Bool
 	dailyPending          func(context.Context, bool) ([]*v1.TelemetryDailyTraffic, error)
 	dailyAck              func([]*v1.TelemetryDailyTrafficAck)
@@ -315,7 +316,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		capabilities = append(capabilities, v1.TrafficCapability, v1.DailyTrafficCapability)
 	}
 	if c.telemetryEnabled {
-		capabilities = append(capabilities, v1.TelemetryCapability, v1.TelemetryActivationCapability, v1.TCPProbeCapability, v1.TCPProbeSettingsCapability)
+		capabilities = append(capabilities, v1.TelemetryCapability, v1.TelemetryActivationCapability, v1.SlowUptimeCapability, v1.TCPProbeCapability, v1.TCPProbeSettingsCapability)
 	}
 	if err = send(v1.Message("system.hello", id.NodeID, ID(), v1.Hello{AgentVersion: version.Version, ProtocolVersions: []string{v1.Version}, Capabilities: capabilities, OS: runtime.GOOS, Arch: runtime.GOARCH})); err != nil {
 		return err

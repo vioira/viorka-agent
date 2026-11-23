@@ -12,22 +12,38 @@ import (
 // TelemetryPublicIP owns the slow address cache independently of OS/full
 // collection. Call from its own bounded worker, never the fast sampler/writer.
 type TelemetryPublicIP struct {
-	lookup   func(context.Context, bool) (string, error)
-	cached   *v1.TelemetryPublicIP
-	sequence uint64
+	readUptime func(context.Context) *v1.TelemetryUptime
+	lookup     func(context.Context, bool) (string, error)
+	cached     *v1.TelemetryPublicIP
+	sequence   uint64
 }
 
 func NewTelemetryPublicIP(servers ...string) *TelemetryPublicIP {
-	return &TelemetryPublicIP{lookup: publicIPLookup(servers)}
+	return &TelemetryPublicIP{lookup: publicIPLookup(servers), readUptime: NewMetrics().sampleUptime}
 }
 func (t *TelemetryPublicIP) Sample(ctx context.Context, at time.Time) (*v1.TelemetryPublicIP, error) {
+	return t.SampleWithUptime(ctx, at, false)
+}
+func (t *TelemetryPublicIP) SampleWithUptime(ctx context.Context, at time.Time, includeUptime bool) (*v1.TelemetryPublicIP, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if at.IsZero() {
 		return nil, fmt.Errorf("missing public IP sample time")
 	}
-	copyResult := func() *v1.TelemetryPublicIP { v := *t.cached; v.Errors = append([]string{}, v.Errors...); return &v }
+	copyResult := func() *v1.TelemetryPublicIP {
+		v := *t.cached
+		v.Errors = append([]string{}, v.Errors...)
+		if v.Uptime != nil {
+			sample := *v.Uptime
+			if sample.Seconds != nil {
+				seconds := *sample.Seconds
+				sample.Seconds = &seconds
+			}
+			v.Uptime = &sample
+		}
+		return &v
+	}
 	if t.cached != nil && at.Sub(t.cached.SampledAt) >= 0 && at.Sub(t.cached.SampledAt) < 600*time.Second {
 		return copyResult(), nil
 	}
@@ -40,6 +56,9 @@ func (t *TelemetryPublicIP) Sample(ctx context.Context, at time.Time) (*v1.Telem
 	ctx, cancel := context.WithTimeout(ctx, 22*time.Second)
 	defer cancel()
 	v := &v1.TelemetryPublicIP{SampledAt: at.UTC(), Errors: []string{}}
+	if includeUptime {
+		v.Uptime = t.readUptime(ctx)
+	}
 	for _, ipv4 := range []bool{true, false} {
 		address, err := t.lookup(ctx, ipv4)
 		if err != nil || !v1.PublicAddress(address, ipv4) {
@@ -56,7 +75,7 @@ func (t *TelemetryPublicIP) Sample(ctx context.Context, at time.Time) (*v1.Telem
 			v.Ipv6 = address
 		}
 	}
-	if err := parent.Err(); err != nil {
+	if err := parent.Err(); err != nil && (v.Uptime == nil || err == context.Canceled) {
 		return nil, err
 	}
 	t.sequence++
