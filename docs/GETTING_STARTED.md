@@ -45,6 +45,6 @@ VIORKA_TEST_PANEL_URL='https://panel.example.com' bash scripts/run-test-node.sh
 
 本地身份绑定到完整 Panel 地址。脚本为新地址选择独立测试目录，首次连接时需要新域名对应的注册令牌。旧目录保留；后续不带环境变量启动时复用最近选择的目录。要切回旧配置，也可以通过 `--test-dir` 指定旧目录。
 
-如果之前用 `mktemp` 创建过 `~/viorka-agent-test.*`，脚本会复用并记住唯一包含 `agent.json` 的旧目录。若有多个，可运行 `bash scripts/run-test-node.sh --test-dir "$HOME/viorka-agent-test.实际后缀"` 选择一次，后续继续用无参数命令。切换到脚本前先退出占用同一状态目录的旧测试进程。
+首次从 `~/viorka-agent-test.*` 选择目录时，若只有一个旧目录包含 `agent.json`，脚本会自动复用。若有多个，在终端输入对应编号即可复用旧配置和身份，也可输入 `0` 在 `~/.viorka-agent-test/` 下新建独立目录并注册新节点。脚本会记住选择，后续可直接无参数启动。非交互运行时，可用 `bash scripts/run-test-node.sh --test-dir "$HOME/viorka-agent-test.实际后缀"` 指定已有目录。复用前先退出占用同一状态目录的旧测试进程。
 
 脚本使用独立的 Agent 身份与日志配置，托管引擎仍属于同一台主机。首次注册会读取本机已有的 Viorka 托管引擎。若使用另一节点的令牌，而原引擎 ID 仍由既有节点持有，Panel 会拒绝恢复。需要沿用既有节点时，在该节点的设置中取得重新注册令牌，再继续运行脚本。

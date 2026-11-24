@@ -31,6 +31,7 @@ json_string() {
 
 usage() {
     printf '%s\n' '用法：bash scripts/run-test-node.sh [--test-dir /已有测试目录]' \
+        '发现多个旧测试目录时，可按编号选择一个，或输入 0 新建测试目录。' \
         '首次创建配置时会提示输入 Panel 域名，也可预设 VIORKA_TEST_PANEL_URL 和 VIORKA_TEST_NODE_NAME。' \
         '已有配置时，指定不同的 VIORKA_TEST_PANEL_URL 将选择该地址的独立测试目录。'
 }
@@ -58,6 +59,7 @@ binary=$workspace/viorka-agent
 mkdir -p -- "$workspace"
 check_directory "$workspace"
 
+new_dir=
 if [[ -n "$requested_dir" ]]; then
     test_dir=$requested_dir
 elif present "$selection"; then
@@ -75,9 +77,28 @@ else
         fi
     done
     if [[ "$test_dir" != "$workspace" && ${#previous[@]} -gt 1 ]]; then
-        printf '发现多个旧测试目录，请用 --test-dir 选择一个：\n' >&2
-        printf '  %s\n' "${previous[@]}" >&2
-        exit 1
+        printf '发现多个旧测试目录：\n' >&2
+        for i in "${!previous[@]}"; do
+            printf '  %d) %q\n' "$((i + 1))" "${previous[i]}" >&2
+        done
+        printf '  0) 新建测试目录\n' >&2
+        [[ -t 0 ]] || fail '请选择交互终端运行，或用 --test-dir 指定一个旧测试目录。'
+        while IFS= read -r -p '请输入目录编号：' choice; do
+            if [[ "$choice" == 0 ]]; then
+                new_dir=$(mktemp -d "$workspace/node-XXXXXX")
+                test_dir=$new_dir
+                break
+            fi
+            for i in "${!previous[@]}"; do
+                if [[ "$choice" == "$((i + 1))" ]]; then
+                    requested_dir=${previous[i]}
+                    test_dir=$requested_dir
+                    break 2
+                fi
+            done
+            printf '请输入列表中的编号。\n' >&2
+        done
+        [[ -n "$requested_dir" || -n "$new_dir" ]] || fail '已取消选择测试目录。'
     fi
 fi
 
@@ -86,7 +107,7 @@ check_directory "$test_dir"
 config=$test_dir/agent.json
 if present "$config"; then
     check_file "$config" 0022
-elif [[ -n "$requested_dir" || "$test_dir" != "$workspace" ]] || present "$workspace/state"; then
+elif [[ -z "$new_dir" ]] && { [[ -n "$requested_dir" || "$test_dir" != "$workspace" ]] || present "$workspace/state"; }; then
     fail "现有测试目录缺少配置：$config"
 fi
 
