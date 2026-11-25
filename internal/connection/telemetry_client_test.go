@@ -31,6 +31,7 @@ func testTelemetryClientReconnect(t *testing.T) {
 	defer cancel()
 	fixture := uploadFixture(t)
 	settings := v1.DefaultTelemetrySettings()
+	settings.CollectionSeconds = 2
 	settings.WssReportSeconds = 1
 	settings.HttpReportSeconds = 30
 	done := make(chan error, 1)

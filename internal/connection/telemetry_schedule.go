@@ -122,14 +122,14 @@ func (s *telemetrySchedule) take(now time.Time) *telemetrySend {
 	} else if !s.liveWanted || s.workers.busy[0] {
 		return nil
 	}
-	if len(s.window.pending) == 0 && s.window.latest[0] == nil && s.window.latest[1] == nil && s.window.latest[2] == nil {
+	s.window.expire(now)
+	if len(s.window.pending) == 0 && (!s.window.restoreLatest || s.window.latest == [3]*telemetrySample{}) {
 		return nil
 	}
 	attempt, ok := s.retry.begin(now, http)
 	if !ok {
 		return nil
 	}
-	s.window.expire(now)
 	flight := s.window.take()
 	if flight == nil {
 		s.retry.active = nil
@@ -242,6 +242,7 @@ func (s *telemetrySchedule) reconnected(generation uint64, serverGeneration stri
 	}
 	s.mode(now)
 	if reconnected {
+		s.window.restoreLatest = true
 		// Restore the Panel's volatile snapshot without waiting for the next
 		// cadence tick. take still enforces in-flight ownership and explicit
 		// server throttles; cached groups keep their observation identities.

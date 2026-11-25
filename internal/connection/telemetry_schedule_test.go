@@ -121,7 +121,7 @@ func TestTelemetryScheduleHTTPRealtimeFallback(t *testing.T) {
 	}
 	checkLeaseResult(t, s.demand(leaseDemand(1, true), now.Add(time.Minute+time.Second)), "rejected", "http", "lease_expired")
 }
-func TestTelemetryScheduleCachedHTTPAndManagementLoss(t *testing.T) {
+func TestTelemetryScheduleSkipsAcknowledgedHTTPAndSurvivesManagementLoss(t *testing.T) {
 	settings := v1.DefaultTelemetrySettings()
 	settings.CollectionSeconds = 60
 	settings.HttpReportSeconds = 30
@@ -133,8 +133,14 @@ func TestTelemetryScheduleCachedHTTPAndManagementLoss(t *testing.T) {
 		s.advance(now)
 		drainSchedule(t, s)
 		send := s.take(now)
+		if seconds == 90 {
+			if send != nil {
+				t.Fatal("resent acknowledged observation")
+			}
+			continue
+		}
 		if send == nil || len(send.flight.samples) != 1 {
-			t.Fatal("missing HTTP cache")
+			t.Fatal("missing pending observation")
 		}
 		expected := uint64(1)
 		if seconds >= 60 {

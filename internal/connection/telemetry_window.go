@@ -28,12 +28,13 @@ type telemetrySample struct {
 	raw        json.RawMessage
 }
 type telemetryWindow struct {
-	pending  []telemetrySample
-	latest   [3]*telemetrySample
-	sequence [3]uint64
-	bytes    int // pending only; usage includes flight and unshared latest snapshots
-	maxBytes int
-	inflight *telemetryFlight
+	restoreLatest bool // Include cached groups once after reconnect.
+	pending       []telemetrySample
+	latest        [3]*telemetrySample
+	sequence      [3]uint64
+	bytes         int // pending only; usage includes flight and unshared latest snapshots
+	maxBytes      int
+	inflight      *telemetryFlight
 
 	droppedLimit, droppedExpired, droppedOversized, retried, acknowledged uint64
 }
@@ -187,16 +188,19 @@ func (w *telemetryWindow) take() *telemetryFlight {
 	clear(w.pending[len(w.pending)-end:])
 	w.pending = w.pending[:len(w.pending)-end]
 	w.bytes -= size
-	// Only attach a cached group when none of that group's unsent observations
-	// remain. Otherwise a higher watermark would make subsequent replay disappear.
-	var waiting [3]bool
-	for _, s := range w.pending {
-		waiting[s.kind] = true
-	}
-	for kind, s := range w.latest {
-		if s != nil && counts[kind] == 0 && !waiting[kind] && size+len(s.raw)+1 <= telemetryBatchBytes-telemetryWindowReserve {
-			samples = append(samples, *s)
-			size += len(s.raw) + 1
+	if w.restoreLatest {
+		w.restoreLatest = false
+		// Only attach a cached group when none of that group's unsent observations
+		// remain. Otherwise a higher watermark would make subsequent replay disappear.
+		var waiting [3]bool
+		for _, s := range w.pending {
+			waiting[s.kind] = true
+		}
+		for kind, s := range w.latest {
+			if s != nil && counts[kind] == 0 && !waiting[kind] && size+len(s.raw)+1 <= telemetryBatchBytes-telemetryWindowReserve {
+				samples = append(samples, *s)
+				size += len(s.raw) + 1
+			}
 		}
 	}
 	if len(samples) == 0 {

@@ -38,9 +38,6 @@ func TestTelemetryReplayRetentionAndSnapshotOrdering(t *testing.T) {
 	for len(w.pending) > 0 {
 		f := w.take()
 		for _, s := range f.samples {
-			if s.sequence == high[s.kind] {
-				continue
-			} // already acknowledged snapshot
 			if s.sequence != high[s.kind]+1 {
 				t.Fatal("skipped sequence", s.kind, s.sequence, high)
 			}
