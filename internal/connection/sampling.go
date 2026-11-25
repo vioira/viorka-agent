@@ -50,3 +50,27 @@ func (s *assetSampling) snapshot() v1.NodeInventory {
 	defer s.mu.Unlock()
 	return s.latest
 }
+
+// cpuCoreSample survives reconnects. The peer's committed count comes from
+// hello_ack and is advanced locally only for the lifetime of the ordered socket.
+type cpuCoreSample struct {
+	count uint64
+	next  time.Time
+}
+
+func (s *cpuCoreSample) observe(now time.Time, known uint64, read func() (uint64, error)) (*uint64, error) {
+	if !now.Before(s.next) {
+		count, err := read()
+		if err != nil {
+			s.next = now.Add(10 * time.Minute)
+			return nil, err
+		}
+		s.count = count
+		s.next = now.Add(time.Hour)
+	}
+	if s.count == 0 || s.count == known {
+		return nil, nil
+	}
+	n := s.count
+	return &n, nil
+}

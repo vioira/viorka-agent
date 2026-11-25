@@ -39,6 +39,7 @@ var ErrIdentityRejected = errors.New("agent identity rejected; contact administr
 const agentStopping = websocket.StatusCode(4001)
 
 type Client struct {
+	cpuCores              cpuCoreSample
 	activeOrigin          atomic.Pointer[string]
 	activeSocket          atomic.Pointer[websocket.Conn]
 	dailyPersistFailed    bool // owned by the telemetry sender
@@ -167,6 +168,11 @@ func ID() string {
 }
 func (c *Client) Run(ctx context.Context) (runErr error) {
 	c.lifecycle().Info("Agent starting; connecting to Panel")
+	if runtime.GOOS == "linux" {
+		if _, err := c.cpuCores.observe(time.Now(), 0, collector.LogicalCPUs); err != nil {
+			c.log().Warn("CPU affinity unavailable", "error", err)
+		}
+	}
 	defer func() {
 		if runErr != nil {
 			c.lifecycle().Error("Agent run failed")
@@ -309,6 +315,9 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		return nil
 	}
 	capabilities := []string{"node.inspect", "node.inventory.v1", v1.OriginMigrationCapability}
+	if runtime.GOOS == "linux" {
+		capabilities = append(capabilities, "node.cpu_cores.v1")
+	}
 	if managed.Supported() {
 		capabilities = append(capabilities, v1.EngineCapability, v1.EngineEndpointsCapability, v1.EngineRecoveryCapability)
 	}
@@ -338,6 +347,27 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	if envelope.Type != "system.hello_ack" || v1.Decode(envelope.Payload, &ack) != nil || ack.ProtocolVersion != v1.Version || ack.HeartbeatSeconds < 5 || ack.HeartbeatSeconds > 60 {
 		return connectionError("handshake", "unsupported_hello", nil)
 	}
+	var sentCPUs uint64
+	if ack.KnownCPUCores != nil {
+		if runtime.GOOS != "linux" || *ack.KnownCPUCores > 65536 {
+			return connectionError("handshake", "invalid_cpu_capability", nil)
+		}
+		sentCPUs = *ack.KnownCPUCores
+	}
+	attachCPUs := func(h *v1.Heartbeat) {
+		if ack.KnownCPUCores == nil {
+			return
+		}
+		changed, err := c.cpuCores.observe(time.Now(), sentCPUs, collector.LogicalCPUs)
+		if err != nil {
+			c.log().Warn("CPU affinity unavailable", "error", err)
+		}
+		if changed != nil {
+			h.CPUCores = changed
+			sentCPUs = *changed
+		}
+	}
+	initial := v1.Heartbeat{}
 	if ack.OriginMigration {
 		origin := c.credentialOrigin(credential)
 		if origin != c.origin() {
@@ -347,11 +377,15 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			}
 			c.activeOrigin.Store(&origin)
 		}
-		if err = send(v1.Message("node.heartbeat", id.NodeID, ID(), v1.Heartbeat{AppliedOrigin: origin})); err != nil {
-			return err
-		}
+		initial.AppliedOrigin = origin
 	} else if credential.Origin != "" && credential.Origin != c.origin() {
 		return connectionError("migration", "capability_missing", nil)
+	}
+	attachCPUs(&initial)
+	if initial.CPUCores != nil || ack.OriginMigration {
+		if err = send(v1.Message("node.heartbeat", id.NodeID, ID(), initial)); err != nil {
+			return err
+		}
 	}
 	if c.runCtx == nil {
 		c.runCtx = ctx
@@ -436,6 +470,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			return connectionError("heartbeat", "", err)
 		}
 		h := v1.Heartbeat{}
+		attachCPUs(&h)
 		if ack.OriginMigration {
 			h.AppliedOrigin = c.credentialOrigin(credential)
 		}

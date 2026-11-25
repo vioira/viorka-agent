@@ -89,6 +89,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "known_cpu_cores": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65536
+        },
         "protocol_version": {
           "type": "string"
         },
@@ -115,6 +120,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "cpu_cores": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
         "observed_config_revision": {
           "type": "integer",
           "minimum": 0
