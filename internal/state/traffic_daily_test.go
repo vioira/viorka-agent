@@ -29,7 +29,7 @@ func TestDailyTrafficBoundaryRestartCalibrationAndAck(t *testing.T) {
 	observe(at, 100, 200)
 	observe(at.Add(20*time.Second), 300, 600)
 	snapshot, _ := ledger.Snapshot()
-	if len(snapshot.Daily) != 2 || snapshot.Daily[0].RXBytes != "100" || snapshot.Daily[1].RXBytes != "100" || snapshot.Daily[1].TXBytes != "200" {
+	if len(snapshot.Daily) != 2 || snapshot.Daily[0].Quality != v1.DailyTrafficBoundaryEstimated || snapshot.Daily[0].RXBytes != "100" || snapshot.Daily[1].RXBytes != "100" || snapshot.Daily[1].TXBytes != "200" {
 		t.Fatalf("bad split: %+v", snapshot.Daily)
 	}
 	if err = ledger.Save(context.Background(), at.Add(20*time.Second), true); err != nil {

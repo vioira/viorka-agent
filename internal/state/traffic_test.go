@@ -25,7 +25,7 @@ func TestTrafficRestartIdempotenceAndIdentity(t *testing.T) {
 	boot := "11111111-1111-4111-8111-111111111111"
 	filter := strings.Repeat("a", 64)
 	v, err := l.Observe(at, boot, filter, trafficTestInterface(1000, 2000))
-	if err != nil || *v.RXBytes != 0 || !slices.Contains(v.Quality, "partial") {
+	if err != nil || *v.RXBytes != 0 || slices.Contains(v.Quality, "partial") {
 		t.Fatal(v, err)
 	}
 	v, err = l.Observe(at.Add(time.Minute), boot, filter, trafficTestInterface(1100, 2200))

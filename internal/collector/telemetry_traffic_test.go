@@ -60,7 +60,7 @@ func TestFastTrafficPersistentRecoveryAndCorruption(t *testing.T) {
 		return f
 	}
 	f := sample()
-	if f.Traffic == nil || *f.Traffic.RXBytes != 0 || !slices.Contains(f.Traffic.Quality, "partial") {
+	if f.Traffic == nil || *f.Traffic.RXBytes != 0 || slices.Contains(f.Traffic.Quality, "partial") {
 		t.Fatal(f)
 	}
 	write("net/dev", netFixture(1100, 2200))

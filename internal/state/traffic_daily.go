@@ -29,33 +29,28 @@ func dailyInterval(at time.Time, zone string) (time.Time, time.Time) {
 }
 func trafficDelta(previous *TrafficSnapshot, boot, filter string, interfaces []TrafficInterface) (uint64, uint64, uint64) {
 	if previous == nil {
-		return 0, 0, v1.DailyTrafficPartial
+		return 0, 0, 0
 	}
 	if previous.FilterRevision != filter {
-		return 0, 0, v1.DailyTrafficPartial | v1.DailyTrafficMixedFilter
+		return 0, 0, v1.DailyTrafficMixedFilter
 	}
 	if previous.BootID != boot {
-		return 0, 0, v1.DailyTrafficPartial
+		return 0, 0, 0
 	}
 	old := map[string]TrafficInterface{}
 	for _, i := range previous.Interfaces {
 		old[i.Name] = i
 	}
-	var rx, tx, quality uint64
+	var rx, tx uint64
 	for _, i := range interfaces {
 		last, ok := old[i.Name]
-		delete(old, i.Name)
 		if !ok || last.Ifindex != i.Ifindex || i.RX < last.RX || i.TX < last.TX {
-			quality |= v1.DailyTrafficPartial
 			continue
 		}
 		rx += i.RX - last.RX
 		tx += i.TX - last.TX
 	}
-	if len(old) > 0 {
-		quality |= v1.DailyTrafficPartial
-	}
-	return rx, tx, quality
+	return rx, tx, 0
 }
 func apportioned(value uint64, part, total time.Duration) uint64 {
 	hi, lo := bits.Mul64(value, uint64(part))
@@ -81,7 +76,7 @@ func (l *TrafficLedger) observeDaily(next *TrafficSnapshot, previous *TrafficSna
 		if len(records) > 0 {
 			quality |= v1.DailyTrafficHistoryGap
 		}
-		records = []*v1.TelemetryDailyTraffic{{DayStart: start, DayEnd: end, RXBytes: "0", TXBytes: "0", SampledAt: at, Revision: 1, Quality: quality | v1.DailyTrafficPartial}}
+		records = []*v1.TelemetryDailyTraffic{{DayStart: start, DayEnd: end, RXBytes: "0", TXBytes: "0", SampledAt: at, Revision: 1, Quality: quality}}
 		next.Daily = records
 		return nil
 	}

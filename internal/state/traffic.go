@@ -228,9 +228,7 @@ func (l *TrafficLedger) Observe(at time.Time, boot, filter string, interfaces []
 		}
 	}
 	previous := l.snapshot
-	if previous == nil {
-		quality("partial")
-	} else {
+	if previous != nil {
 		if !at.After(previous.SampledAt) {
 			return l.unknown(at, filter), fmt.Errorf("traffic observation time did not advance")
 		}
@@ -251,7 +249,11 @@ func (l *TrafficLedger) Observe(at time.Time, boot, filter string, interfaces []
 			next.CalibrationBefore = previous.CalibrationBefore
 			next.RX = previous.RX
 			next.TX = previous.TX
-			next.Quality = append([]string{}, previous.Quality...)
+			for _, q := range previous.Quality {
+				if q != "partial" {
+					quality(q)
+				}
+			}
 		}
 		if months == 1 {
 			quality("boundary_estimated")
@@ -271,7 +273,6 @@ func (l *TrafficLedger) Observe(at time.Time, boot, filter string, interfaces []
 		}
 		for _, i := range interfaces {
 			last, exists := old[i.Name]
-			delete(old, i.Name)
 			if months > 0 || boot != previous.BootID || previous.FilterRevision != filter {
 				continue
 			}
@@ -290,9 +291,6 @@ func (l *TrafficLedger) Observe(at time.Time, boot, filter string, interfaces []
 			}
 			next.RX += rx
 			next.TX += tx
-		}
-		if len(old) > 0 {
-			quality("partial")
 		}
 	}
 	if err := l.observeDaily(&next, previous); err != nil {
