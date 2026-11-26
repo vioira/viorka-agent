@@ -75,12 +75,17 @@ func (l *TrafficLedger) CalibrateWithReceipt(ctx context.Context, key string, c 
 	if c.Validate() != nil || key == "" || len(key) > 128 {
 		return nil, fmt.Errorf("invalid calibration")
 	}
-	l.saveMu.Lock()
-	defer l.saveMu.Unlock()
+	if err := l.acquireWriter(ctx); err != nil {
+		return nil, err
+	}
+	defer l.releaseWriter()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.blocked != nil {
 		return nil, l.blocked
+	}
+	if l.writeBlocked != nil {
+		return nil, l.writeBlocked
 	}
 	if l.snapshot == nil || !l.snapshot.MonthStart.Equal(c.PeriodStart) || !l.period(at).start.Equal(c.PeriodStart) {
 		return nil, ErrTrafficPeriod
@@ -90,7 +95,7 @@ func (l *TrafficLedger) CalibrateWithReceipt(ctx context.Context, key string, c 
 			return nil, fmt.Errorf("calibration idempotency conflict")
 		}
 		before := l.snapshot.CalibrationBefore[key]
-		return &before, l.saveSnapshot(ctx, at, true)
+		return &before, l.saveLocked(ctx, at, true)
 	}
 	if len(l.snapshot.Calibrations) >= 64 {
 		return nil, fmt.Errorf("calibration limit reached for period")
@@ -109,5 +114,5 @@ func (l *TrafficLedger) CalibrateWithReceipt(ctx context.Context, key string, c 
 	next.TX, _ = v1.TrafficBytes(c.TXBytes)
 	l.snapshot = &next
 	l.dirty = true
-	return &before, l.saveSnapshot(ctx, at, true)
+	return &before, l.saveLocked(ctx, at, true)
 }

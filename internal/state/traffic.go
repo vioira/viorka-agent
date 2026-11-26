@@ -42,10 +42,9 @@ type TrafficSnapshot struct {
 // Observations serialize under a short lock. Persistence copies one coherent
 // snapshot and performs filesystem I/O outside the sampling lock.
 type TrafficLedger struct {
-	durableDaily  []*v1.TelemetryDailyTraffic
 	settings      v1.TelemetryTrafficSettings
 	mu            sync.Mutex
-	saveMu        sync.Mutex
+	writer        chan struct{}
 	store         *Store
 	write         func(string, any) error
 	etag          string
@@ -54,6 +53,7 @@ type TrafficLedger struct {
 	panel, node   string
 	snapshot      *TrafficSnapshot
 	blocked       error
+	writeBlocked  error // protects an unsafe or externally replaced file
 	persistFailed bool
 }
 
@@ -62,7 +62,7 @@ func NewTrafficLedger(panel, node string) (*TrafficLedger, error) {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || node == "" || len(node) > 128 {
 		return nil, fmt.Errorf("invalid traffic identity")
 	}
-	return &TrafficLedger{panel: panel, node: node, settings: v1.DefaultTrafficSettings()}, nil
+	return &TrafficLedger{writer: make(chan struct{}, 1), panel: panel, node: node, settings: v1.DefaultTrafficSettings()}, nil
 }
 func trafficMonth(at time.Time) time.Time {
 	at = at.UTC()
@@ -191,7 +191,6 @@ func (l *TrafficLedger) Restore(s TrafficSnapshot) error {
 	}
 	copy := cloneTraffic(s)
 	l.snapshot = &copy
-	l.durableDaily = cloneDaily(copy.Daily)
 	return nil
 }
 func (l *TrafficLedger) Snapshot() (TrafficSnapshot, bool) {

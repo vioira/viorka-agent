@@ -30,13 +30,13 @@ func (c *Client) telemetryTransport(node, run string, delivery func() telemetryF
 			}
 		}
 		if c.dailyTrafficSupported.Load() && c.dailyPending != nil {
-			daily, err := c.dailyPending(ctx, request.send.attempt.HTTP)
+			daily, err := c.dailyPending()
 			if err == nil {
-				c.dailyPersistFailed = false
+				c.dailyReadFailed = false
 				flight = &telemetryFlight{samples: flight.samples, daily: daily}
-			} else if !c.dailyPersistFailed {
-				c.dailyPersistFailed = true
-				c.logger.Warn("日流量持久化失败，保留待报记录", "error", err)
+			} else if !c.dailyReadFailed {
+				c.dailyReadFailed = true
+				c.logger.Warn("日流量账本不可用，本批省略日流量", "error", err)
 			}
 		}
 		if request.send.attempt.HTTP {

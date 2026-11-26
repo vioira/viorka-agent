@@ -1,7 +1,6 @@
 package state
 
 import (
-	"context"
 	"fmt"
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
 	"math"
@@ -67,6 +66,9 @@ func (l *TrafficLedger) observeDaily(next *TrafficSnapshot, previous *TrafficSna
 	if previous != nil {
 		records = cloneDaily(previous.Daily)
 	}
+	// Reports can precede a checkpoint. After restart a later observation must
+	// not reuse a previously reported revision for different totals.
+	sampleRevision := uint64(max(int64(1), at.UnixMilli()))
 	from := at
 	if previous != nil {
 		from = previous.SampledAt.Truncate(time.Millisecond)
@@ -76,7 +78,7 @@ func (l *TrafficLedger) observeDaily(next *TrafficSnapshot, previous *TrafficSna
 		if len(records) > 0 {
 			quality |= v1.DailyTrafficHistoryGap
 		}
-		records = []*v1.TelemetryDailyTraffic{{DayStart: start, DayEnd: end, RXBytes: "0", TXBytes: "0", SampledAt: at, Revision: 1, Quality: quality}}
+		records = []*v1.TelemetryDailyTraffic{{DayStart: start, DayEnd: end, RXBytes: "0", TXBytes: "0", SampledAt: at, Revision: sampleRevision, Quality: quality}}
 		next.Daily = records
 		return nil
 	}
@@ -112,7 +114,7 @@ func (l *TrafficLedger) observeDaily(next *TrafficSnapshot, previous *TrafficSna
 		d.RXBytes = strconv.FormatUint(oldRX+partRX, 10)
 		d.TXBytes = strconv.FormatUint(oldTX+partTX, 10)
 		d.SampledAt = until
-		d.Revision++
+		d.Revision = max(d.Revision+1, sampleRevision)
 		d.Quality |= quality
 		rx -= partRX
 		tx -= partTX
@@ -120,7 +122,7 @@ func (l *TrafficLedger) observeDaily(next *TrafficSnapshot, previous *TrafficSna
 		if !at.After(until) {
 			if at.Equal(d.DayEnd) {
 				_, end := dailyInterval(at, l.settings.Timezone)
-				records = append(records, &v1.TelemetryDailyTraffic{DayStart: at, DayEnd: end, RXBytes: "0", TXBytes: "0", SampledAt: at, Revision: 1})
+				records = append(records, &v1.TelemetryDailyTraffic{DayStart: at, DayEnd: end, RXBytes: "0", TXBytes: "0", SampledAt: at, Revision: sampleRevision})
 			}
 			break
 		}
@@ -133,20 +135,17 @@ func (l *TrafficLedger) observeDaily(next *TrafficSnapshot, previous *TrafficSna
 	return nil
 }
 
-// PendingDaily returns durable records. HTTP flushes pending changes first;
-// realtime reports reuse the last checkpoint without filesystem I/O.
-func (l *TrafficLedger) PendingDaily(ctx context.Context, flush bool) ([]*v1.TelemetryDailyTraffic, error) {
-	if flush {
-		if err := l.Save(ctx, time.Now(), true); err != nil {
-			return nil, err
-		}
-	}
+// PendingDaily copies the latest observed records for one transmission.
+func (l *TrafficLedger) PendingDaily() ([]*v1.TelemetryDailyTraffic, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.blocked != nil {
 		return nil, l.blocked
 	}
-	records := l.durableDaily
+	if l.snapshot == nil {
+		return nil, nil
+	}
+	records := l.snapshot.Daily
 	if len(records) <= 16 {
 		return cloneDaily(records), nil
 	}
@@ -154,7 +153,7 @@ func (l *TrafficLedger) PendingDaily(ctx context.Context, flush bool) ([]*v1.Tel
 	return append(out, cloneDaily(records[len(records)-1:])...), nil
 }
 
-// AcknowledgeDaily only removes ended records with the exact committed version.
+// AcknowledgeDaily only removes ended records with the exact acknowledged version.
 // Removal is persisted by the next save. A crash before that simply replays it.
 func (l *TrafficLedger) AcknowledgeDaily(acks []*v1.TelemetryDailyTrafficAck) {
 	l.mu.Lock()

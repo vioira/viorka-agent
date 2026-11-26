@@ -42,10 +42,10 @@ type Client struct {
 	cpuCores              cpuCoreSample
 	activeOrigin          atomic.Pointer[string]
 	activeSocket          atomic.Pointer[websocket.Conn]
-	dailyPersistFailed    bool // owned by the telemetry sender
+	dailyReadFailed       bool // owned by the telemetry sender
 	slowUptimeSupported   atomic.Bool
 	dailyTrafficSupported atomic.Bool
-	dailyPending          func(context.Context, bool) ([]*v1.TelemetryDailyTraffic, error)
+	dailyPending          func() ([]*v1.TelemetryDailyTraffic, error)
 	dailyAck              func([]*v1.TelemetryDailyTrafficAck)
 	tcpProbeSupported     atomic.Bool
 	trafficCalibrate      func(context.Context, string, v1.TrafficCalibration, time.Time) (*v1.TrafficCalibration, error)

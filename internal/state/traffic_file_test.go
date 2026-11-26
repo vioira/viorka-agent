@@ -194,7 +194,7 @@ func TestTrafficExternalReplacementPreserved(t *testing.T) {
 	}
 	defer store.Close()
 	l, _ := OpenTrafficLedger(store, "https://panel.test", "node")
-	at := time.Now().UTC()
+	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	boot := "11111111-1111-4111-8111-111111111111"
 	filter := strings.Repeat("a", 64)
 	if _, err = l.Observe(at, boot, filter, trafficTestInterface(100, 200)); err != nil {
@@ -216,6 +216,16 @@ func TestTrafficExternalReplacementPreserved(t *testing.T) {
 	if err = l.Save(context.Background(), at.Add(time.Minute), false); !errors.Is(err, ErrTrafficFileChanged) {
 		t.Fatal(err)
 	}
+	if _, err = l.Observe(at.Add(2*time.Minute), boot, filter, trafficTestInterface(300, 600)); err != nil {
+		t.Fatal(err)
+	}
+	records, err := l.PendingDaily()
+	if err != nil || len(records) != 1 || records[0].RXBytes != "200" {
+		t.Fatal("write protection blocked live reporting", records, err)
+	}
+	if err = l.Save(t.Context(), at.Add(2*time.Minute), true); !errors.Is(err, ErrTrafficFileChanged) {
+		t.Fatal("external file lost write protection", err)
+	}
 	actual, _, err := store.readTrafficFile()
 	if err != nil || actual.RX != 99 {
 		t.Fatal("replacement overwritten", actual, err)
@@ -229,7 +239,7 @@ func TestTrafficSaveDoesNotBlockObserveOrClearNewSample(t *testing.T) {
 	}
 	defer store.Close()
 	l, _ := OpenTrafficLedger(store, "https://panel.test", "node")
-	at := time.Now().UTC()
+	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	boot := "11111111-1111-4111-8111-111111111111"
 	filter := strings.Repeat("a", 64)
 	if _, err = l.Observe(at, boot, filter, trafficTestInterface(100, 200)); err != nil {
@@ -251,12 +261,24 @@ func TestTrafficSaveDoesNotBlockObserveOrClearNewSample(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("save did not start")
 	}
-	if err = l.Save(context.Background(), at, true); !errors.Is(err, ErrTrafficSaveInProgress) {
+	wait, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if err = l.Save(wait, at, true); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
+	// The periodic save queued behind the active write should reuse its
+	// checkpoint and leave any later observation dirty for the next interval.
+	queued := make(chan error, 1)
+	go func() { queued <- l.Save(t.Context(), at, false) }()
 	observed := make(chan error, 1)
 	go func() {
 		_, err := l.Observe(at.Add(time.Second), boot, filter, trafficTestInterface(150, 300))
+		if err == nil {
+			records, readErr := l.PendingDaily()
+			if readErr != nil || len(records) != 1 || records[0].RXBytes != "50" {
+				err = errors.New("latest daily sample unavailable during disk write")
+			}
+		}
 		observed <- err
 	}()
 	select {
@@ -275,6 +297,14 @@ func TestTrafficSaveDoesNotBlockObserveOrClearNewSample(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("save did not finish")
+	}
+	select {
+	case err := <-queued:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued writer did not finish")
 	}
 	persisted, _, err := store.readTrafficFile()
 	if err != nil || persisted.RX != 0 || persisted.Interfaces[0].RX != 100 {

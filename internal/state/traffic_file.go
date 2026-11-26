@@ -106,20 +106,44 @@ func OpenTrafficLedger(store *Store, panel, node string) (*TrafficLedger, error)
 	return ledger, nil
 }
 
-// Save permits concurrent Observe without holding a lock during filesystem I/O.
-// force is reserved for the final shutdown
-// attempt. A failed write retains totals in memory and limits retries to 60s.
-// Context bounds scheduling and checkpoints; fsync itself cannot be interrupted.
-var ErrTrafficSaveInProgress = errors.New("traffic save already in progress")
-
-func (l *TrafficLedger) Save(ctx context.Context, at time.Time, force bool) error {
-	if !l.saveMu.TryLock() {
-		return ErrTrafficSaveInProgress
+func (l *TrafficLedger) acquireWriter(ctx context.Context) error {
+	select {
+	case l.writer <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			l.releaseWriter()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	defer l.saveMu.Unlock()
+}
+
+func (l *TrafficLedger) releaseWriter() { <-l.writer }
+
+// Save serializes writers within the caller's deadline. Filesystem sync itself
+// cannot be interrupted. A forced save bypasses the periodic write interval.
+func (l *TrafficLedger) Save(ctx context.Context, at time.Time, force bool) error {
+	if err := l.acquireWriter(ctx); err != nil {
+		return err
+	}
+	defer l.releaseWriter()
 	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.saveLocked(ctx, at, force)
+}
+
+// The caller holds the writer and sampling locks. Keep the writer for the
+// entire commit, but release the sampling lock while the private copy is saved.
+func (l *TrafficLedger) saveLocked(ctx context.Context, at time.Time, force bool) error {
+	if l.blocked != nil {
+		return l.blocked
+	}
+	if l.writeBlocked != nil {
+		return l.writeBlocked
+	}
 	original := l.snapshot
-	work := &TrafficLedger{store: l.store, write: l.write, etag: l.etag, nextSave: l.nextSave, dirty: l.dirty, panel: l.panel, node: l.node, blocked: l.blocked, persistFailed: l.persistFailed}
+	work := &TrafficLedger{store: l.store, write: l.write, etag: l.etag, nextSave: l.nextSave, dirty: l.dirty, panel: l.panel, node: l.node, persistFailed: l.persistFailed}
 	if original != nil {
 		snapshot := cloneTraffic(*original)
 		work.snapshot = &snapshot
@@ -127,16 +151,10 @@ func (l *TrafficLedger) Save(ctx context.Context, at time.Time, force bool) erro
 	l.mu.Unlock()
 	err := work.saveSnapshot(ctx, at, force)
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err == nil && work.snapshot != nil && !work.dirty {
-		l.durableDaily = cloneDaily(work.snapshot.Daily)
-	}
 	l.etag = work.etag
 	l.nextSave = work.nextSave
 	l.persistFailed = work.persistFailed
-	if l.blocked == nil {
-		l.blocked = work.blocked
-	}
+	l.writeBlocked = work.writeBlocked
 	// A sample received during I/O remains dirty; the old commit cannot mark it
 	// durable or replace its newer counter baseline/month.
 	if l.snapshot == original {
@@ -146,9 +164,6 @@ func (l *TrafficLedger) Save(ctx context.Context, at time.Time, force bool) erro
 	return err
 }
 func (l *TrafficLedger) saveSnapshot(ctx context.Context, at time.Time, force bool) error {
-	if l.blocked != nil {
-		return l.blocked
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -166,23 +181,30 @@ func (l *TrafficLedger) saveSnapshot(ctx context.Context, at time.Time, force bo
 	current, etag, err := l.store.readTrafficFile()
 	if errors.Is(err, os.ErrNotExist) {
 		if l.etag != "" {
-			l.blocked = ErrTrafficFileChanged
-			return fail(l.blocked)
+			l.writeBlocked = ErrTrafficFileChanged
+			return fail(l.writeBlocked)
 		}
 	} else if err != nil {
-		l.blocked = err
+		var errno syscall.Errno
+		if !errors.As(err, &errno) || errors.Is(err, syscall.ELOOP) {
+			l.writeBlocked = err
+		}
 		return fail(err)
 	} else {
 		if err = validateTrafficSnapshot(current, l.panel, l.node); err != nil {
-			l.blocked = err
+			l.writeBlocked = err
 			return fail(err)
 		}
 		if etag != l.etag {
-			l.blocked = ErrTrafficFileChanged
-			return fail(l.blocked)
+			l.writeBlocked = ErrTrafficFileChanged
+			return fail(l.writeBlocked)
 		}
 	}
 	snapshot := cloneTraffic(*l.snapshot)
+	// The scheduled save may have waited while a newer sample arrived.
+	if at.Before(snapshot.SampledAt) {
+		at = snapshot.SampledAt
+	}
 	snapshot.SavedAt = at.UTC()
 	if err = validateTrafficSnapshot(snapshot, l.panel, l.node); err != nil {
 		return fail(err)
