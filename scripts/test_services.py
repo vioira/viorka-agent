@@ -3,6 +3,7 @@
 
 The separate Linux smoke test exercises real service managers.
 """
+import hashlib
 import os
 import re
 import socket
@@ -16,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Services(unittest.TestCase):
-    def exercise(self, manager, failure='', log_mode='missing'):
+    def exercise(self, manager, failure='', log_mode='missing', signed=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             home = root / 'root'
@@ -28,6 +29,8 @@ class Services(unittest.TestCase):
             (install / 'agent.json').write_text('{}')
             agent = install / 'viorka-agent'
             agent.write_text('#!/bin/sh\n[ "$1" != version ] || echo "viorka-agent 0.0.9 (linux/amd64)"\nexit 0\n')
+            if signed:
+                agent.write_text(agent.read_text().replace('exit 0', '[ "$1 $2" != "update-supervisor --supported" ] || echo agent.update.v1\nexit 0'))
             agent.chmod(0o700)
             bin_dir = root / 'bin'
             bin_dir.mkdir()
@@ -130,6 +133,16 @@ exit 0
                 self.assertTrue(service.exists())
                 self.assertIn(str(install), service.read_text())
                 self.assertEqual(service.stat().st_mode & 0o777, 0o644 if manager == 'systemd' else 0o755)
+                if signed:
+                    supervisor = install / 'viorka-agent-supervisor'
+                    self.assertEqual(supervisor.read_bytes(), agent.read_bytes())
+                    self.assertEqual(supervisor.stat().st_mode & 0o777, 0o700)
+                    self.assertEqual((install / '.agent-service-sha256').read_text().strip(),
+                                     hashlib.sha256(service.read_bytes()).hexdigest())
+                    self.assertIn('update-supervisor', service.read_text())
+                    self.assertIn(str(supervisor), service.read_text())
+                    self.assertNotIn(' config-check --config ', service.read_text())
+                    return
                 if manager == 'openrc':
                     subprocess.run(['sh', '-n', str(service)], check=True)
                     current = service.read_text()
@@ -227,6 +240,11 @@ pathlib.Path(args[args.index('--output')+1]).write_bytes(data)
         self.assertNotIn(b'--token=', output)
         self.assertNotIn(b'--foreground', output)
         self.assertIn(b'Panel connected; session established', output)
+
+    def test_signed_service_templates(self):
+        for manager in ('systemd', 'openrc'):
+            with self.subTest(manager=manager):
+                self.exercise(manager, signed=True)
 
     def test_service_modes(self):
         for manager in ('systemd', 'openrc'):

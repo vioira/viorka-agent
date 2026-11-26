@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/vioira/viorka-agent/internal/connection"
 	"github.com/vioira/viorka-agent/internal/state"
+	"github.com/vioira/viorka-agent/internal/updater"
 	"github.com/vioira/viorka-agent/internal/version"
 	"io"
 	"os"
@@ -29,6 +30,21 @@ func Main(args []string, out, errOut io.Writer) int {
 	switch args[0] {
 	case "version":
 		fmt.Fprintf(out, "viorka-agent %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
+		return 0
+	case "update-supervisor":
+		if len(args) == 2 && args[1] == "--supported" && updater.SignedBuild() {
+			fmt.Fprintln(out, "agent.update.v1")
+			return 0
+		}
+		if len(args) != 1 {
+			return 2
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		if err := updater.Supervise(ctx); err != nil {
+			fmt.Fprintln(errOut, err)
+			return 1
+		}
 		return 0
 	case "update-check":
 		return updateCheck(args[1:], out, errOut)

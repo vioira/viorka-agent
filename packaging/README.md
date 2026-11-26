@@ -159,3 +159,13 @@ sh install.sh install --version=v1.2.3 --foreground
 实现参考了 [cfsm-agent 的版本筛选流程](https://github.com/huilang-me/cfsm-agent/blob/main/internal/cfprobe/update.go)，保留显式检查和用户执行安装的方式。没有周期更新任务；发布产物使用 SHA-256，未增加签名体系。
 
 安装时需要 `timeout`；下载后二进制的版本/平台检查限时 10 秒，超时后最多再等待 2 秒强制终止，失败时保留已有二进制、配置和身份。
+
+### 面板自动更新和手动更新
+
+支持 Linux amd64/arm64，需从带更新公钥的发行版引导安装一次。官方安装器会为 systemd 或 OpenRC 配置私有的 `viorka-agent-supervisor`。监管进程独立于正在更新的 Agent，服务模板及覆盖配置在执行前核对。前台运行和未配置签名的本地构建可继续使用原安装方式。自动更新开关在 Panel 按节点保存，默认关闭。
+
+发行工作流使用 GitHub Actions Secret `AGENT_UPDATE_SIGNING_KEY`（独立保管的 Ed25519 PKCS#8 PEM 私钥）和仓库变量 `AGENT_UPDATE_PUBLIC_KEY`（对应公钥的 DER SubjectPublicKeyInfo，以标准 Base64 单行编码）。构建时核对公私钥并嵌入公钥。每个二进制旁新增 64 字节原始签名 `.sig`，签名输入依次为版本标签、资产名和小写 SHA-256，每项以 LF 结束。保留已有的 `.sha256` 产物。发布负责人配置正式密钥后才可发布；更换信任根需先安排已安装节点的引导升级。
+
+准备阶段验证签名、内容摘要、版本、架构及现有配置。监管进程保存 `viorka-agent.previous` 并持久写入试运行状态后切换二进制。新进程须读取注册身份、完成本地初始化并持续运行三秒。启动失败或试运行中断时恢复旧文件并再次检查旧进程。Panel 暂时失联时，本地健康判定继续进行；恢复管理连接后补报结果。管理连接会短暂中断，更新流程只操作 Agent。状态记录位于安装目录的 `.agent-update.json`。
+
+如报告回滚失败或超过结果核对期限，请在节点查看 Agent 管理服务日志、磁盘上的 `viorka-agent version` 和本地更新记录。确认无更新进程后，用官方安装器覆盖安装已知正常的明确版本，复用原有配置及身份。安装器占用的目录锁与更新器创建的符号链接锁均位于 `.install-lock`；试运行或恢复期间应先让监管进程完成核对。

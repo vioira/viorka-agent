@@ -8,16 +8,34 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build Agent with a temporary update trust root
+        run: |
+          set -eo pipefail
+          public=$(openssl genpkey -algorithm ED25519 | openssl pkey -pubout -outform DER | base64 -w0)
+          CGO_ENABLED=0 go build -ldflags "-X github.com/vioira/viorka-agent/internal/updater.releasePublicKey=$public" -o /tmp/update-test-agent ./cmd/viorka-agent
       - name: Real systemd service lifecycle (disposable runner)
-        run: sudo env VIORKA_DISPOSABLE_SERVICE_TEST=yes sh scripts/test_services_linux.sh
+        run: |
+          sudo env VIORKA_DISPOSABLE_SERVICE_TEST=yes sh scripts/test_update_recovery_linux.sh /tmp/update-test-agent
+          sudo env VIORKA_DISPOSABLE_SERVICE_TEST=yes sh scripts/test_services_linux.sh
   service-openrc:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build Agent with a temporary update trust root
+        run: |
+          set -eo pipefail
+          public=$(openssl genpkey -algorithm ED25519 | openssl pkey -pubout -outform DER | base64 -w0)
+          CGO_ENABLED=0 go build -ldflags "-X github.com/vioira/viorka-agent/internal/updater.releasePublicKey=$public" -o /tmp/update-test-agent ./cmd/viorka-agent
       - name: Real OpenRC service lifecycle (disposable Alpine container)
         run: |
           # A non-reaping PID 1 reproduces supervise-daemon remaining a zombie.
-          container=$(docker run -d --rm -v "$PWD:/src:ro" -w /src alpine:3.22 sleep 300)
+          container=$(docker run -d --rm -v /tmp/update-test-agent:/tmp/update-test-agent:ro -v "$PWD:/src:ro" -w /src alpine:3.22 sleep 300)
           trap 'docker stop -t 1 "$container" >/dev/null' EXIT
           docker exec "$container" sh -ec '
             # The minimal Alpine image needs BusyBox service scripts for syslog.
@@ -27,6 +45,7 @@ jobs:
             touch /run/openrc/softlevel
             sed -i "s/^#rc_sys=.*/rc_sys=\"docker\"/" /etc/rc.conf
             rc-service syslog start
+            VIORKA_DISPOSABLE_SERVICE_TEST=yes sh scripts/test_update_recovery_linux.sh /tmp/update-test-agent
             VIORKA_DISPOSABLE_SERVICE_TEST=yes sh scripts/test_services_linux.sh
           '
 

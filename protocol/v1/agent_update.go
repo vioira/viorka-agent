@@ -1,4 +1,4 @@
-package updater
+package v1
 
 import (
 	"fmt"
@@ -8,23 +8,26 @@ import (
 
 var semver = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 
-type version struct {
+// ReleaseVersion is a parsed SemVer with unbounded numeric components.
+type ReleaseVersion struct {
 	core []string
 	pre  []string
 }
 
-func parseVersion(s string) (version, error) {
+func (v ReleaseVersion) IsPrerelease() bool { return len(v.pre) > 0 }
+
+func ParseReleaseVersion(s string) (ReleaseVersion, error) {
 	m := semver.FindStringSubmatch(strings.TrimPrefix(s, "v"))
 	if m == nil {
-		return version{}, fmt.Errorf("invalid SemVer: %q", s)
+		return ReleaseVersion{}, fmt.Errorf("invalid SemVer: %q", s)
 	}
-	v := version{core: m[1:4]}
+	v := ReleaseVersion{core: m[1:4]}
 	if m[4] != "" {
 		v.pre = strings.Split(m[4], ".")
 	}
 	for _, p := range v.pre {
 		if numeric(p) && len(p) > 1 && p[0] == '0' {
-			return version{}, fmt.Errorf("invalid numeric prerelease: %q", s)
+			return ReleaseVersion{}, fmt.Errorf("invalid numeric prerelease: %q", s)
 		}
 	}
 	return v, nil
@@ -46,7 +49,7 @@ func numberCompare(a, b string) int {
 	}
 	return strings.Compare(a, b)
 }
-func (v version) compare(w version) int {
+func (v ReleaseVersion) Compare(w ReleaseVersion) int {
 	for i, a := range v.core {
 		if c := numberCompare(a, w.core[i]); c != 0 {
 			return c
@@ -79,4 +82,19 @@ func (v version) compare(w version) int {
 		return -1
 	}
 	return 0
+}
+
+const AgentUpdateCapability = "agent.update.v1"
+const AgentUpdateOperation = "agent.update"
+
+var updateDigest = regexp.MustCompile("^[0-9a-f]{64}$")
+
+func (u AgentUpdate) Valid() bool {
+	v, err := ParseReleaseVersion(u.Version)
+	return err == nil && len(u.Version) <= 64 && u.Version == "v"+strings.Join(v.core, ".") && updateDigest.MatchString(u.SHA256)
+}
+func (u AgentUpdate) NewerThan(current string) bool {
+	target, err := ParseReleaseVersion(u.Version)
+	old, oldErr := ParseReleaseVersion(current)
+	return u.Valid() && err == nil && oldErr == nil && target.Compare(old) > 0
 }

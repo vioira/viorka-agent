@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	v1 "github.com/vioira/viorka-agent/protocol/v1"
 	"io"
 	"net/http"
 	"time"
@@ -48,7 +49,7 @@ func check(ctx context.Context, client *http.Client, current, goos, arch string,
 	if preview {
 		r.Channel = "prerelease"
 	}
-	cv, err := parseVersion(current)
+	cv, err := v1.ParseReleaseVersion(current)
 	if err != nil {
 		return r, err
 	}
@@ -59,7 +60,7 @@ func check(ctx context.Context, client *http.Client, current, goos, arch string,
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var best release
-	var bv version
+	var bv v1.ReleaseVersion
 	for page := 1; ; page++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s?per_page=100&page=%d", releasesURL, page), nil)
 		if err != nil {
@@ -90,14 +91,14 @@ func check(ctx context.Context, client *http.Client, current, goos, arch string,
 			if rel.Draft || len(rel.Tag) == 0 || rel.Tag[0] != 'v' {
 				continue
 			}
-			v, err := parseVersion(rel.Tag)
+			v, err := v1.ParseReleaseVersion(rel.Tag)
 			if err != nil {
 				continue
 			}
-			if !preview && (rel.Prerelease || len(v.pre) > 0) {
+			if !preview && (rel.Prerelease || v.IsPrerelease()) {
 				continue
 			}
-			if best.Tag == "" || v.compare(bv) > 0 {
+			if best.Tag == "" || v.Compare(bv) > 0 {
 				best = rel
 				bv = v
 			}
@@ -114,10 +115,10 @@ func check(ctx context.Context, client *http.Client, current, goos, arch string,
 	}
 	r.Candidate = best.Tag
 	r.Status = "up-to-date"
-	if cv.compare(bv) > 0 {
+	if cv.Compare(bv) > 0 {
 		r.Status = "ahead"
 	}
-	if cv.compare(bv) >= 0 {
+	if cv.Compare(bv) >= 0 {
 		return r, nil
 	}
 	asset := "viorka-agent-" + goos + "-" + arch

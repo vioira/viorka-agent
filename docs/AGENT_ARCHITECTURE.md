@@ -33,7 +33,7 @@ Agent 不转发用户的代理业务流量；由 Xray、sing-box、Realm 承担�
 | `config` | 本地启动配置、配置 staging、原子发布和回滚 | 仅本地 JSON 校验已实现 |
 | `supervisor` | systemd/OpenRC/无 init 进程控制 | 仅文档占位 |
 | `state` | 身份与密钥、上次 Revision、本地任务 Journal | 身份与检查日志已实现，Revision 留待 M2 |
-| `updater` | 带签名/哈希的 Agent 更新、回滚 | 仅文档占位 |
+| `updater` | 版本检查、签名下载、本地试运行与失败回滚 | 官方后台安装通过独立监管进程切换 |
 
 ## 3. 建议执行循环
 

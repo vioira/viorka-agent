@@ -85,6 +85,11 @@ func (s *Store) Read(name string, v any) error {
 	return nil
 }
 func (s *Store) Write(name string, v any) error {
+	return WriteFile(s.dir, name, v)
+}
+
+// WriteFile publishes JSON atomically in a caller-owned private directory.
+func WriteFile(dirPath, name string, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -92,7 +97,7 @@ func (s *Store) Write(name string, v any) error {
 	if len(b) > 4*1024*1024 {
 		return fmt.Errorf("state capacity exceeded")
 	}
-	f, err := os.CreateTemp(s.dir, ".pending-")
+	f, err := os.CreateTemp(dirPath, ".pending-")
 	if err != nil {
 		return err
 	}
@@ -107,10 +112,10 @@ func (s *Store) Write(name string, v any) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	if err = os.Rename(f.Name(), filepath.Join(s.dir, name)); err != nil {
+	if err = os.Rename(f.Name(), filepath.Join(dirPath, name)); err != nil {
 		return err
 	}
-	dir, err := os.Open(s.dir)
+	dir, err := os.Open(dirPath)
 	if err != nil {
 		return err
 	}

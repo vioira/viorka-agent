@@ -19,6 +19,7 @@ import (
 	"github.com/vioira/viorka-agent/internal/network"
 	managed "github.com/vioira/viorka-agent/internal/runtime"
 	"github.com/vioira/viorka-agent/internal/state"
+	"github.com/vioira/viorka-agent/internal/updater"
 	"github.com/vioira/viorka-agent/internal/version"
 	v1 "github.com/vioira/viorka-agent/protocol/v1"
 	"io"
@@ -201,6 +202,9 @@ func (c *Client) Run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return err
 	}
+	if err = updater.Ready(); err != nil {
+		return err
+	}
 	exec.Logger = c.log()
 	// Keep socket I/O alive until the graceful close frame is sent. Canceling
 	// an in-flight websocket.Read first would tear down the transport.
@@ -317,6 +321,10 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 	capabilities := []string{"node.inspect", "node.inventory.v1", v1.OriginMigrationCapability}
 	if runtime.GOOS == "linux" {
 		capabilities = append(capabilities, "node.cpu_cores.v1")
+	}
+	canUpdate := updater.CanUpdate(ctx)
+	if canUpdate {
+		capabilities = append(capabilities, v1.AgentUpdateCapability)
 	}
 	if managed.Supported() {
 		capabilities = append(capabilities, v1.EngineCapability, v1.EngineEndpointsCapability, v1.EngineRecoveryCapability)
@@ -609,6 +617,31 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 			var d v1.TaskDispatch
 			if e.Type != "task.dispatch" || e.Revision != nil || v1.Decode(e.Payload, &d) != nil || e.CorrelationID != d.TaskID {
 				return connectionError("task", "invalid_dispatch", nil)
+			}
+			if d.Operation == v1.AgentUpdateOperation {
+				if !canUpdate {
+					return errors.New("update capability unavailable")
+				}
+				if engineBusy {
+					continue
+				}
+				reply, err := updater.UpdateReply(id.NodeID, d)
+				if err != nil {
+					return err
+				}
+				kind := "task.result"
+				if reply.State == "accepted" {
+					kind = "task.ack"
+				}
+				msg := v1.Message(kind, id.NodeID, ID(), reply)
+				msg.CorrelationID = d.TaskID
+				if err = send(msg); err != nil {
+					return err
+				}
+				continue
+			}
+			if d.AgentUpdate != nil {
+				return errors.New("unexpected update payload")
 			}
 			if v1.EngineOperation(d.Operation) {
 				if engineBusy {

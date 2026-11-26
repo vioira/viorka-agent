@@ -1,3 +1,2 @@
-// Package updater implements read-only official release checks.
-// Explicit upgrades use the repository installer and its SHA-256/rollback flow.
+// Package updater discovers official releases and supervises signed Agent updates.
 package updater

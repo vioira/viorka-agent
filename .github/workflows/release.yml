@@ -31,13 +31,30 @@ jobs:
           test "$RELEASE_TAG" = "v$version"
       - name: Test
         run: go test ./...
-      - name: Build release assets
+      - name: Build and sign release assets
+        env:
+          SIGNING_KEY: ${{ secrets.AGENT_UPDATE_SIGNING_KEY }}
+          PUBLIC_KEY: ${{ vars.AGENT_UPDATE_PUBLIC_KEY }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
+          umask 077
+          key=$(mktemp)
+          manifest=$(mktemp)
+          trap 'rm -f "$key" "$manifest"' EXIT
+          printf '%s' "$SIGNING_KEY" > "$key"
+          unset SIGNING_KEY
+          test -n "$PUBLIC_KEY"
+          test "$(openssl pkey -in "$key" -pubout -outform DER | base64 -w0)" = "$PUBLIC_KEY"
           mkdir -p dist
           for arch in amd64 arm64; do
             asset="viorka-agent-linux-$arch"
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "dist/$asset" ./cmd/viorka-agent
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-X github.com/vioira/viorka-agent/internal/updater.releasePublicKey=$PUBLIC_KEY" -o "dist/$asset" ./cmd/viorka-agent
+            if [ "$arch" = amd64 ]; then test "$(dist/$asset update-supervisor --supported)" = agent.update.v1; fi
             sha256sum "dist/$asset" | cut -d ' ' -f 1 > "dist/$asset.sha256"
+            printf '%s\n%s\n%s\n' "$RELEASE_TAG" "$asset" "$(cat "dist/$asset.sha256")" > "$manifest"
+            openssl pkeyutl -sign -inkey "$key" -rawin -in "$manifest" -out "dist/$asset.sig"
+            test "$(wc -c < "dist/$asset.sig")" -eq 64
           done
       - name: Publish release
         env:

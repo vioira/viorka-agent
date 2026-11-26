@@ -191,6 +191,17 @@ stop() {
 RC
         fi
     }
+    render_update_service() {
+        render_service | sed \
+            -e 's|^ExecStartPre=.*|ExecStartPre=/root/.viorka-agent/viorka-agent-supervisor version|' \
+            -e 's|^ExecStart=.*|ExecStart=/root/.viorka-agent/viorka-agent-supervisor update-supervisor|' \
+            -e 's|^command=/root/.viorka-agent/viorka-agent$|command=/root/.viorka-agent/viorka-agent-supervisor|' \
+            -e 's|^command_args=.*|command_args="update-supervisor"|' \
+            -e 's|^    "\$command" config-check .*|    "$command" version >/dev/null|'
+    }
+    render_install_service() {
+        if [ "${update_service:-0}" = 1 ]; then render_update_service; else render_service; fi
+    }
     migrate_openrc_service() {
         [ "${legacy_openrc:-0}" = 1 ] || return 0
         render_service legacy | cmp -s - "$service_file" || fail '旧服务模板已变化，拒绝迁移。'
@@ -239,6 +250,9 @@ RC
             mode=$(stat -c %a "$service_file")
             case "$mode" in *[2367][0-7]|*[0-7][2367]) fail '服务文件权限不安全。' ;; esac
             if render_service | cmp -s - "$service_file"; then
+                [ "$action" != service ] || fail '服务文件已存在，请使用服务管理器管理。'
+            elif render_update_service | cmp -s - "$service_file"; then
+                existing_update_service=1
                 [ "$action" != service ] || fail '服务文件已存在，请使用服务管理器管理。'
             elif [ "$service_manager" = openrc ] && render_service legacy | cmp -s - "$service_file"; then
                 legacy_openrc=1
@@ -351,7 +365,7 @@ RC
                 timeout 30 systemctl daemon-reload || fail '刷新 systemd 失败；服务文件可能已移除，程序已保留，请重试卸载。'
             fi
         fi
-        rm -f "$install_dir/viorka-agent" "$install_dir/viorka-agent.previous" || fail '删除 Agent 程序失败，请检查权限后重试。'
+        rm -f "$install_dir/viorka-agent" "$install_dir/viorka-agent.previous" "$install_dir/viorka-agent-supervisor" "$install_dir/.agent-service-sha256" "$install_dir/.agent-next" "$install_dir/.agent-next.partial" "$install_dir/.agent-ready" "$install_dir/.agent-update.json" "$install_dir/.supervisor-lock" || fail '删除 Agent 程序失败，请检查权限后重试。'
         printf 'Agent 卸载完成（重复执行安全）。\n配置、身份和其他数据保留在：%s\n未停止或删除代理服务、代理配置及服务商映射；Panel 节点记录需在面板单独处理。\n' "$install_dir"
     }
     print_openrc_log_commands() {
@@ -432,6 +446,21 @@ RC
         printf '\n\nPanel 在线状态：请查看面板。握手成功时 Agent 会输出 Panel connected; session established。\n\n'
     }
     install_service() {
+        update_service=0
+        if [ "$(./viorka-agent update-supervisor --supported 2>/dev/null || :)" = agent.update.v1 ]; then
+            update_service=1
+            helper_tmp=$(mktemp ./supervisor-XXXXXX)
+            cp ./viorka-agent "$helper_tmp" && chmod 700 "$helper_tmp" && mv -f "$helper_tmp" ./viorka-agent-supervisor || fail '写入更新监管程序失败。'
+            digest_tmp=$(mktemp ./.service-digest-XXXXXX)
+            render_update_service | sha256sum | cut -d ' ' -f 1 > "$digest_tmp"
+            mv -f "$digest_tmp" .agent-service-sha256
+        fi
+        if [ "${existing_service:-0}" = 1 ] && [ "${existing_update_service:-0}" != "$update_service" ]; then
+            tmp_service=$(mktemp "$service_file.XXXXXX")
+            mode=644
+            [ "$service_manager" != openrc ] || mode=755
+            render_install_service > "$tmp_service" && chmod "$mode" "$tmp_service" && mv -f "$tmp_service" "$service_file" || fail '更新 Agent 服务模板失败。'
+        fi
         if [ "${existing_service:-0}" -eq 1 ]; then
             printf '[安装中] 正在配置并重启 Agent 后台服务（%s）…\n' "$service_manager"
             if [ "$service_manager" = systemd ]; then
@@ -446,12 +475,12 @@ RC
         printf '[安装中] 正在配置并启动 Agent 后台服务（%s）…\n' "$service_manager"
         # Do not clobber existing files, including dangling symlinks, on retries.
         if [ "$service_manager" = systemd ]; then
-            (set -C; render_service > "$service_file") || fail '创建 systemd 服务失败，身份已保留。'
+            (set -C; render_install_service > "$service_file") || fail '创建 systemd 服务失败，身份已保留。'
             chmod 644 "$service_file"
             timeout 30 systemctl daemon-reload && timeout 45 systemctl enable --now viorka-agent.service &&
                 timeout 15 systemctl is-active --quiet viorka-agent.service || fail '服务启动失败；身份已保留，请运行 journalctl -u viorka-agent 检查，勿重新注册。'
         else
-            (set -C; render_service > "$service_file") || fail '创建 OpenRC 服务失败，身份已保留。'
+            (set -C; render_install_service > "$service_file") || fail '创建 OpenRC 服务失败，身份已保留。'
             chmod 755 "$service_file"
             timeout 30 rc-update add viorka-agent default && timeout 45 rc-service viorka-agent start &&
                 timeout 15 rc-service viorka-agent status || fail '服务启动失败；身份已保留，请检查 rc-service viorka-agent status 和系统日志，勿重新注册。'
@@ -488,7 +517,7 @@ RC
                 [ "$token_supplied" -eq 0 ] || fail '请勿重复指定 --token。'
                 enrollment_token=${arg#*=}
                 token_supplied=1 ;;
-            *) fail '不支持的参数。仅支持 --url、--token、--version、--github-proxy、--ca-file、--foreground、--reenroll-node、--registration、--token-stdin；自动更新尚未实现。' ;;
+            *) fail '不支持的参数。仅支持 --url、--token、--version、--github-proxy、--ca-file、--foreground、--reenroll-node、--registration、--token-stdin。' ;;
         esac
     done
     unset arg

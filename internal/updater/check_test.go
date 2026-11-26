@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	v1 "github.com/vioira/viorka-agent/protocol/v1"
 	"io"
 	"net"
 	"net/http"
@@ -29,21 +30,21 @@ func fixture(tag string) release {
 }
 func TestVersions(t *testing.T) {
 	for _, s := range []string{"1", "01.0.0", "1.0.0-01", "1.0.0-beta.01", "1.0.0-", "1.0.0;id"} {
-		if _, err := parseVersion(s); err == nil {
+		if _, err := v1.ParseReleaseVersion(s); err == nil {
 			t.Errorf("accepted %s", s)
 		}
 	}
 	ordered := []string{"1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0", "1.0.1", "2.0.0", "10.0.0", "9999999999999999999999999.0.0"}
 	for i := 1; i < len(ordered); i++ {
-		a, _ := parseVersion(ordered[i-1])
-		b, _ := parseVersion(ordered[i])
-		if a.compare(b) >= 0 || b.compare(a) <= 0 {
+		a, _ := v1.ParseReleaseVersion(ordered[i-1])
+		b, _ := v1.ParseReleaseVersion(ordered[i])
+		if a.Compare(b) >= 0 || b.Compare(a) <= 0 {
 			t.Fatal(ordered[i])
 		}
 	}
-	a, _ := parseVersion("v1.0.0+one")
-	b, _ := parseVersion("1.0.0+two")
-	if a.compare(b) != 0 {
+	a, _ := v1.ParseReleaseVersion("v1.0.0+one")
+	b, _ := v1.ParseReleaseVersion("1.0.0+two")
+	if a.Compare(b) != 0 {
 		t.Fatal("build metadata changes precedence")
 	}
 }

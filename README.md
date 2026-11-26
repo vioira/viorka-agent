@@ -67,7 +67,7 @@ viorka-agent/
 ├── internal/config/     # 配置发布和回滚（设计占位）
 ├── internal/state/      # 本地任务记录（设计占位）
 ├── internal/supervisor/ # systemd/OpenRC 运行管理（设计占位）
-├── internal/updater/    # 只读更新检查（升级复用 install.sh）
+├── internal/updater/    # 版本检查、签名更新、进程切换和回滚
 ├── protocol/v1/         # 当前协议数据模型（M0 改成从 schema 生成）
 ├── packaging/           # 服务管理草案模板
 ├── examples/            # 配置示例
@@ -88,6 +88,8 @@ Panel 仓库参见 `github.com/vioira/viorka`（占位路径，需确认 GitHub 
 ## 许可证
 
 尚未确定；正式对外发布前补充项目许可证。
+
+官方后台服务支持由 Panel 发起的签名更新，自动更新默认关闭，发布和恢复步骤见 [安装说明](packaging/README.md#面板自动更新和手动更新)。
 
 只读检查版本：`viorka-agent update-check`；包含预发布：`viorka-agent update-check --prerelease`。
 使用配置中的备用 DNS：`viorka-agent update-check --config "$HOME/.viorka-agent/agent.json"`。
