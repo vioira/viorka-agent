@@ -26,6 +26,8 @@ type telemetrySchedule struct {
 	window                           telemetryWindow
 	active                           *telemetrySend
 	ip, save                         time.Time
+	awaitingNetworkBaseline          bool
+	startupFollowup                  time.Time
 	postWanted, liveWanted, fallback bool
 }
 
@@ -38,7 +40,11 @@ func newTelemetrySchedule(ctx context.Context, settings v1.TelemetrySettings, ge
 	if err != nil {
 		return nil, err
 	}
-	return &telemetrySchedule{trafficError: sources.trafficError, cadence: cadence, retry: retry, lease: newTelemetryLease(serverGeneration), workers: startTelemetryWorkers(ctx, sources), ip: now, save: now.Add(time.Minute)}, nil
+	return &telemetrySchedule{
+		trafficError: sources.trafficError, cadence: cadence, retry: retry,
+		lease: newTelemetryLease(serverGeneration), workers: startTelemetryWorkers(ctx, sources),
+		ip: now, save: now.Add(time.Minute), awaitingNetworkBaseline: true,
+	}, nil
 }
 func (s *telemetrySchedule) mode(now time.Time) {
 	realtime := s.lease.realtime && !s.retry.degraded && !s.retry.blocked && !s.retry.unsupported
@@ -72,8 +78,11 @@ func (s *telemetrySchedule) advance(now time.Time) *v1.TelemetryDemandResult {
 	result := s.lease.settle(now, s.active != nil)
 	s.mode(now)
 	due := s.cadence.due(now)
-	if due.Fast {
-		s.workers.submit(0, now)
+	followupDue := !s.startupFollowup.IsZero() && !now.Before(s.startupFollowup)
+	if due.Fast || followupDue {
+		if s.workers.submit(0, now) && followupDue {
+			s.startupFollowup = time.Time{}
+		}
 	}
 	if due.Full {
 		s.workers.submit(1, now)
@@ -102,6 +111,15 @@ func (s *telemetrySchedule) collected(result telemetryWorkResult) error {
 	if result.value != nil && result.kind < 3 {
 		if err := s.window.add(result.value); err != nil {
 			return err
+		}
+		if fast, ok := result.value.(*v1.TelemetryFast); ok && len(fast.Interfaces) > 0 {
+			if s.awaitingNetworkBaseline {
+				s.awaitingNetworkBaseline = false
+				s.startupFollowup = fast.SampledAt.Add(time.Second)
+			} else {
+				// An earlier scheduled sample (e.g. entering realtime) can supply the second reading.
+				s.startupFollowup = time.Time{}
+			}
 		}
 	}
 	return result.err
@@ -200,6 +218,9 @@ func (s *telemetrySchedule) nextWake(now time.Time) time.Time {
 		}
 	}
 	add(s.cadence.fast)
+	if !s.workers.busy[0] {
+		add(s.startupFollowup)
+	}
 	add(s.cadence.full)
 	add(s.cadence.post)
 	add(s.cadence.live)

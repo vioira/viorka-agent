@@ -113,24 +113,30 @@ func TestTelemetryRunnerTLSPOSTThenRealtime(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	// Wait for a completed initial fast sample without polling internal actor state.
-	for {
-		select {
-		case d := <-runner.diagnostics:
-			if d.Completed[0] > 0 {
-				goto sampled
+	waitFast := func(count uint64) {
+		t.Helper()
+		timeout := time.After(2 * time.Second)
+		for {
+			select {
+			case d := <-runner.diagnostics:
+				if d.Completed[0] >= count {
+					return
+				}
+			case <-timeout:
+				t.Fatalf("timeout waiting for fast sample %d", count)
 			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("initial sample timeout")
 		}
 	}
-sampled:
+	waitFast(1)
+	nanos.Store(start.Add(time.Second).UnixNano())
+	runner.events <- telemetryEvent{kind: "wake"}
+	waitFast(2)
 	nanos.Store(start.Add(30 * time.Second).UnixNano())
 	runner.events <- telemetryEvent{kind: "wake"}
 	select {
 	case batch := <-received:
-		if len(batch.Fast) != 1 || batch.Fast[0].Sequence != 1 {
-			t.Fatal("C>R did not reuse sample")
+		if len(batch.Fast) != 2 || batch.Fast[0].Sequence != 1 || batch.Fast[1].Sequence != 2 || batch.Fast[1].SampledAt.Sub(batch.Fast[0].SampledAt) != time.Second {
+			t.Fatal("first POST did not carry both startup samples")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("POST timeout")
@@ -164,7 +170,7 @@ sampled:
 	}
 	select {
 	case batch := <-frames:
-		if len(batch.Fast) != 1 || batch.Fast[0].Sequence != 2 {
+		if len(batch.Fast) != 1 || batch.Fast[0].Sequence != 3 {
 			t.Fatal("live sent old snapshot instead of completed fast")
 		}
 	case <-time.After(2 * time.Second):

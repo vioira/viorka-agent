@@ -128,6 +128,15 @@ func TestTelemetryScheduleSkipsAcknowledgedHTTPAndSurvivesManagementLoss(t *test
 	s, start := scheduleFixture(t, settings)
 	s.advance(start)
 	drainSchedule(t, s)
+	followup := start.Add(time.Second)
+	if wake := s.nextWake(start); !wake.Equal(followup) {
+		t.Fatalf("cold start should wake at %v, got %v", followup, wake)
+	}
+	s.advance(followup)
+	drainSchedule(t, s)
+	if s.take(followup) != nil || !s.nextWake(followup).Equal(start.Add(30*time.Second)) {
+		t.Fatal("startup sample changed reporting or scheduled another follow-up")
+	}
 	for _, seconds := range []int{30, 60, 90} {
 		now := start.Add(time.Duration(seconds) * time.Second)
 		s.advance(now)
@@ -139,15 +148,16 @@ func TestTelemetryScheduleSkipsAcknowledgedHTTPAndSurvivesManagementLoss(t *test
 			}
 			continue
 		}
-		if send == nil || len(send.flight.samples) != 1 {
+		if send == nil {
 			t.Fatal("missing pending observation")
 		}
-		expected := uint64(1)
-		if seconds >= 60 {
-			expected = 2
-		}
-		if send.flight.samples[0].sequence != expected {
-			t.Fatal("POST manufactured extra collection")
+		samples := send.flight.samples
+		if seconds == 30 {
+			if len(samples) != 2 || !samples[0].at.Equal(start) || !samples[1].at.Equal(followup) {
+				t.Fatalf("first POST should contain both startup observations: %+v", samples)
+			}
+		} else if len(samples) != 1 || samples[0].sequence != 3 || !samples[0].at.Equal(now) {
+			t.Fatal("regular fast cadence changed after startup")
 		}
 		s.disconnect(now)
 		if s.active != send {
@@ -157,6 +167,36 @@ func TestTelemetryScheduleSkipsAcknowledgedHTTPAndSurvivesManagementLoss(t *test
 		if !s.nextWake(now.Add(time.Second)).After(now.Add(time.Second)) {
 			t.Fatal("timer busy loop")
 		}
+	}
+}
+
+func TestTelemetryStartupFollowupCoalescesWithRealtime(t *testing.T) {
+	for _, delay := range []time.Duration{500 * time.Millisecond, time.Second} {
+		t.Run(delay.String(), func(t *testing.T) {
+			s, start := scheduleFixture(t, v1.DefaultTelemetrySettings())
+			s.advance(start)
+			drainSchedule(t, s)
+			at := start.Add(delay)
+			checkLeaseResult(t, s.demand(leaseDemand(1, true), at), "applied", "realtime", "")
+			s.advance(at)
+			drainSchedule(t, s)
+			s.advance(start.Add(time.Second))
+			drainSchedule(t, s)
+			live := s.take(start.Add(time.Second))
+			if live == nil || live.attempt.HTTP || len(live.flight.samples) != 2 || !live.flight.samples[1].at.Equal(at) {
+				t.Fatal("expected exactly one fast sample after the baseline")
+			}
+			s.finish(live, start.Add(time.Second), "", 0)
+			s.disconnect(start.Add(2 * time.Second))
+			if err := s.reconnected(2, "generation-2", start.Add(3*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			s.advance(start.Add(4 * time.Second))
+			drainSchedule(t, s)
+			if s.window.sequence[0] != 2 || !s.nextWake(start.Add(4*time.Second)).Equal(s.cadence.fast) {
+				t.Fatal("ordinary reconnect scheduled another startup sample")
+			}
+		})
 	}
 }
 func TestTelemetryScheduleCooldownAndGenerationFence(t *testing.T) {
