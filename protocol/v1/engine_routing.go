@@ -25,12 +25,50 @@ func routingID(s string) bool {
 func routingName(s string) bool {
 	return len(s) > 0 && len(s) <= 128 && strings.TrimSpace(s) == s && strings.IndexFunc(s, unicode.IsControl) < 0
 }
+
+// ShadowsocksKeySize returns the required decoded PSK length, zero for a passphrase,
+// or -1 for an unsupported method.
+func ShadowsocksKeySize(method string) int {
+	switch method {
+	case "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305":
+		return 0
+	case "2022-blake3-aes-128-gcm":
+		return 16
+	case "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305":
+		return 32
+	default:
+		return -1
+	}
+}
+
+func ValidShadowsocksPassword(method, password string) bool {
+	size := ShadowsocksKeySize(method)
+	if size < 0 || password == "" || len(password) > 1024 {
+		return false
+	}
+	if size == 0 {
+		return true
+	}
+	key, err := base64.StdEncoding.Strict().DecodeString(password)
+	return err == nil && len(key) == size && len(password) == base64.StdEncoding.EncodedLen(size)
+}
+
 func (o EngineOutbound) Validate() error {
 	bad := errors.New("invalid outbound configuration")
 	if !routingID(o.ID) || o.ID == "direct" || o.ID == "reject" || !routingName(o.Name) || !engineHost(o.Server) || o.ServerPort < 1 || o.ServerPort > 65535 || len(o.Username) > 256 || len(o.Password) > 1024 {
 		return bad
 	}
+	if o.Type != "shadowsocks" && o.Method != "" {
+		return bad
+	}
 	switch o.Type {
+	case "shadowsocks":
+		if o.Username != "" || o.Uuid != "" || o.Tls || o.ServerName != "" || o.PublicKey != "" || o.ShortID != "" || o.Flow != "" || o.Fingerprint != "" || o.Password == "" {
+			return bad
+		}
+		if !ValidShadowsocksPassword(o.Method, o.Password) {
+			return bad
+		}
 	case "vless":
 		if len(o.Uuid) != 36 || o.Uuid[8] != '-' || o.Uuid[13] != '-' || o.Uuid[18] != '-' || o.Uuid[23] != '-' {
 			return bad

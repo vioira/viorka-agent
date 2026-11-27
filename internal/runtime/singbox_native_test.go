@@ -16,12 +16,13 @@ func TestSingboxNativeEgressCheck(t *testing.T) {
 	}
 	c := renderCommand(t, "sing-box")
 	c.Outbounds = []*v1.EngineOutbound{
+		{ID: "ss", Name: "Shadowsocks", Type: "shadowsocks", Method: "aes-128-gcm", Password: "test-passphrase", Server: "127.0.0.1", ServerPort: 8388},
 		{ID: "plain", Name: "VLESS TCP", Type: "vless", Server: "example.com", ServerPort: 443, Uuid: c.Services[0].Uuid},
 		{ID: "proxy", Name: "VLESS", Type: "vless", Server: "example.com", ServerPort: 443, Uuid: c.Services[0].Uuid, Tls: true, ServerName: "example.com", PublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ShortID: "aabb", Fingerprint: "chrome", Flow: "xtls-rprx-vision"},
 		{ID: "socks", Name: "SOCKS", Type: "socks", Server: "127.0.0.1", ServerPort: 1080},
 		{ID: "http", Name: "HTTP", Type: "http", Server: "example.com", ServerPort: 443, Tls: true},
 	}
-	c.Routing = &v1.EngineRouting{OutboundIds: []string{"plain", "proxy", "socks", "http"}, Final: "reject", Sniff: true, Rules: []*v1.EngineRouteRule{{ID: "domain", Name: "Domain", Enabled: true, DomainSuffix: []string{"example.com"}, PortRange: []string{"80:443"}, Network: []string{"tcp"}, Outbound: "http"}, {ID: "ip", Name: "IP", Enabled: true, IpCidr: []string{"192.0.2.0/24"}, Outbound: "socks"}}}
+	c.Routing = &v1.EngineRouting{OutboundIds: []string{"ss", "plain", "proxy", "socks", "http"}, Final: "reject", Sniff: true, Rules: []*v1.EngineRouteRule{{ID: "domain", Name: "Domain", Enabled: true, DomainSuffix: []string{"example.com"}, PortRange: []string{"80:443"}, Network: []string{"tcp"}, Outbound: "http"}, {ID: "ip", Name: "IP", Enabled: true, IpCidr: []string{"192.0.2.0/24"}, Outbound: "socks"}}}
 	c.Routing.Rules = append(c.Routing.Rules,
 		&v1.EngineRouteRule{ID: "geo", Name: "Geo", Enabled: true, Geosite: []string{"cn", "apple@cn"}, Geoip: []string{"cn", "private"}, Outbound: "direct"},
 	)

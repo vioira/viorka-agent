@@ -96,3 +96,7 @@ engine.manage.v5 的安装、升级、应用和启动默认自动修复白名单
 ## GeoIP 与 GeoSite 分流
 
 `engine.manage.v8` 支持在 sing-box 1.14.4 的分流规则中使用 GeoIP 与 GeoSite。同一字段值按 OR，字段之间按 AND。GeoIP `private` 使用原生非公网 IP 条件，其余代码由节点上的 sing-box 直连 HTTPS 读取固定提交的 SagerNet 二进制 rule-set。GeoIP 域名目标沿用本地 DNS 解析。节点启动含外部引用的配置时须能访问规则集来源，且代码须存在；停用的规则及仅引用停用服务的规则不会加载规则集。保持停止时，配置校验和启动是两个阶段，规则集可达性由实际运行检查。
+
+### Shadowsocks shared outbounds
+
+An Agent supporting Shadowsocks advertises `engine.outbound.shadowsocks.v1` alongside `engine.manage.v8`. An engine command containing a `shadowsocks` outbound requires both capabilities. The outbound carries `method` and `password`. SS2022 accepts one standard Base64 PSK of the length required by the method. Shared outbounds support TCP and UDP routing and the default route.

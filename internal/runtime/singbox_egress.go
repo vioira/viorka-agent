@@ -59,6 +59,10 @@ func singboxEgress(c v1.EngineCommand) map[string]any {
 	outbounds := []any{map[string]any{"type": "direct", "tag": "sb-egress-direct", "domain_resolver": "sb-egress-dns"}}
 	for _, o := range c.Outbounds {
 		out := map[string]any{"type": o.Type, "tag": tag(o.ID), "server": o.Server, "server_port": o.ServerPort, "domain_resolver": "sb-egress-dns"}
+		if o.Type == "shadowsocks" {
+			out["method"] = o.Method
+			out["password"] = o.Password
+		}
 		if o.Type == "socks" {
 			out["version"] = "5"
 		}

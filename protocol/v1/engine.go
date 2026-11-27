@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 )
 
+const ShadowsocksOutboundCapability = "engine.outbound.shadowsocks.v1"
+
 const EngineCapability = "engine.manage.v8"
 const EngineRecoveryCapability = "engine.recovery.v1"
 const EngineRecoverOperation = "engine.recover"

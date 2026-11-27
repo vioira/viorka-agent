@@ -1642,7 +1642,8 @@
           "enum": [
             "vless",
             "socks",
-            "http"
+            "http",
+            "shadowsocks"
           ]
         },
         "server": {
@@ -1688,6 +1689,17 @@
         },
         "tls": {
           "type": "boolean"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "aes-128-gcm",
+            "aes-256-gcm",
+            "chacha20-ietf-poly1305",
+            "2022-blake3-aes-128-gcm",
+            "2022-blake3-aes-256-gcm",
+            "2022-blake3-chacha20-poly1305"
+          ]
         }
       },
       "required": [
@@ -1696,6 +1708,35 @@
         "type",
         "server",
         "server_port"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "shadowsocks"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "method",
+              "password"
+            ],
+            "properties": {
+              "password": {
+                "minLength": 1
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "method"
+              ]
+            }
+          }
+        }
       ]
     },
     "EngineRouteRule": {

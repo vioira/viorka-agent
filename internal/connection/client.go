@@ -327,7 +327,7 @@ func (c *Client) connect(ctx context.Context, id state.Identity, exec *executor.
 		capabilities = append(capabilities, v1.AgentUpdateCapability)
 	}
 	if managed.Supported() {
-		capabilities = append(capabilities, v1.EngineCapability, v1.EngineEndpointsCapability, v1.EngineRecoveryCapability)
+		capabilities = append(capabilities, v1.EngineCapability, v1.EngineEndpointsCapability, v1.EngineRecoveryCapability, v1.ShadowsocksOutboundCapability)
 	}
 	if c.telemetryEnabled {
 		capabilities = append(capabilities, v1.TrafficCapability, v1.DailyTrafficCapability)
