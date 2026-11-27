@@ -9,6 +9,7 @@ jobs:
     uses: ./.github/workflows/service-tests.yml
   release:
     needs: services
+    environment: release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
