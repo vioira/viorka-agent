@@ -37,7 +37,14 @@ bash scripts/run-test-node.sh
 
 每次执行都会从 `origin/main` 快进更新、重新构建，然后前台运行 Agent，用 `Ctrl+C` 退出。新节点使用 `~/.viorka-agent-test` 保存配置和身份。首次创建配置时，若未设置 `VIORKA_TEST_PANEL_URL` 或其值为空，脚本会提示输入 Panel 域名（自动补全 `https://`）或完整 HTTPS 地址。本地节点名默认使用主机名，可通过 `VIORKA_TEST_NODE_NAME` 指定。首次注册和注册未完成时会隐藏输入并提示令牌，重试复用已保存的密钥。注册成功后，后续启动直接复用配置和身份。
 
-已注册节点切换 Panel 域名时，先退出正在运行的测试脚本，再执行以下命令（需要 Python 3）：
+已注册的测试节点运行时遇到 HTTP 401，脚本会显示当前 Panel 地址和节点 ID。在终端可选择：
+
+- **重试连接**：沿用当前身份，再次连接同一 Panel。
+- **重新注册原节点**：选择复用当前 Panel 地址或输入新地址，然后粘贴目标 Panel 为该节点 ID 重新签发的令牌。注册成功后沿用原状态目录，在所选地址继续运行。
+- **注册新节点**：同样先选 Panel，再粘贴新节点注册令牌。脚本创建独立测试目录，注册成功后记住新目录并继续运行。原目录可通过 `--test-dir` 再次选择。
+- **退出**：结束脚本。非交互运行遇到此类 401 时会显示地址和 ID，以状态码 77 退出。
+
+已注册节点切换 Panel 域名时，先退出正在运行的测试脚本，再执行以下命令：
 
 ```bash
 VIORKA_TEST_PANEL_URL='https://panel.example.com' bash scripts/run-test-node.sh

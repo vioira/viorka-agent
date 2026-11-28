@@ -111,26 +111,24 @@ elif [[ -z "$new_dir" ]] && { [[ -n "$requested_dir" || "$test_dir" != "$workspa
     fail "现有测试目录缺少配置：$config"
 fi
 
+test_node_config() {
+    go run ./scripts/test-node-config "$@"
+}
+
 panel_url=${VIORKA_TEST_PANEL_URL:-}
 if [[ -n "$panel_url" ]] && present "$config"; then
-    command -v python3 >/dev/null || fail '按 Panel 地址选择已有测试配置需要 python3。'
-    configured_panel() {
-        python3 -c 'import json, sys
-with open(sys.argv[1]) as f:
-    print(json.load(f)["panel_url"])' "$1"
-    }
-    saved_url=$(configured_panel "$config")
+    saved_url=$(test_node_config panel "$config")
     if [[ "$saved_url" != "$panel_url" ]]; then
         [[ -z "$requested_dir" ]] || fail '指定目录的 Panel 地址与环境变量不符。请去掉 --test-dir 以切换 Panel。'
         default_url=
         if present "$workspace/agent.json"; then
             check_file "$workspace/agent.json" 0022
-            default_url=$(configured_panel "$workspace/agent.json")
+            default_url=$(test_node_config panel "$workspace/agent.json")
         fi
         if [[ "$default_url" == "$panel_url" ]]; then
             test_dir=$workspace
         else
-            panel_key=$(python3 -c 'import hashlib, os; print(hashlib.sha256(os.environ["VIORKA_TEST_PANEL_URL"].encode()).hexdigest())')
+            panel_key=$(test_node_config panel-key "$panel_url")
             test_dir=$workspace/panel-$panel_key
             mkdir -p -- "$test_dir"
             check_directory "$test_dir"
@@ -138,7 +136,7 @@ with open(sys.argv[1]) as f:
         config=$test_dir/agent.json
         if present "$config"; then
             check_file "$config" 0022
-            saved_url=$(configured_panel "$config")
+            saved_url=$(test_node_config panel "$config")
             [[ "$saved_url" == "$panel_url" ]] || fail '目标测试目录的 Panel 地址不匹配。'
         elif present "$test_dir/state"; then
             fail "现有测试目录缺少配置：$config"
@@ -178,23 +176,86 @@ fi
 status=$("$agent" config-check --config "$config" --registration-status)
 if present "$selection"; then check_file "$selection" 0077; fi
 if present "$binary"; then check_file "$binary" 0022; fi
-printf '%s\n' "$test_dir" > "$staging/active-dir"
-mv -f -- "$staging/active-dir" "$selection"
+remember_directory() {
+    printf '%s\n' "$test_dir" > "$staging/active-dir"
+    mv -f -- "$staging/active-dir" "$selection"
+}
+
+register_node() (
+    unset token
+    local prompt=$1
+    shift
+    IFS= read -rs -p "$prompt" token </dev/tty || fail '注册需要可隐藏令牌输入的交互终端。'
+    printf '\n' >&2
+    printf '%s' "$token" | "$binary" register --token-stdin "$@"
+)
+
+remember_directory
 mv -f -- "$agent" "$binary"
 case "$status" in
-    needs-registration)
-        unset token
-        if ! IFS= read -rs -p '请输入 Panel 注册令牌：' token </dev/tty; then
-            fail '注册需要可隐藏令牌输入的交互终端。'
-        fi
-        printf '\n' >&2
-        printf '%s' "$token" | "$binary" register --config "$config" --token-stdin
-        unset token
-        ;;
+    needs-registration) register_node '请输入 Panel 注册令牌：' --config "$config" ;;
     registered) ;;
     *) fail 'Agent 返回了未知的注册状态。' ;;
 esac
 
-rm -rf -- "$staging"
-trap - EXIT
-exec "$binary" run --config "$config"
+# Forward signals sent to the script PID while the Agent owns the state lock.
+child=
+stop_run() {
+    trap '' INT TERM
+    if [[ -n "$child" ]]; then
+        kill -TERM "$child" 2>/dev/null || :
+        wait "$child" || :
+    fi
+    exit 0
+}
+
+while :; do
+    trap stop_run INT TERM
+    "$binary" run --config "$config" &
+    child=$!
+    rc=0
+    wait "$child" || rc=$?
+    child=
+    trap - INT TERM
+    [[ "$rc" == 77 ]] || exit "$rc"
+
+    info=$(test_node_config identity "$config")
+    current_panel=${info%%$'\n'*}
+    node_id=${info#*$'\n'}
+    printf '认证失败（HTTP 401）\nPanel 地址：%s\n节点 ID：%s\n' "$current_panel" "$node_id" >&2
+    [[ -t 0 ]] || { printf '请在交互终端选择恢复操作。\n' >&2; exit "$rc"; }
+    while :; do
+        IFS= read -r -p '1) 重试连接  2) 重新注册原节点  3) 注册新节点  0) 退出：' action || exit "$rc"
+        case "$action" in
+            0) exit "$rc" ;;
+            1) continue 2 ;;
+            2|3) break ;;
+        esac
+    done
+    while :; do
+        IFS= read -r -p "1) 复用 $current_panel  2) 输入新 Panel 地址  0) 退出：" choice || exit "$rc"
+        case "$choice" in
+            0) exit "$rc" ;;
+            1) panel_url=$current_panel; break ;;
+            2)
+                IFS= read -r -p '新 Panel 域名或 HTTPS 地址：' panel_url || exit "$rc"
+                [[ -n "$panel_url" ]] || continue
+                [[ "$panel_url" == *://* ]] || panel_url="https://$panel_url"
+                break ;;
+        esac
+    done
+    if [[ "$action" == 2 ]]; then
+        register_node "请输入目标 Panel 为原节点 $node_id 重新签发的令牌：" \
+            --config "$config" --replace-node "$node_id" --panel-origin "$panel_url"
+    else
+        next_dir=$(mktemp -d "$workspace/node-XXXXXX")
+        printf '新节点测试目录：%s\n' "$next_dir"
+        next_config=$next_dir/agent.json
+        (set -C; test_node_config new-config "$config" "$panel_url" "$next_dir/state" > "$next_config")
+        "$binary" config-check --config "$next_config"
+        register_node '请输入目标 Panel 的新节点注册令牌：' --config "$next_config"
+        test_dir=$next_dir
+        config=$next_config
+        remember_directory
+    fi
+done

@@ -81,7 +81,7 @@ func Main(args []string, out, errOut io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: viorka-agent [version|update-check [--prerelease] [--config PATH]|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH [--registration-status]|register --config PATH --token-stdin [--name NAME] [--replace-node ID]|run --config PATH|help]")
+	fmt.Fprintln(w, "Usage: viorka-agent [version|update-check [--prerelease] [--config PATH]|doctor [--public-ip] [--panel --config PATH]|config-check --config PATH [--registration-status]|register --config PATH --token-stdin [--name NAME] [--replace-node ID [--panel-origin URL]]|run --config PATH|help]")
 	fmt.Fprintln(w, "M0 supports enrollment, WSS and read-only node.inspect tasks.")
 }
 
@@ -91,11 +91,12 @@ func connect(args []string, out, errOut io.Writer) int {
 	path := flags.String("config", "", "local JSON config (default ~/.viorka-agent/agent.json)")
 	name := flags.String("name", "", "node display name for batch registration; defaults to hostname")
 	replaceNode := flags.String("replace-node", "", "explicitly replace identity for this node; preserves local state")
+	origin := flags.String("panel-origin", "", "HTTPS Panel origin for explicit node replacement")
 	tokenStdin := flags.Bool("token-stdin", false, "read registration token from standard input")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
-	if flags.NArg() != 0 || (args[0] != "register" && *replaceNode != "") || (args[0] != "register" && *name != "") || (*replaceNode != "" && *name != "") || (args[0] == "run" && *tokenStdin) {
+	if flags.NArg() != 0 || (*origin != "" && *replaceNode == "") || (args[0] != "register" && *replaceNode != "") || (args[0] != "register" && *name != "") || (*replaceNode != "" && *name != "") || (args[0] == "run" && *tokenStdin) {
 		return 2
 	}
 	cfg, err := loadConfig(*path)
@@ -131,7 +132,7 @@ func connect(args []string, out, errOut io.Writer) int {
 				err = fmt.Errorf("invalid enrollment token length")
 			} else {
 				if *replaceNode != "" {
-					err = client.Reenroll(ctx, token, *replaceNode)
+					err = client.Reenroll(ctx, token, *replaceNode, *origin)
 				} else {
 					err = client.Register(ctx, token, *name)
 				}
@@ -142,6 +143,9 @@ func connect(args []string, out, errOut io.Writer) int {
 	}
 	if err != nil {
 		fmt.Fprintln(errOut, err)
+		if args[0] == "run" && connection.IsUnauthorized(err) {
+			return 77
+		}
 		return 1
 	}
 	if args[0] == "register" {

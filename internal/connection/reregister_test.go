@@ -38,7 +38,7 @@ func TestReenrollRetainsLocalStateAndRetriesSameKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	old, err := store.Identity(server.URL, true)
+	old, err := store.Identity("https://old.example", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,32 +49,32 @@ func TestReenrollRetainsLocalStateAndRetriesSameKey(t *testing.T) {
 	if err = store.Write("journal.json", map[string]string{"task": "succeeded"}); err != nil {
 		t.Fatal(err)
 	}
-	c := &Client{cfg: config.Local{PanelURL: server.URL}, store: store, http: server.Client()}
+	c := &Client{cfg: config.Local{PanelURL: "https://old.example"}, store: store, http: server.Client()}
 	token := strings.Repeat("a", 64)
-	if err = c.Reenroll(context.Background(), token, "other"); err == nil {
+	if err = c.Reenroll(context.Background(), token, "other", server.URL); err == nil {
 		t.Fatal("cross-node overwrite allowed")
 	}
 	if len(keys) != 0 {
 		t.Fatal("cross-node request sent")
 	}
-	if err = c.Reenroll(context.Background(), token, "node"); err == nil {
+	if err = c.Reenroll(context.Background(), token, "node", server.URL); err == nil {
 		t.Fatal("failure hidden")
 	}
-	kept, _ := store.Identity(server.URL, false)
-	if !bytes.Equal(kept.PrivateKey, old.PrivateKey) {
+	kept, _ := store.Identity("https://old.example", false)
+	if kept.ActiveOrigin != "" || !bytes.Equal(kept.PrivateKey, old.PrivateKey) {
 		t.Fatal("old key overwritten on failure")
 	}
 	fail = false
 	responseNode = "wrong"
-	if err = c.Reenroll(context.Background(), token, "node"); err == nil {
+	if err = c.Reenroll(context.Background(), token, "node", server.URL); err == nil {
 		t.Fatal("wrong response identity accepted")
 	}
 	responseNode = "node"
-	if err = c.Reenroll(context.Background(), token, "node"); err != nil {
+	if err = c.Reenroll(context.Background(), token, "node", server.URL); err != nil {
 		t.Fatal(err)
 	}
-	current, err := store.Identity(server.URL, false)
-	if err != nil || current.NodeID != "node" || bytes.Equal(current.PrivateKey, old.PrivateKey) {
+	current, err := store.Identity("https://old.example", false)
+	if err != nil || current.ActiveOrigin != server.URL || current.NodeID != "node" || bytes.Equal(current.PrivateKey, old.PrivateKey) {
 		t.Fatal("identity not replaced", err)
 	}
 	oldPublic := base64.StdEncoding.EncodeToString(ed25519.PrivateKey(old.PrivateKey).Public().(ed25519.PublicKey))

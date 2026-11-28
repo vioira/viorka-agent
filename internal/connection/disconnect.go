@@ -22,6 +22,12 @@ type connectionFailure struct {
 	cause         error
 }
 
+// IsUnauthorized identifies a terminal Panel HTTP 401 for interactive recovery.
+func IsUnauthorized(err error) bool {
+	var failure *connectionFailure
+	return errors.As(err, &failure) && failure.status == 401 && errors.Is(failure, ErrIdentityRejected)
+}
+
 func (e *connectionFailure) Error() string {
 	detail := connectionReasonChinese(e.reason)
 	if e.status != 0 {

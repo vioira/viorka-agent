@@ -49,6 +49,9 @@ func TestPostPanelErrorCodes(t *testing.T) {
 			if err == nil || !strings.HasPrefix(err.Error(), want+"：") || strings.Contains(err.Error(), "secret") {
 				t.Fatalf("got %v, want %s", err, want)
 			}
+			if IsUnauthorized(errors.Join(err)) != (tc.status == 401) {
+				t.Fatalf("unexpected recovery classification: %v", err)
+			}
 			if errors.Is(err, ErrIdentityRejected) != (tc.status == 401 || tc.status == 403) {
 				t.Fatalf("identity rejection classification changed: %v", err)
 			}
