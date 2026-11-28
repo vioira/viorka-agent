@@ -232,18 +232,9 @@ while :; do
             2|3) break ;;
         esac
     done
-    while :; do
-        IFS= read -r -p "1) 复用 $current_panel  2) 输入新 Panel 地址  0) 退出：" choice || exit "$rc"
-        case "$choice" in
-            0) exit "$rc" ;;
-            1) panel_url=$current_panel; break ;;
-            2)
-                IFS= read -r -p '新 Panel 域名或 HTTPS 地址：' panel_url || exit "$rc"
-                [[ -n "$panel_url" ]] || continue
-                [[ "$panel_url" == *://* ]] || panel_url="https://$panel_url"
-                break ;;
-        esac
-    done
+    IFS= read -r -p "Panel 地址（直接回车使用 ${current_panel}）：" panel_url || exit "$rc"
+    panel_url=${panel_url:-$current_panel}
+    [[ "$panel_url" == *://* ]] || panel_url="https://$panel_url"
     if [[ "$action" == 2 ]]; then
         register_node "请输入目标 Panel 为原节点 $node_id 重新签发的令牌：" \
             --config "$config" --replace-node "$node_id" --panel-origin "$panel_url"
