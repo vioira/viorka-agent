@@ -100,3 +100,7 @@ engine.manage.v5 的安装、升级、应用和启动默认自动修复白名单
 ### Shadowsocks shared outbounds
 
 An Agent supporting Shadowsocks advertises `engine.outbound.shadowsocks.v1` alongside `engine.manage.v8`. An engine command containing a `shadowsocks` outbound requires both capabilities. The outbound carries `method` and `password`. SS2022 accepts one standard Base64 PSK of the length required by the method. Shared outbounds support TCP and UDP routing and the default route.
+
+### Realm 线路检查
+
+协商 `engine.relay.probe.v1` 后，Panel 可通过 `engine.inspect` 提交线路规则 ID 和已应用配置修订。Agent 在本地确认受管实例、已应用修订与生效配置后，从规则读取监听和拨号目标，限时执行 TCP 检查并分别回报。检查仅覆盖入口节点所处网络；公网可达性及客户端 REALITY 握手由外部验证记录。

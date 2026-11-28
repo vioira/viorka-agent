@@ -126,6 +126,18 @@ func TestManagedInstallApplyAndManualStop(t *testing.T) {
 	if readErr != nil || readResult.ErrorCode != "" || readResult.Configuration == nil || starts != 1 || readResult.Configuration.Revision != c.Revision {
 		t.Fatalf("configuration read restarted engine or lost revision: %+v %v", readResult, readErr)
 	}
+	probe := inspect
+	probe.IncludeConfig = false
+	probe.RelayProbe = &v1.RelayProbe{RuleID: "tcp", AppliedRevision: c.Revision}
+	checked, err := m.Execute(ctx, "engine", "engine.inspect", probe)
+	if err != nil || checked.RelayProbe == nil || checked.RelayProbe.Listen != "passed" || checked.RelayProbe.Dial != "passed" || starts != 1 {
+		t.Fatalf("read-only relay probe: %+v %v", checked, err)
+	}
+	probe.RelayProbe.RuleID = "unknown"
+	checked, err = m.Execute(ctx, "engine", "engine.inspect", probe)
+	if err != nil || checked.RelayProbe != nil || checked.ErrorCode != "engine_result_unknown" {
+		t.Fatal("unbound relay probe", checked, err)
+	}
 	// A restored Panel can have an older revision than the Agent. The
 	// authenticated recovery check reads the actual managed state without
 	// changing the revision, starting the process or returning native files.

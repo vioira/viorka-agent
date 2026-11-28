@@ -6,10 +6,31 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/netip"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
+
+const RelayProbeCapability = "engine.relay.probe.v1"
+
+var relayRuleID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+func ValidRelayProbeResult(request *RelayProbe, result *RelayProbeResult) bool {
+	if request == nil || result == nil || result.RuleID != request.RuleID || result.AppliedRevision != request.AppliedRevision {
+		return false
+	}
+	switch result.Listen {
+	case "passed", "timeout", "refused", "unreachable":
+	default:
+		return false
+	}
+	switch result.Dial {
+	case "passed", "dns", "timeout", "refused", "unreachable":
+		return true
+	}
+	return false
+}
 
 const ShadowsocksOutboundCapability = "engine.outbound.shadowsocks.v1"
 
@@ -27,6 +48,9 @@ func EngineOperation(op string) bool {
 func (c EngineCommand) Validate(operation string) error {
 	bad := errors.New("invalid engine command")
 	if operation == EngineRecoverOperation && (c.Revision != 0 || c.RunIntent != "running" || c.AllowUnreachable) {
+		return bad
+	}
+	if p := c.RelayProbe; p != nil && (operation != "engine.inspect" || c.Name != "realm" || c.IncludeConfig || c.RecoveryCheck || c.AllowUnreachable || !relayRuleID.MatchString(p.RuleID) || p.AppliedRevision == 0 || p.AppliedRevision >= c.Revision) {
 		return bad
 	}
 	if (c.IncludeConfig || c.RecoveryCheck) && operation != "engine.inspect" || c.IncludeConfig && c.RecoveryCheck {

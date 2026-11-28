@@ -359,7 +359,7 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 				r.RecoveryRevision = &old.Command.Revision
 				return r, nil
 			}
-			if c.IncludeConfig {
+			if c.IncludeConfig || c.RelayProbe != nil {
 				return fail("engine_config_unavailable")
 			}
 			return r, nil
@@ -481,10 +481,22 @@ func (m *Managed) Execute(ctx context.Context, id, operation string, c v1.Engine
 					return fail("engine_result_unknown")
 				}
 			}
-			if r.Status == "running" && m.healthy(ctx, old.Command) != nil {
+			if c.RelayProbe == nil && r.Status == "running" && m.healthy(ctx, old.Command) != nil {
 				r.Status = "degraded"
 				return fail("engine_result_unknown")
 			}
+		}
+		if p := c.RelayProbe; p != nil {
+			if r.Status != "running" || old.Command.Revision != p.AppliedRevision {
+				return fail("engine_result_unknown")
+			}
+			for _, service := range old.Command.Services {
+				if service.ID == p.RuleID && service.Enabled {
+					r.RelayProbe = probeManagedRelay(ctx, p, service)
+					return r, nil
+				}
+			}
+			return fail("engine_result_unknown")
 		}
 		if c.RecoveryCheck {
 			// Recovery is a read-only observation. The request revision belongs to
